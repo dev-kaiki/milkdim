@@ -1,0 +1,583 @@
+// lib/utils/db.dart
+
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:path/path.dart';
+import 'package:sqflite/sqflite.dart' as sq;
+import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:convert/convert.dart' as hex_conv;
+
+sq.Database? _db;
+
+/// ⬆️ aumente quando mudar o schema
+const _dbVersion = 15;
+
+/// Faixa reservada para IDs de pedidos criados SOMENTE localmente (rascunhos).
+///
+/// Os IDs do Supabase são seriais "baixos" (1, 2, 3, ...). O SQLite, por
+/// AUTOINCREMENT, atribuía IDs aos rascunhos no MESMO intervalo. Como a
+/// sincronização aplica os pedidos remotos com `INSERT OR REPLACE` usando o id
+/// remoto como chave primária local, um pedido finalizado vindo do servidor
+/// acabava sobrescrevendo (REPLACE) um rascunho local que tinha o mesmo id —
+/// fazendo o rascunho "sumir" após salvar.
+///
+/// Reservando IDs locais a partir de 1e9, os dois espaços nunca colidem.
+const int kLocalIdBase = 1000000000; // 1e9
+
+/// Próximo id seguro (>= [kLocalIdBase]) para um pedido local novo.
+/// Aceita tanto [sq.Database] quanto [sq.Transaction] (ambos são DatabaseExecutor).
+Future<int> proximoIdLocalSeguro(sq.DatabaseExecutor db) async {
+  final r = await db.rawQuery(
+    'SELECT MAX(id) AS m FROM pedidos WHERE id >= ?',
+    [kLocalIdBase],
+  );
+  final m = r.isNotEmpty ? r.first['m'] : null;
+  final base = (m is int) ? m : (m is num ? m.toInt() : kLocalIdBase - 1);
+  return base + 1;
+}
+
+/// Move rascunhos (status='salvo') com id "baixo" para a faixa reservada,
+/// evitando colisão com os ids do Supabase na próxima sincronização.
+/// Idempotente (só age sobre id < [kLocalIdBase]).
+Future<void> _relocarRascunhosParaFaixaSegura(sq.DatabaseExecutor db) async {
+  try {
+    await db.execute(
+      "UPDATE pedidos SET id = id + $kLocalIdBase "
+      "WHERE status = 'salvo' AND id < $kLocalIdBase",
+    );
+  } catch (e) {
+    debugPrint('Falha ao relocar rascunhos para faixa segura: $e');
+  }
+}
+
+/// Abre/cria o banco local
+Future<sq.Database> getDb() async {
+  if (_db != null) return _db!;
+  final path = join(await sq.getDatabasesPath(), 'milkdim.db');
+
+  _db = await sq.openDatabase(
+    path,
+    version: _dbVersion,
+    onCreate: (db, _) async {
+      // VENDEDORES
+      await db.execute('''
+        CREATE TABLE vendedores (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          codigo TEXT UNIQUE,
+          nome TEXT,
+          senha TEXT,
+          ativo INTEGER
+        );
+      ''');
+
+      // CLIENTES
+      await db.execute('''
+        CREATE TABLE clientes (
+          id INTEGER PRIMARY KEY,
+          nome TEXT,
+          nome_fantasia TEXT,
+          cpf_cnpj TEXT,
+          telefone TEXT,
+          whatsapp TEXT,
+          email TEXT,
+          endereco TEXT,
+          cidade TEXT,
+          anotacao TEXT,
+          ativo INTEGER,
+          datahora TEXT,
+          insc_estadual TEXT,
+          cep TEXT
+        );
+      ''');
+
+      // PRODUTOS (com 'codigo' e 'unidade')
+      await db.execute('''
+        CREATE TABLE produtos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          codigo TEXT,
+          nome TEXT,
+          unidade TEXT,
+          preco REAL,
+          ativo INTEGER
+        );
+      ''');
+
+      // PEDIDOS (agora com assinatura_path)
+      await db.execute('''
+        CREATE TABLE pedidos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          numero TEXT,
+          produtos TEXT,           -- JSON string
+          total REAL,
+          status TEXT,             -- salvo | finalizado
+          datahora TEXT,           -- ISO 8601 (UTC)
+          vendedor_codigo TEXT,
+          vendedor_nome TEXT,
+          cliente_id INTEGER,
+          cliente_nome TEXT,
+          assinatura TEXT,         -- hex "0x..." (legado/compatibilidade)
+          assinatura_path TEXT,    -- caminho do PNG/JPEG local da assinatura
+          cliente_telefone TEXT,
+          cliente_endereco TEXT,
+          cliente_cidade TEXT,
+          cliente_cpf_cnpj TEXT,
+          cliente_insc_estadual TEXT,
+          cliente_cep TEXT,
+          cliente_anotacao TEXT,
+          cliente_nome_fantasia TEXT,
+          cliente_whatsapp TEXT,
+          cliente_email TEXT
+        );
+      ''');
+
+      // Índices úteis
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_cliente_data ON pedidos(cliente_id, datahora);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_vendedor_data ON pedidos(vendedor_codigo, datahora);');
+
+      // ✅ evita duplicação do mesmo pedido do mesmo vendedor
+      await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_pedidos_num_vend ON pedidos(numero, vendedor_codigo);');
+    },
+    onUpgrade: (db, oldV, newV) async {
+      if (oldV < 8) {
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_cliente_data ON pedidos(cliente_id, datahora);');
+      }
+      if (oldV < 9) {
+        await _ensureColumn(db, 'produtos', 'codigo', 'TEXT');
+        await _ensureColumn(db, 'produtos', 'unidade', 'TEXT');
+      }
+      if (oldV < 10) {
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_vendedor_data ON pedidos(vendedor_codigo, datahora);');
+      }
+      if (oldV < 11) {
+        await _dedupPedidosByNumeroVendedor(db);
+        await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_pedidos_num_vend ON pedidos(numero, vendedor_codigo);');
+      }
+      // v12: sem mudanças de schema; apenas helpers novos.
+      if (oldV < 13) {
+        // v13: adiciona coluna para caminho do arquivo de assinatura
+        await _ensureColumn(db, 'pedidos', 'assinatura_path', 'TEXT');
+      }
+      if (oldV < 15) {
+        // v15: separa o espaço de ids dos rascunhos locais do serial do Supabase,
+        // para que a sincronização não sobrescreva rascunhos por colisão de id.
+        await _relocarRascunhosParaFaixaSegura(db);
+      }
+    },
+    onOpen: (db) async {
+      await _ensureColumn(db, 'produtos', 'codigo', 'TEXT');
+      await _ensureColumn(db, 'produtos', 'unidade', 'TEXT');
+
+      // Garante índices (idempotente)
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_cliente_data ON pedidos(cliente_id, datahora);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_vendedor_data ON pedidos(vendedor_codigo, datahora);');
+      try {
+        await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_pedidos_num_vend ON pedidos(numero, vendedor_codigo);');
+      } catch (e) {
+        debugPrint('Falha ao garantir índice único ux_pedidos_num_vend: $e');
+      }
+
+      // Garante coluna nova mesmo se a base já existia (idempotente)
+      await _ensureColumn(db, 'pedidos', 'assinatura_path', 'TEXT');
+
+      // Segurança extra: garante que rascunhos antigos estejam na faixa de id
+      // reservada (caso o app tenha pulado o onUpgrade por algum motivo).
+      await _relocarRascunhosParaFaixaSegura(db);
+    },
+  );
+  return _db!;
+}
+
+/// ---------- Utils de migração/colunas ----------
+
+Future<Set<String>> _getTableColumns(sq.Database db, String table) async {
+  final info = await db.rawQuery('PRAGMA table_info($table)');
+  return info.map((r) => (r['name'] as String)).toSet();
+}
+
+Future<void> _ensureColumn(sq.Database db, String table, String column, String type) async {
+  try {
+    final cols = await _getTableColumns(db, table);
+    if (!cols.contains(column)) {
+      await db.execute('ALTER TABLE $table ADD COLUMN $column $type;');
+      debugPrint('Adicionada coluna $column em $table ($type)');
+    }
+  } catch (e) {
+    debugPrint('Falha ao garantir coluna $column em $table: $e');
+  }
+}
+
+Future<Map<String, dynamic>> _filterToTableColumns(
+    sq.Database db,
+    String table,
+    Map<String, dynamic> data,
+    ) async {
+  final cols = await _getTableColumns(db, table);
+  final out = <String, dynamic>{};
+  for (final e in data.entries) {
+    if (cols.contains(e.key)) out[e.key] = e.value;
+  }
+  return out;
+}
+
+Future<void> _insertOrReplaceFiltered(
+    sq.Database db,
+    String table,
+    Map<String, dynamic> data,
+    ) async {
+  final filtered = await _filterToTableColumns(db, table, data);
+  await db.insert(table, filtered, conflictAlgorithm: sq.ConflictAlgorithm.replace);
+}
+
+/// Converte bytes (assinatura) para string hex "0x...".
+String? _bytesToHex0x(dynamic assinatura) {
+  if (assinatura == null) return null;
+  if (assinatura is Uint8List) {
+    return '0x${hex_conv.hex.encode(assinatura)}';
+  }
+  if (assinatura is List<int>) {
+    return '0x${hex_conv.hex.encode(Uint8List.fromList(assinatura))}';
+  }
+  if (assinatura is String) {
+    final s = assinatura.startsWith('0x') ? assinatura.substring(2) : assinatura;
+    final isHex = RegExp(r'^[0-9a-fA-F]+$').hasMatch(s);
+    if (isHex) return assinatura.startsWith('0x') ? assinatura : '0x$s';
+  }
+  return null;
+}
+
+/// Garante que o campo 'produtos' esteja em JSON string
+String _ensureProdutosJson(dynamic produtos) {
+  if (produtos == null) return '[]';
+  if (produtos is String) return produtos;
+  try {
+    return jsonEncode(produtos);
+  } catch (_) {
+    return '[]';
+  }
+}
+
+/// -------- VENDEDORES --------
+
+Future<void> salvarVendedorLocal(Map<String, dynamic> vendedor) async {
+  final db = await getDb();
+  final v = {
+    'codigo': vendedor['codigo']?.toString(),
+    'nome': vendedor['nome']?.toString(),
+    'senha': vendedor['senha']?.toString(),
+    'ativo': (vendedor['ativo'] is bool)
+        ? (vendedor['ativo'] ? 1 : 0)
+        : (vendedor['ativo'] is int ? vendedor['ativo'] : 1),
+  };
+  await _insertOrReplaceFiltered(db, 'vendedores', v);
+}
+
+Future<Map<String, dynamic>?> loginLocalVendedor(String codigo, String senha) async {
+  final db = await getDb();
+  final rows = await db.query(
+    'vendedores',
+    where: 'codigo = ? AND senha = ?',
+    whereArgs: [codigo, senha],
+    limit: 1,
+  );
+  if (rows.isEmpty) return null;
+  return rows.first;
+}
+
+/// -------- CLIENTES --------
+
+Future<void> salvarClienteLocal(Map<String, dynamic> cliente) async {
+  final db = await getDb();
+  final map = {
+    'id': cliente['id'],
+    'nome': cliente['nome'],
+    'nome_fantasia': cliente['nome_fantasia'],
+    'cpf_cnpj': cliente['cpf_cnpj'],
+    'telefone': cliente['telefone'],
+    'whatsapp': cliente['whatsapp'],
+    'email': cliente['email'],
+    'endereco': cliente['endereco'],
+    'cidade': cliente['cidade'],
+    'anotacao': cliente['anotacao'],
+    'ativo': (cliente['ativo'] is bool)
+        ? (cliente['ativo'] ? 1 : 0)
+        : (cliente['ativo'] is int ? cliente['ativo'] : 1),
+    'datahora': cliente['datahora'] ?? DateTime.now().toUtc().toIso8601String(),
+    'insc_estadual': cliente['insc_estadual'],
+    'cep': cliente['cep'],
+  };
+  await _insertOrReplaceFiltered(db, 'clientes', map);
+}
+
+Future<List<Map<String, dynamic>>> listarClientes() async {
+  final db = await getDb();
+  return db.query('clientes', orderBy: 'nome COLLATE NOCASE ASC');
+}
+
+/// -------- PRODUTOS --------
+
+Future<List<Map<String, dynamic>>> listarProdutos() async {
+  final db = await getDb();
+  return db.query(
+    'produtos',
+    columns: ['id', 'nome', 'preco'],
+    where: 'ativo IS NULL OR ativo = 1',
+    orderBy: 'nome COLLATE NOCASE ASC',
+  );
+}
+
+Future<void> salvarProdutoLocal(Map<String, dynamic> produto) async {
+  final db = await getDb();
+  final p = {
+    'id': produto['id'],
+    'codigo': produto['codigo'],
+    'nome': produto['nome'],
+    'unidade': produto['unidade'],
+    'preco': (produto['preco'] is num) ? (produto['preco'] as num).toDouble() : 0.0,
+    'ativo': (produto['ativo'] is bool)
+        ? (produto['ativo'] ? 1 : 0)
+        : (produto['ativo'] is int ? produto['ativo'] : 1),
+  };
+  await _insertOrReplaceFiltered(db, 'produtos', p);
+}
+
+/// -------- PEDIDOS --------
+
+Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
+  final db = await getDb();
+  final map = <String, dynamic>{
+    'numero': pedido['numero']?.toString(),
+    // 'id' é definido logo abaixo (faixa local segura para rascunhos novos)
+    'produtos': _ensureProdutosJson(pedido['produtos']),
+    'total': (pedido['total'] is num) ? (pedido['total'] as num).toDouble() : 0.0,
+    'status': (pedido['status'] ?? 'salvo').toString(),
+    'datahora': (pedido['datahora'] is String && (pedido['datahora'] as String).isNotEmpty)
+        ? pedido['datahora']
+        : DateTime.now().toUtc().toIso8601String(),
+    'vendedor_codigo': pedido['vendedor_codigo']?.toString(),
+    'vendedor_nome': pedido['vendedor_nome']?.toString(),
+    'cliente_id': (pedido['cliente_id'] is int) ? pedido['cliente_id'] : null,
+    'cliente_nome': pedido['cliente_nome']?.toString(),
+    'assinatura': _bytesToHex0x(pedido['assinatura']),       // legado (mantido)
+    'assinatura_path': pedido['assinatura_path']?.toString(),// ✅ NOVO: caminho do arquivo
+    'cliente_telefone': pedido['cliente_telefone']?.toString(),
+    'cliente_endereco': pedido['cliente_endereco']?.toString(),
+    'cliente_cidade': pedido['cliente_cidade']?.toString(),
+    'cliente_cpf_cnpj': pedido['cliente_cpf_cnpj']?.toString(),
+    'cliente_insc_estadual': pedido['cliente_insc_estadual']?.toString(),
+    'cliente_cep': pedido['cliente_cep']?.toString(),
+    'cliente_anotacao': pedido['cliente_anotacao']?.toString(),
+    'cliente_nome_fantasia': pedido['cliente_nome_fantasia']?.toString(),
+    'cliente_whatsapp': pedido['cliente_whatsapp']?.toString(),
+    'cliente_email': pedido['cliente_email']?.toString(),
+  };
+
+  // Define o id do registro local.
+  // - Se o pedido já tem id (ex.: veio do servidor), respeita-o.
+  // - Se é um rascunho novo, usa um id na faixa local segura (>= kLocalIdBase),
+  //   reaproveitando o id de um rascunho já existente de mesmo (numero, vendedor)
+  //   para não trocar o id a cada novo salvamento.
+  final int? idExistente = (pedido['id'] is int)
+      ? pedido['id'] as int
+      : int.tryParse('${pedido['id'] ?? ''}');
+  if (idExistente != null) {
+    map['id'] = idExistente;
+  } else {
+    int? reusar;
+    final numero = map['numero'];
+    final vend = map['vendedor_codigo'];
+    if (numero != null &&
+        '$numero'.isNotEmpty &&
+        vend != null &&
+        '$vend'.isNotEmpty) {
+      final ex = await db.query(
+        'pedidos',
+        columns: ['id'],
+        where: 'numero = ? AND vendedor_codigo = ? AND status = ?',
+        whereArgs: [numero, vend, 'salvo'],
+        limit: 1,
+      );
+      if (ex.isNotEmpty) reusar = ex.first['id'] as int?;
+    }
+    map['id'] = reusar ?? await proximoIdLocalSeguro(db);
+  }
+
+  await _insertOrReplaceFiltered(db, 'pedidos', map);
+}
+
+Future<void> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
+  final db = await getDb();
+  final id = pedido['id'];
+  if (id == null) { await salvarPedidoLocal(pedido); return; }
+
+  final map = <String, dynamic>{
+    'numero': pedido['numero']?.toString(),
+    'produtos': _ensureProdutosJson(pedido['produtos']),
+    'total': (pedido['total'] is num) ? (pedido['total'] as num).toDouble() : 0.0,
+    'status': (pedido['status'] ?? 'salvo').toString(),
+    'datahora': (pedido['datahora'] is String && (pedido['datahora'] as String).isNotEmpty)
+        ? pedido['datahora']
+        : DateTime.now().toUtc().toIso8601String(),
+    'vendedor_codigo': pedido['vendedor_codigo']?.toString(),
+    'vendedor_nome': pedido['vendedor_nome']?.toString(),
+    'cliente_id': (pedido['cliente_id'] is int) ? pedido['cliente_id'] : null,
+    'cliente_nome': pedido['cliente_nome']?.toString(),
+    'assinatura': _bytesToHex0x(pedido['assinatura']),       // legado
+    'assinatura_path': pedido['assinatura_path']?.toString(),// ✅ NOVO
+    'cliente_telefone': pedido['cliente_telefone']?.toString(),
+    'cliente_endereco': pedido['cliente_endereco']?.toString(),
+    'cliente_cidade': pedido['cliente_cidade']?.toString(),
+    'cliente_cpf_cnpj': pedido['cliente_cpf_cnpj']?.toString(),
+    'cliente_insc_estadual': pedido['cliente_insc_estadual']?.toString(),
+    'cliente_cep': pedido['cliente_cep']?.toString(),
+    'cliente_anotacao': pedido['cliente_anotacao']?.toString(),
+    'cliente_nome_fantasia': pedido['cliente_nome_fantasia']?.toString(),
+    'cliente_whatsapp': pedido['cliente_whatsapp']?.toString(),
+    'cliente_email': pedido['cliente_email']?.toString(),
+  };
+
+  final filtered = await _filterToTableColumns(db, 'pedidos', map);
+  await db.update(
+    'pedidos',
+    filtered,
+    where: 'id = ?',
+    whereArgs: [id],
+    conflictAlgorithm: sq.ConflictAlgorithm.replace,
+  );
+}
+
+Future<List<Map<String, dynamic>>> listarPedidosLocais() async {
+  final db = await getDb();
+  return db.query('pedidos', orderBy: 'datetime(datahora) DESC, id DESC');
+}
+
+/// 🔹 Somente pedidos do vendedor (para telas filtradas por login)
+Future<List<Map<String, dynamic>>> listarPedidosLocaisPorVendedor(
+    String vendedorCodigo, {
+      String? status, // opcional: 'salvo' | 'finalizado'
+    }) async {
+  final db = await getDb();
+  if (status == null) {
+    return db.query(
+      'pedidos',
+      where: 'vendedor_codigo = ?',
+      whereArgs: [vendedorCodigo],
+      orderBy: 'datetime(datahora) DESC, id DESC',
+    );
+  } else {
+    return db.query(
+      'pedidos',
+      where: 'vendedor_codigo = ? AND status = ?',
+      whereArgs: [vendedorCodigo, status],
+      orderBy: 'datetime(datahora) DESC, id DESC',
+    );
+  }
+}
+
+/// Pedidos com status 'finalizado' (útil para sync)
+Future<List<Map<String, dynamic>>> listarPedidosPendentes({String? vendedorCodigo}) async {
+  final db = await getDb();
+  if (vendedorCodigo == null) {
+    return db.query('pedidos', where: 'status = ?', whereArgs: ['finalizado'], orderBy: 'datetime(datahora) ASC');
+  }
+  return db.query(
+    'pedidos',
+    where: 'status = ? AND vendedor_codigo = ?',
+    whereArgs: ['finalizado', vendedorCodigo],
+    orderBy: 'datetime(datahora) ASC',
+  );
+}
+
+/// Muda status do pedido
+Future<int> atualizarStatusPedido(int id, String status) async {
+  final db = await getDb();
+  return db.update('pedidos', {'status': status}, where: 'id = ?', whereArgs: [id]);
+}
+
+/// Excluir pedido (para botão "Apagar")
+Future<int> apagarPedidoLocal(int id) async {
+  final db = await getDb();
+  return db.delete('pedidos', where: 'id = ?', whereArgs: [id]);
+}
+
+/// Busca o maior número numérico de pedido (campo texto).
+Future<int?> buscarUltimoNumeroPedido() async {
+  final db = await getDb();
+  final rows = await db.query('pedidos', columns: ['numero']);
+  int? maxN;
+  for (final r in rows) {
+    final s = (r['numero'] ?? '').toString().trim();
+    final n = int.tryParse(s);
+    if (n != null) {
+      if (maxN == null || n > maxN) maxN = n;
+    }
+  }
+  return maxN;
+}
+
+/// -------- Consultas de apoio (recência de clientes) --------
+
+Future<DateTime?> getUltimoPedidoCliente(int clienteId) async {
+  final db = await getDb();
+  final r = await db.rawQuery('''
+    SELECT MAX(datahora) AS last_date
+    FROM pedidos
+    WHERE cliente_id = ?
+  ''', [clienteId]);
+
+  final s = (r.isNotEmpty ? r.first['last_date'] : null) as String?;
+  if (s == null || s.isEmpty) return null;
+  try {
+    return DateTime.parse(s).toUtc();
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<Map<int, DateTime?>> getUltimoPedidoPorCliente() async {
+  final db = await getDb();
+  final rows = await db.rawQuery('''
+    SELECT cliente_id, MAX(datahora) AS last_date
+    FROM pedidos
+    WHERE cliente_id IS NOT NULL
+    GROUP BY cliente_id
+  ''');
+
+  final out = <int, DateTime?>{};
+  for (final r in rows) {
+    final id = r['cliente_id'] as int?;
+    final s = r['last_date'] as String?;
+    if (id == null) continue;
+    if (s == null || s.isEmpty) {
+      out[id] = null;
+    } else {
+      try {
+        out[id] = DateTime.parse(s).toUtc();
+      } catch (_) {
+        out[id] = null;
+      }
+    }
+  }
+  return out;
+}
+
+/// Remove duplicados de pedidos mantendo o mais novo (maior id)
+/// Apenas quando ambos (numero, vendedor_codigo) não são nulos/nem vazios.
+Future<void> _dedupPedidosByNumeroVendedor(sq.Database db) async {
+  try {
+    await db.execute('''
+      DELETE FROM pedidos
+      WHERE numero IS NOT NULL AND numero <> ''
+        AND vendedor_codigo IS NOT NULL AND vendedor_codigo <> ''
+        AND id NOT IN (
+          SELECT MAX(id) FROM pedidos
+          WHERE numero IS NOT NULL AND numero <> ''
+            AND vendedor_codigo IS NOT NULL AND vendedor_codigo <> ''
+          GROUP BY numero, vendedor_codigo
+        );
+    ''');
+    debugPrint('Deduplicação de pedidos concluída antes do índice único.');
+  } catch (e) {
+    debugPrint('Falha ao deduplicar pedidos: $e');
+  }
+}

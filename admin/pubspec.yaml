@@ -1,0 +1,52 @@
+name: milkdim_admin
+description: Painel administrativo MilkDim - Flutter + Supabase
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  supabase_flutter: ^2.3.3
+  intl: ^0.19.0
+  shared_preferences: ^2.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.3.10
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo.jpg
+    - assets/logo_circular.png
+    - assets/icon.png
+
+# --- REMOVER o bloco antigo flutter_icons (depreciado) ---
+
+flutter_native_splash:
+  color: "#FFE066"
+  image: assets/logo_circular.png
+  android_12:
+    color: "#FFE066"
+    image: assets/logo_circular.png
+
+# --- Ícone para Windows com o plugin novo ---
+flutter_launcher_icons:
+  android: false
+  ios: false
+  windows:
+    generate: true
+    # Use PNG quadrado ≥512x512 para melhor resultado.
+    # Se preferir o JPG, pode apontar para ele, mas PNG costuma sair melhor.
+    image_path: assets/logo.jpg
+    # icon_size é opcional (default 48). Deixe o plugin gerar os tamanhos.
+    # icon_size: 48

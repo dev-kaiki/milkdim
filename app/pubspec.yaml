@@ -1,0 +1,71 @@
+name: milkdim_app
+description: Aplicativo de pedidos MilkDim Alimentos
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"      # estável com Flutter 3.22+
+  flutter: ">=3.22.0"        # garante PopScope e Color.withValues
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # Banco de dados local (mobile e desktop)
+  sqflite: ^2.3.3
+  sqflite_common_ffi: ^2.3.3
+  sqlite3_flutter_libs: ^0.5.24
+  path: ^1.9.0
+
+  # Supabase (API, sync online)
+  supabase_flutter: ^2.3.3
+
+  # PDF e impressão
+  pdf: ^3.11.3
+  printing: ^5.14.2
+
+  # Assinatura digital
+  signature: ^5.5.0
+
+  # Compartilhamento de arquivos (PDF, JSON)
+  share_plus: ^7.2.1
+
+  # Arquivos e diretórios temporários
+  path_provider: ^2.1.2
+
+  # Datas e formatação
+  intl: ^0.19.0
+
+  # Conversões utilitárias (ex.: hex <-> bytes)
+  convert: ^3.1.1
+
+  # Preferências locais (login: última sincronização)
+  shared_preferences: ^2.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo.jpg
+    - assets/logo_circular.png
+    - assets/icon.png
+    - assets/fonts/NotoSans-Regular.ttf
+    - assets/fonts/NotoSans-Bold.ttf
+    - assets/fonts/NotoSans-Italic.ttf
+
+
+# 👇 Usar SEMPRE esta chave nova (a antiga 'flutter_icons' foi depreciada)
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon.png"
+  windows:
+    generate: true
+    image_path: "assets/icon.png"
+    icon_size: 256   # opcional; o plugin gera os tamanhos necessários
