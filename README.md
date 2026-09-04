@@ -36,6 +36,22 @@ flutter run \
 
 Both refuse to start without them rather than falling back to a default.
 
+## Platforms
+
+Android, iOS, macOS and web, for both apps. The iOS and macOS targets did not
+exist — this was an Android-and-web prototype — and were generated with proper
+bundle identifiers rather than the `com.example.*` prefix `flutter create`
+leaves behind, which Apple refuses to provision at all.
+
+The entitlement that matters is `com.apple.security.network.client`. The macOS
+App Sandbox blocks outgoing connections by default and the Flutter `Release`
+template declares only `app-sandbox`, so a release build launches cleanly and
+then fails every Supabase call — a failure that looks like a dead backend and
+is not. It is declared for both apps, in both configurations.
+
+The ordering client also declares `com.apple.security.print`, for the PDF
+receipt, and `files.user-selected.read-write` for saving it.
+
 ## Notes on this repository
 
 The Supabase URL and anon key that were hardcoded in `main.dart` have been removed
