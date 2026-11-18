@@ -49,6 +49,18 @@ Future<void> concluirEntradaAdmin({
   }
 }
 
+/// Reconfere `app_is_admin()` para uma sessão já salva (ex.: app fechado entre o
+/// login e a checagem). Só devolve false se o servidor responder false; erro de
+/// rede mantém a sessão.
+Future<bool> sessaoAindaEhAdmin({Future<dynamic> Function()? rpc}) async {
+  try {
+    final r = await (rpc ?? () => Supabase.instance.client.rpc('app_is_admin'))();
+    return r != false;
+  } catch (_) {
+    return true;
+  }
+}
+
 Future<void> sairAdmin() => Supabase.instance.client.auth.signOut();
 
 /// Mensagem para mostrar na tela de login.

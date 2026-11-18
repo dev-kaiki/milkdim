@@ -72,8 +72,22 @@ class _HomePageState extends State<HomePage> {
     Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
   }
 
-  void _ensureLogged() {
-    if (Supabase.instance.client.auth.currentSession == null) _goLogin();
+  Future<void> _ensureLogged() async {
+    if (Supabase.instance.client.auth.currentSession == null) {
+      _goLogin();
+      return;
+    }
+    // Sessão salva pode ser de conta não-admin (app fechado durante o login).
+    if (!await sessaoAindaEhAdmin()) {
+      try {
+        await sairAdmin();
+      } catch (_) {}
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sem acesso ao controle.')),
+      );
+      _goLogin();
+    }
   }
 
   Future<void> _signOut() async {

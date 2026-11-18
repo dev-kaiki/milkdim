@@ -91,4 +91,19 @@ void main() {
           'Sem acesso ao controle.');
     });
   });
+
+  group('sessaoAindaEhAdmin', () {
+    test('rpc false: nao e mais admin', () async {
+      expect(await sessaoAindaEhAdmin(rpc: () async => false), isFalse);
+    });
+    test('rpc true: segue', () async {
+      expect(await sessaoAindaEhAdmin(rpc: () async => true), isTrue);
+    });
+    test('rpc lanca (rede): mantem a sessao', () async {
+      expect(
+        await sessaoAindaEhAdmin(rpc: () async => throw const SocketException('x')),
+        isTrue,
+      );
+    });
+  });
 }
