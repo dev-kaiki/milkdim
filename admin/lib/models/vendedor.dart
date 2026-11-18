@@ -2,7 +2,6 @@ class Vendedor {
   final int id;
   final String codigo;
   final String nome;
-  final String senha; // plaintext por enquanto
   final bool ativo;
   final String? anotacao;
 
@@ -10,7 +9,6 @@ class Vendedor {
     required this.id,
     required this.codigo,
     required this.nome,
-    required this.senha,
     required this.ativo,
     this.anotacao,
   });
@@ -39,7 +37,6 @@ class Vendedor {
     id     : _toInt(_pick(m, 'id', 'id')),
     codigo : _toStr(_pick(m, 'codigo', 'codigo')),
     nome   : _toStr(_pick(m, 'nome', 'nome')),
-    senha  : _toStr(_pick(m, 'senha', 'senha')),
     ativo  : _toBool(_pick(m, 'ativo', 'ativo')),
     anotacao: _pick(m, 'anotacao', 'anotacao'),
   );
@@ -50,7 +47,6 @@ class Vendedor {
     'id'     : id,
     'codigo' : codigo,
     'nome'   : nome,
-    'senha'  : senha,
     'ativo'  : ativo,
     'anotacao': anotacao,
   }..removeWhere((k, v) => v == null);

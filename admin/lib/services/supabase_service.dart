@@ -29,6 +29,21 @@ class PageResult<T> {
   });
 }
 
+/// Filtros do PostgREST `or(...)`: so colunas reais do schema (sem acento).
+String filtroBuscaClientes(String t) =>
+    'nome.ilike.%$t%,nome_fantasia.ilike.%$t%,cpf_cnpj.ilike.%$t%,'
+    'telefone.ilike.%$t%,cidade.ilike.%$t%,whatsapp.ilike.%$t%,email.ilike.%$t%';
+
+String filtroBuscaProdutos(String t) =>
+    'nome.ilike.%$t%,descricao.ilike.%$t%,codigo.ilike.%$t%';
+
+String filtroBuscaVendedores(String t) =>
+    'nome.ilike.%$t%,codigo.ilike.%$t%';
+
+String filtroBuscaPedidos(String t) =>
+    'vendedor_nome.ilike.%$t%,cliente_nome.ilike.%$t%,'
+    'cliente_nome_fantasia.ilike.%$t%,numero.ilike.%$t%';
+
 class SupabaseService {
   final SupabaseClient _sb;
   SupabaseService([SupabaseClient? injected]) : _sb = injected ?? Supabase.instance.client;
@@ -49,54 +64,24 @@ class SupabaseService {
     return null;
   }
 
-  JsonMap _coerceToMap(dynamic obj) {
-    if (obj is Map) return Map<String, dynamic>.from(obj);
-    try { final r = (obj as dynamic).toInsertMap(); if (r is Map) return Map<String, dynamic>.from(r); } catch (_) {}
-    try { final r = (obj as dynamic).toUpdateMap(); if (r is Map) return Map<String, dynamic>.from(r); } catch (_) {}
-    try { final r = (obj as dynamic).toMap();        if (r is Map) return Map<String, dynamic>.from(r); } catch (_) {}
-    try { final r = (obj as dynamic).toJson();       if (r is Map) return Map<String, dynamic>.from(r); } catch (_) {}
-    throw RepoFailure('Objeto fornecido não é Map e não expõe toInsertMap/toUpdateMap/toMap/toJson.');
-  }
-
   // --------- mapeamentos DB <-> modelo (normaliza chaves) ---------
   JsonMap _produtoDbToModel(JsonMap m) => {
     'id'       : m['id'],
-    'codigo'   : m['codigo'] ?? m['código'],
+    'codigo'   : m['codigo'],
     'nome'     : m['nome'],
     'unidade'  : m['unidade'],
-    'preco'    : m['preco'] ?? m['preço'],
-    'descricao': m['descricao'] ?? m['descrição'],
+    'preco'    : m['preco'],
+    'descricao': m['descricao'],
     'ativo'    : _toBool(m['ativo']),
-    'datahora' : m['datahora'],
-  };
-
-  JsonMap _produtoModelToDb(JsonMap m) => {
-    'id'       : m['id'],
-    'código'   : _nullIfEmpty(m['codigo']),
-    'nome'     : _nullIfEmpty(m['nome']),
-    'unidade'  : _nullIfEmpty(m['unidade']),
-    'preço'    : m['preco'],
-    'descrição': _nullIfEmpty(m['descricao']),
-    'ativo'    : m['ativo'],
     'datahora' : m['datahora'],
   };
 
   JsonMap _vendedorDbToModel(JsonMap m) => {
     'id'      : m['id'],
-    'codigo'  : m['codigo'] ?? m['código'],
+    'codigo'  : m['codigo'],
     'nome'    : m['nome'],
-    'senha'   : m['senha'],
-    'anotacao': m['anotacao'] ?? m['anotação'],
+    'anotacao': m['anotacao'],
     'ativo'   : _toBool(m['ativo']),
-  };
-
-  JsonMap _vendedorModelToDb(JsonMap m) => {
-    'id'      : m['id'],
-    'código'  : _nullIfEmpty(m['codigo']),
-    'nome'    : _nullIfEmpty(m['nome']),
-    'senha'   : _nullIfEmpty(m['senha']),
-    'anotação': _nullIfEmpty(m['anotacao']),
-    'ativo'   : m['ativo'],
   };
 
   JsonMap _clienteDbToModel(JsonMap m) => {
@@ -105,33 +90,16 @@ class SupabaseService {
     'nome_fantasia' : m['nome_fantasia'],
     'endereco'      : m['endereco'],
     'cidade'        : m['cidade'],
-    'cep'           : m['cep'] ?? m['cepa'],
+    'cep'           : m['cep'],
     'cpf_cnpj'      : m['cpf_cnpj'],
     'insc_estadual' : m['insc_estadual'],
     'telefone'      : m['telefone'],
-    'whatsapp'      : m['whatsapp'] ?? m['WhatsApp'],
-    'email'         : m['email'] ?? m['e-mail'],
-    'anotacao'      : m['anotacao'] ?? m['anotação'],
+    'whatsapp'      : m['whatsapp'],
+    'email'         : m['email'],
+    'anotacao'      : m['anotacao'],
     'ativo'         : _toBool(m['ativo']),
     'datahora'      : m['datahora'],
-    'ultimo_pedido' : m['ultimo_pedido'] ?? m['último_pedido'],
-  };
-
-  JsonMap _clienteModelToDb(JsonMap m) => {
-    'id'            : m['id'],
-    'nome'          : _nullIfEmpty(m['nome']),
-    'nome_fantasia' : _nullIfEmpty(m['nome_fantasia']),
-    'endereco'      : _nullIfEmpty(m['endereco']),
-    'cidade'        : _nullIfEmpty(m['cidade']),
-    'cep'           : _nullIfEmpty(m['cep']),
-    'cpf_cnpj'      : _nullIfEmpty(m['cpf_cnpj']),
-    'insc_estadual' : _nullIfEmpty(m['insc_estadual']),
-    'telefone'      : _nullIfEmpty(m['telefone']),
-    'WhatsApp'      : _nullIfEmpty(m['whatsapp']),
-    'e-mail'        : _nullIfEmpty(m['email']),
-    'anotacao'      : _nullIfEmpty(m['anotacao']),
-    'ativo'         : m['ativo'],
-    'datahora'      : m['datahora'],
+    'ultimo_pedido' : m['ultimo_pedido'],
   };
 
   JsonMap _pedidoDbToModel(JsonMap m) => {
@@ -139,13 +107,13 @@ class SupabaseService {
     'datahora'              : m['datahora'],
     'status'                : m['status'],
     'total'                 : m['total'],
-    'numero'                : m['numero'] ?? m['número'],
+    'numero'                : m['numero'],
     'vendedor_codigo'       : m['vendedor_codigo'],
     'vendedor_nome'         : m['vendedor_nome'],
-    'cliente_id'            : m['cliente_id'] ?? m['ID do cliente'],
-    'cliente_nome'          : m['cliente_nome'] ?? m['nome_do_cliente'] ?? m['cliente_nome_fantasia'],
-    'cliente_email'         : m['cliente_email'] ?? m['e-mail do cliente'],
-    'cliente_whatsapp'      : m['cliente_whatsapp'] ?? m['cliente_whatspp'],
+    'cliente_id'            : m['cliente_id'],
+    'cliente_nome'          : m['cliente_nome'] ?? m['cliente_nome_fantasia'],
+    'cliente_email'         : m['cliente_email'],
+    'cliente_whatsapp'      : m['cliente_whatsapp'],
     'cliente_telefone'      : m['cliente_telefone'],
     'cliente_endereco'      : m['cliente_endereco'],
     'cliente_cidade'        : m['cliente_cidade'],
@@ -155,33 +123,6 @@ class SupabaseService {
     'cliente_anotacao'      : m['cliente_anotacao'],
     'produtos'              : m['produtos'],
   };
-
-  JsonMap _pedidoModelToDb(JsonMap m) => {
-    'id'                    : m['id'],
-    'datahora'              : m['datahora'],
-    'status'                : m['status'],
-    'total'                 : m['total'],
-    'número'                : _nullIfEmpty(m['numero']),
-    'vendedor_codigo'       : _nullIfEmpty(m['vendedor_codigo']),
-    'vendedor_nome'         : _nullIfEmpty(m['vendedor_nome']),
-    'ID do cliente'         : m['cliente_id'],
-    'nome_do_cliente'       : _nullIfEmpty(m['cliente_nome']),
-    'e-mail do cliente'     : _nullIfEmpty(m['cliente_email']),
-    'cliente_whatspp'       : _nullIfEmpty(m['cliente_whatsapp']),
-    'cliente_telefone'      : _nullIfEmpty(m['cliente_telefone']),
-    'cliente_endereco'      : _nullIfEmpty(m['cliente_endereco']),
-    'cliente_cidade'        : _nullIfEmpty(m['cliente_cidade']),
-    'cliente_cpf_cnpj'      : _nullIfEmpty(m['cliente_cpf_cnpj']),
-    'cliente_insc_estadual' : _nullIfEmpty(m['cliente_insc_estadual']),
-    'cliente_cep'           : _nullIfEmpty(m['cliente_cep']),
-    'cliente_anotacao'      : _nullIfEmpty(m['cliente_anotacao']),
-    'produtos'              : m['produtos'],
-  };
-
-  String? _nullIfEmpty(dynamic v) {
-    final s = (v ?? '').toString().trim();
-    return s.isEmpty ? null : s;
-  }
 
   // ----------------- CLIENTES -----------------
   Future<List<Cliente>> buscarClientes({
@@ -197,16 +138,7 @@ class SupabaseService {
 
       if (q != null && q.trim().isNotEmpty) {
         final term = _escapeIlike(q.trim());
-        // inclui colunas com acento/maiúsculas usando aspas
-        query.or(
-          'nome.ilike.%$term%,'
-              'nome_fantasia.ilike.%$term%,'
-              'cpf_cnpj.ilike.%$term%,'
-              'telefone.ilike.%$term%,'
-              'cidade.ilike.%$term%,'
-              '"WhatsApp".ilike.%$term%,'
-              '"e-mail".ilike.%$term%',
-        );
+        query.or(filtroBuscaClientes(term));
       }
       if (somenteAtivos != null) query.eq('ativo', somenteAtivos);
 
@@ -261,7 +193,7 @@ class SupabaseService {
 
       if (q != null && q.trim().isNotEmpty) {
         final term = _escapeIlike(q.trim());
-        query.or('nome.ilike.%$term%,"descrição".ilike.%$term%');
+        query.or(filtroBuscaProdutos(term));
       }
       if (somenteAtivos != null) query.eq('ativo', somenteAtivos);
 
@@ -313,7 +245,7 @@ class SupabaseService {
 
       if (q != null && q.trim().isNotEmpty) {
         final term = _escapeIlike(q.trim());
-        query.or('nome.ilike.%$term%,"código".ilike.%$term%');
+        query.or(filtroBuscaVendedores(term));
       }
       if (somenteAtivos != null) query.eq('ativo', somenteAtivos);
 
@@ -332,46 +264,41 @@ class SupabaseService {
     }
   }
 
-  // ====== LOGIN ======
-  Future<Vendedor?> autenticarVendedor(String codigo, String senha) async {
-    try {
-      final res = await _sb
-          .from('vendedores')
-          .select('id,"código",nome,ativo,anotação') // sem "senha"
-          .eq('código', codigo) // <- coluna com acento
-          .maybeSingle();
-
-      final row = (res == null) ? null : Map<String, dynamic>.from(res as Map);
-      if (row == null) return null;
-      if (!_toBool(row['ativo'])) return null;
-
-      final ok = await autenticarAdmin(senha);
-      if (!ok) return null;
-
-      // normaliza para o modelo
-      return Vendedor.fromMap(_vendedorDbToModel(row));
-    } catch (e) {
-      throw RepoFailure('Erro ao autenticar (vendedor via acesso_admin): $e');
-    }
+  // ====== ESCRITA POR RPC (so admin; erros chegam como PostgrestException) ======
+  Future<void> criarVendedor({
+    required String codigo,
+    required String nome,
+    required String senha,
+    String? anotacao,
+    bool ativo = true,
+    bool isAdmin = false,
+  }) async {
+    await _sb.rpc('app_criar_vendedor', params: {
+      'p_codigo': codigo,
+      'p_nome': nome,
+      'p_senha': senha,
+      'p_anotacao': anotacao,
+      'p_ativo': ativo,
+      'p_is_admin': isAdmin,
+    });
   }
 
-  Future<bool> autenticarAdmin(String senha) async {
-    try {
-      final pass = senha.trim();
-      if (pass.isEmpty) return false;
+  Future<void> alterarSenhaVendedor(String codigo, String senha) async {
+    await _sb.rpc('app_alterar_senha_vendedor', params: {
+      'p_codigo': codigo,
+      'p_senha': senha,
+    });
+  }
 
-      final res = await _sb
-          .from('acesso_admin')
-          .select('id')
-          .eq('ativo', true)
-          .eq('senha', pass)
-          .limit(1)
-          .maybeSingle();
+  Future<void> definirAtivoVendedor(String codigo, bool ativo) async {
+    await _sb.rpc('app_definir_ativo_vendedor', params: {
+      'p_codigo': codigo,
+      'p_ativo': ativo,
+    });
+  }
 
-      return res != null;
-    } catch (e) {
-      throw RepoFailure('Erro ao verificar acesso admin: $e');
-    }
+  Future<void> excluirVendedor(String codigo) async {
+    await _sb.rpc('app_excluir_vendedor', params: {'p_codigo': codigo});
   }
 
   // ----------------- PEDIDOS -----------------
@@ -389,12 +316,7 @@ class SupabaseService {
 
       if (q != null && q.trim().isNotEmpty) {
         final term = _escapeIlike(q.trim());
-        query.or(
-          'vendedor_nome.ilike.%$term%,'
-              'nome_do_cliente.ilike.%$term%,'
-              '"cliente_nome_fantasia".ilike.%$term%,'
-              '"número".ilike.%$term%',
-        );
+        query.or(filtroBuscaPedidos(term));
       }
       if (status != null && status.isNotEmpty) query.eq('status', status);
       if (vendedorCodigo != null && vendedorCodigo.isNotEmpty) {
@@ -452,33 +374,6 @@ class SupabaseService {
         .stream(primaryKey: ['id'])
         .order('datahora', ascending: false)
         .map((rows) => rows.map((e) => Pedido.fromMap(_pedidoDbToModel(JsonMap.from(e as Map)))).toList());
-  }
-
-  Future<Pedido> inserirPedido(dynamic pedido) async {
-    try {
-      final model = _coerceToMap(pedido);
-      model['datahora'] ??= DateTime.now().toIso8601String();
-      final payload = _pedidoModelToDb(model);
-      final JsonMap inserted = await _sb.from('pedidos').insert(payload).select().single();
-      return Pedido.fromMap(_pedidoDbToModel(JsonMap.from(inserted)));
-    } catch (e) {
-      throw RepoFailure('Erro ao inserir pedido: $e');
-    }
-  }
-
-  Future<Pedido> atualizarPedido(dynamic pedido) async {
-    try {
-      final model = _coerceToMap(pedido);
-      final id = model['id'] ?? (pedido as dynamic).id;
-      if (id == null) throw RepoFailure('Pedido sem ID para atualizar');
-
-      final payload = _pedidoModelToDb(model);
-      final JsonMap updated =
-      await _sb.from('pedidos').update(payload).eq('id', id as Object).select().single();
-      return Pedido.fromMap(_pedidoDbToModel(JsonMap.from(updated)));
-    } catch (e) {
-      throw RepoFailure('Erro ao atualizar pedido: $e');
-    }
   }
 
   Future<void> deletarPedido(int id) async {
