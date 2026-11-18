@@ -317,18 +317,6 @@ Future<void> salvarVendedorLocal(Map<String, dynamic> vendedor) async {
   });
 }
 
-Future<Map<String, dynamic>?> loginLocalVendedor(String codigo, String senha) async {
-  final db = await getDb();
-  final rows = await db.query(
-    'vendedores',
-    where: 'codigo = ? AND senha = ?',
-    whereArgs: [codigo, senha],
-    limit: 1,
-  );
-  if (rows.isEmpty) return null;
-  return rows.first;
-}
-
 /// -------- CLIENTES --------
 
 Future<void> salvarClienteLocal(Map<String, dynamic> cliente) async {

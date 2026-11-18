@@ -338,17 +338,21 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
       // ignore: avoid_print
       print('[EDIT] atualizando pedido nº=${pedidoAtualizado['numero']} | status=$status total=$total | assinatura=${_assinatura == null ? 'null' : '${_assinatura!.length} bytes (tipo=${imageTypeFromBytes(_assinatura!)})'} | path=$caminhoAss');
 
-      // 1) salva local
-      await atualizarPedidoLocal(pedidoAtualizado);
+      // Sob a trava: um envio de pendentes em andamento não pode gravar o eco
+      // antigo do servidor por cima desta edição.
+      await comTravaDePedidos(() async {
+        // 1) salva local
+        await atualizarPedidoLocal(pedidoAtualizado);
 
-      // 2) se finalizado, envia ao Supabase — envie o pedido COMPLETO.
-      // O helper removerá `assinatura_path` do payload remoto e depois
-      // regravará o mesmo valor no SQLite ao consolidar o retorno.
-      if (status == 'finalizado') {
-        // ignore: avoid_print
-        print('[EDIT] enviando ao Supabase (preservando assinatura_path local) ...');
-        await salvarPedidoSupabase(pedidoAtualizado);
-      }
+        // 2) se finalizado, envia ao Supabase — envie o pedido COMPLETO.
+        // O helper removerá `assinatura_path` do payload remoto e depois
+        // regravará o mesmo valor no SQLite ao consolidar o retorno.
+        if (status == 'finalizado') {
+          // ignore: avoid_print
+          print('[EDIT] enviando ao Supabase (preservando assinatura_path local) ...');
+          await salvarPedidoSupabase(pedidoAtualizado);
+        }
+      });
 
       if (!mounted) return;
       // ignore: avoid_print

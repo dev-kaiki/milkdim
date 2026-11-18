@@ -9,9 +9,11 @@
 // - Ao receber do Supabase, aplica no SQLite com REPLACE e faz limpeza local para evitar duplicação.
 // - ***Preserva sempre `assinatura_path` no SQLite local***.
 
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:io' show InternetAddress;
 
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -43,7 +45,58 @@ Map<String, dynamic> _stripNulls(Map<String, dynamic> m) {
   return out;
 }
 
+// ---------------------- Trava de pedidos ----------------------
+
+Future<void> _filaPedidos = Future<void>.value();
+final Object _dentroDaTrava = Object();
+
+/// Roda [acao] sozinha: envio de pendentes e gravação/envio de pedido nunca
+/// correm ao mesmo tempo (senão o eco antigo do servidor sobrescreve uma edição
+/// mais nova e limpa o `pendente_envio` dela). Chamadas aninhadas na mesma
+/// cadeia (ex.: `subirPedidosPendentes` -> `salvarPedidoSupabase`) não esperam
+/// por si mesmas.
+Future<T> comTravaDePedidos<T>(Future<T> Function() acao) {
+  if (Zone.current[_dentroDaTrava] == true) return acao();
+  final anterior = _filaPedidos;
+  final liberar = Completer<void>();
+  _filaPedidos = liberar.future;
+  return anterior
+      .then((_) => runZoned(acao, zoneValues: {_dentroDaTrava: true}))
+      .whenComplete(liberar.complete);
+}
+
 // ---------------------- Sincronização geral ----------------------
+
+/// Há internet? (resolução de DNS simples)
+Future<bool> temInternet() async {
+  try {
+    final result = await InternetAddress.lookup('example.com');
+    return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+  } catch (_) {
+    return false;
+  }
+}
+
+const String _keyUltimaSync = 'ultima_sincronizacao';
+
+/// `true` se nunca sincronizou ou a última sync completa tem 7 dias ou mais.
+Future<bool> syncVencida() async {
+  final prefs = await SharedPreferences.getInstance();
+  final ultima = prefs.getInt(_keyUltimaSync);
+  if (ultima == null) return true;
+  final desde = DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(ultima));
+  return desde >= const Duration(days: 7);
+}
+
+/// [sincronizarTudo] e, só se deu certo, grava a data da última sync.
+Future<bool> sincronizarTudoERegistrar({required String vendedorCodigo}) async {
+  final ok = await sincronizarTudo(vendedorCodigo: vendedorCodigo);
+  if (ok) {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keyUltimaSync, DateTime.now().millisecondsSinceEpoch);
+  }
+  return ok;
+}
 
 /// Sync completa do vendedor logado: baixa clientes, produtos e os pedidos
 /// dele, depois tenta subir os pedidos que aguardam envio.
@@ -177,7 +230,12 @@ Future<void> sincronizarProdutos() async {
 // ---------------------- PEDIDOS ----------------------
 
 /// Baixa só os pedidos do vendedor (o RLS já filtra; o app filtra também).
-Future<void> sincronizarPedidos({required String vendedorCodigo}) async {
+/// Roda sob [comTravaDePedidos]: a foto baixada não pode cair por cima de um
+/// envio que terminou depois dela.
+Future<void> sincronizarPedidos({required String vendedorCodigo}) =>
+    comTravaDePedidos(() => _sincronizarPedidos(vendedorCodigo));
+
+Future<void> _sincronizarPedidos(String vendedorCodigo) async {
   try {
     final response =
         await supabase.from('pedidos').select('*').eq('vendedor_codigo', vendedorCodigo);
@@ -289,10 +347,17 @@ Future<void> aplicarPedidosRemotos(List<Map<String, dynamic>> remotos) async {
 /// Sobe os pedidos finalizados do vendedor que ainda aguardam envio
 /// (`pendente_envio = 1`). Cada falha deixa o pedido pendente e segue para o
 /// próximo. Chamar ao abrir com internet, depois do login e depois da sync.
+/// Roda sob [comTravaDePedidos].
 Future<({int enviados, int falhas})> subirPedidosPendentes({
   required String vendedorCodigo,
   Future<void> Function(Map<String, dynamic>) enviar = salvarPedidoSupabase,
-}) async {
+}) =>
+    comTravaDePedidos(() => _subirPedidosPendentes(vendedorCodigo, enviar));
+
+Future<({int enviados, int falhas})> _subirPedidosPendentes(
+  String vendedorCodigo,
+  Future<void> Function(Map<String, dynamic>) enviar,
+) async {
   final rows = await listarPedidosPendentesEnvio(vendedorCodigo);
   var enviados = 0;
   var falhas = 0;
@@ -426,7 +491,11 @@ Future<int> ensureClienteSupabaseId(Map<String, dynamic> pedido) async {
 /// - Se NÃO tiver, tenta localizar por (numero,vendedor_codigo) e faz UPDATE por id; se não achar, INSERT
 /// Em todos os casos, aplica o retorno no SQLite e LIMPA duplicados locais.
 /// ***E preserva sempre o `assinatura_path` local***.
-Future<void> salvarPedidoSupabase(Map<String, dynamic> pedido) async {
+/// Roda sob [comTravaDePedidos].
+Future<void> salvarPedidoSupabase(Map<String, dynamic> pedido) =>
+    comTravaDePedidos(() => _salvarPedidoSupabase(pedido));
+
+Future<void> _salvarPedidoSupabase(Map<String, dynamic> pedido) async {
   try {
     final int? idLocalAntigo =
     (pedido['id'] is int) ? (pedido['id'] as int) : int.tryParse('${pedido['id']}');

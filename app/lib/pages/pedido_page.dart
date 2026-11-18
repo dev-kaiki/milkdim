@@ -414,17 +414,20 @@ class _PedidoPageState extends State<PedidoPage> {
         'assinatura_path': caminhoAss,
       };
 
-      // Salva local
-      await salvarPedidoLocal(pedido);
+      // Sob a trava: não concorre com um envio de pendentes em andamento.
+      await comTravaDePedidos(() async {
+        // Salva local
+        await salvarPedidoLocal(pedido);
 
-      // Se finalizado, envia ao Supabase (e PRESERVA assinatura_path no SQLite)
-      if (status == 'finalizado') {
-        // 👇 Envie o pedido COMPLETO — o helper remove `assinatura_path` do payload do servidor
-        // e depois regrava o mesmo valor no SQLite ao consolidar o retorno.
-        // ignore: avoid_print
-        print('[PEDIDO] enviando ao Supabase (preservando assinatura_path local) ...');
-        await salvarPedidoSupabase(pedido);
-      }
+        // Se finalizado, envia ao Supabase (e PRESERVA assinatura_path no SQLite)
+        if (status == 'finalizado') {
+          // 👇 Envie o pedido COMPLETO — o helper remove `assinatura_path` do payload do servidor
+          // e depois regrava o mesmo valor no SQLite ao consolidar o retorno.
+          // ignore: avoid_print
+          print('[PEDIDO] enviando ao Supabase (preservando assinatura_path local) ...');
+          await salvarPedidoSupabase(pedido);
+        }
+      });
 
       if (!mounted) return;
       // ignore: avoid_print

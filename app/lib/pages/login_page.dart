@@ -1,18 +1,37 @@
 // lib/pages/login_page.dart
 //
-// Ajustes:
-// • mounted checks após awaits para evitar use_build_context_synchronously
-// • troca de withOpacity() -> withValues(alpha: …)
-// • mensagens mais consistentes
-// • pequenos refinamentos de fluxo de login/sincronização
+// Login pelo Supabase Auth (`entrar`). Precisa de internet só no primeiro
+// acesso do aparelho ou depois de "Sair"; com sessão salva o app abre na Home.
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../utils/colors.dart';
-import '../utils/supabase_helper.dart';
-import '../utils/db.dart';
 import '../utils/auth.dart';
+import '../utils/supabase_helper.dart' show temInternet;
 import 'home_page.dart';
+
+const String _msgInativo = 'Vendedor inativo. Fale com o administrador.';
+
+/// Texto mostrado quando [entrar] falha. [online] diz se há internet agora.
+String mensagemErroLogin(Object erro, {required bool online}) {
+  if (erro is LoginRecusado) return erro.mensagem;
+  if (!online) return 'O primeiro acesso precisa de internet.';
+  if (erro is AuthException) {
+    // Banido também chega como 400: testar antes do 400 genérico.
+    if (erro.code == 'user_banned' || erro.message.toLowerCase().contains('banned')) {
+      return _msgInativo;
+    }
+    if (erro.statusCode == '400') return 'Código ou senha inválidos.';
+  }
+  return 'Não foi possível entrar. Tente de novo.';
+}
+
+int _loginsMontados = 0;
+
+/// `true` enquanto a tela de login está montada (evita navegar para ela de novo
+/// quando o `signOut` acontece a partir dela).
+bool get telaDeLoginAberta => _loginsMontados > 0;
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -26,19 +45,10 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _senhaCtrl = TextEditingController();
   bool carregando = false;
 
-  static const String _keyUltimaSync = 'ultima_sincronizacao';
-
-  Future<bool> _syncEmDia() async {
-    final prefs = await SharedPreferences.getInstance();
-    final lastSyncMillis = prefs.getInt(_keyUltimaSync);
-    if (lastSyncMillis == null) return false;
-    final lastSync = DateTime.fromMillisecondsSinceEpoch(lastSyncMillis);
-    return DateTime.now().difference(lastSync) < const Duration(days: 7);
-  }
-
-  Future<void> _atualizarUltimaSync() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_keyUltimaSync, DateTime.now().millisecondsSinceEpoch);
+  @override
+  void initState() {
+    super.initState();
+    _loginsMontados++;
   }
 
   bool _isAtivo(dynamic valor) {
@@ -49,7 +59,10 @@ class _LoginPageState extends State<LoginPage> {
     return false;
   }
 
+  /// Login sempre pelo Supabase Auth. A sync de 7 dias roda depois, na Home,
+  /// e nunca impede a entrada.
   Future<void> _login() async {
+    if (carregando) return;
     final codigo = _codigoCtrl.text.trim();
     final senha = _senhaCtrl.text;
     if (codigo.isEmpty || senha.isEmpty) {
@@ -57,114 +70,34 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
-    final emDia = await _syncEmDia();
-    if (!emDia) {
-      await _showSyncDialogObrigatorio();
-      return;
-    }
-
     setState(() => carregando = true);
 
-    // LOGIN LOCAL
-    final vendedorLocal = await loginLocalVendedor(codigo, senha);
-    if (!mounted) return;
-    if (vendedorLocal != null) {
-      if (!_isAtivo(vendedorLocal['ativo'])) {
-        _showMsg('Vendedor inativo! Consulte o administrador.');
-      } else {
-        _showMsg('Login realizado com sucesso!', isError: false);
-        setState(() => carregando = false);
-        if (!mounted) return;
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => HomePage(vendedor: vendedorLocal)),
-        );
-        return;
-      }
-      setState(() => carregando = false);
-      return;
-    }
-
-    // LOGIN SUPABASE AUTH
-    Map<String, dynamic>? vendedorSupabase;
+    final Map<String, dynamic> vendedor;
     try {
-      vendedorSupabase = await entrar(codigo, senha);
-    } on LoginRecusado catch (e) {
+      vendedor = await entrar(codigo, senha);
+    } catch (e) {
+      final online = e is LoginRecusado || await temInternet();
       if (!mounted) return;
-      _showMsg(e.mensagem);
-      setState(() => carregando = false);
-      return;
-    } catch (_) {
-      vendedorSupabase = null;
-    }
-    if (!mounted) return;
-    if (vendedorSupabase != null) {
-      if (!_isAtivo(vendedorSupabase['ativo'])) {
-        _showMsg('Vendedor inativo! Consulte o administrador.');
-      } else {
-        _showMsg('Login online OK!', isError: false);
-        setState(() => carregando = false);
-        final vendedor = vendedorSupabase;
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => HomePage(vendedor: vendedor)),
-        );
-        return;
-      }
+      _showMsg(mensagemErroLogin(e, online: online));
       setState(() => carregando = false);
       return;
     }
 
-    _showMsg('Login ou senha inválidos!');
-    setState(() => carregando = false);
-  }
-
-  Future<void> _sincronizar() async {
-    final vendedor = await vendedorLocal();
-    final codigo = vendedor?['codigo']?.toString() ?? '';
-    if (codigo.isEmpty) {
-      _showMsg('Entre com internet para sincronizar.');
+    if (!_isAtivo(vendedor['ativo'])) {
+      // Login acabou de dar certo: não há pendentes a proteger aqui.
+      try {
+        await Supabase.instance.client.auth.signOut();
+      } catch (_) {}
+      if (!mounted) return;
+      _showMsg(_msgInativo);
+      setState(() => carregando = false);
       return;
     }
-    if (!mounted) return;
-    setState(() => carregando = true);
-    final sucesso = await sincronizarTudo(vendedorCodigo: codigo);
-    if (!mounted) return;
-    if (sucesso) {
-      await _atualizarUltimaSync();
-      if (!mounted) return;
-      _showMsg('Sincronização realizada!', isError: false);
-    } else {
-      _showMsg('Erro ao sincronizar dados.');
-    }
-    setState(() => carregando = false);
-  }
 
-  Future<void> _showSyncDialogObrigatorio() async {
     if (!mounted) return;
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: const Text('Sincronização obrigatória'),
-        content: const Text(
-          'Você precisa sincronizar os dados antes de entrar no sistema.\n\n'
-              'A sincronização deve ser feita a cada 7 dias para garantir funcionamento offline e atualização dos dados.',
-        ),
-        actions: [
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: milkdimOrange,
-              foregroundColor: milkdimWhite,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-            ),
-            icon: const Icon(Icons.sync),
-            label: const Text('Sincronizar agora'),
-            onPressed: () async {
-              Navigator.of(context).pop();
-              await _sincronizar();
-            },
-          ),
-        ],
-      ),
+    setState(() => carregando = false);
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => HomePage(vendedor: vendedor)),
     );
   }
 
@@ -174,7 +107,7 @@ class _LoginPageState extends State<LoginPage> {
       SnackBar(
         content: Text(msg),
         backgroundColor: isError ? milkdimDarkOrange : milkdimOrange,
-        duration: const Duration(seconds: 2),
+        duration: Duration(seconds: isError ? 4 : 2),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
@@ -183,6 +116,7 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   void dispose() {
+    _loginsMontados--;
     _codigoCtrl.dispose();
     _senhaCtrl.dispose();
     super.dispose();
@@ -259,20 +193,6 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   onPressed: _login,
                 ),
-              ),
-              const SizedBox(height: 22),
-              OutlinedButton.icon(
-                onPressed: carregando ? null : _sincronizar,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: milkdimDarkOrange,
-                  minimumSize: const Size(180, 46),
-                  side: const BorderSide(color: milkdimOrange, width: 1.2),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-                icon: const Icon(Icons.sync),
-                label: const Text('Sincronizar Dados'),
               ),
               const SizedBox(height: 38),
               Text(

@@ -1,5 +1,6 @@
 // lib/main.dart
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -9,7 +10,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:sqflite/sqflite.dart'; // expõe 'databaseFactory'
 import 'package:sqflite_common_ffi/sqflite_ffi.dart'; // sqfliteFfiInit + databaseFactoryFfi
 
+import 'utils/auth.dart';
 import 'utils/colors.dart';
+import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 
 void main() async {
@@ -64,9 +67,42 @@ class MilkDimApp extends StatefulWidget {
 
 class _MilkDimAppState extends State<MilkDimApp> {
   // A sync só roda com sessão (depois do login), nunca anônima aqui.
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  StreamSubscription<AuthState>? _authSub;
+
+  // Decidida uma vez, na abertura. Sessão salva (mesmo vencida e offline)
+  // abre direto na Home.
+  late final RotaInicial _rota = rotaInicial(
+      temSessao: Supabase.instance.client.auth.currentSession != null);
+
+  @override
+  void initState() {
+    super.initState();
+    // Sessão encerrada (Sair, senha trocada, vendedor desativado/excluído):
+    // volta para o login. Nunca mexe no SQLite. Se o signOut veio da própria
+    // tela de login (login recusado), já estamos lá.
+    _authSub = Supabase.instance.client.auth.onAuthStateChange.listen(
+      (estado) {
+        if (estado.event != AuthChangeEvent.signedOut || telaDeLoginAberta) return;
+        _navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginPage()),
+          (_) => false,
+        );
+      },
+      onError: (Object e) => debugPrint('Auth: $e'),
+    );
+  }
+
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: 'MilkDim Alimentos',
       theme: ThemeData(
         primaryColor: milkdimOrange,
@@ -120,17 +156,60 @@ class _MilkDimAppState extends State<MilkDimApp> {
         ),
       ),
       debugShowCheckedModeBanner: false,
-      home: const LoginPage(),
+      home: _rota == RotaInicial.home ? const _AberturaComSessao() : const LoginPage(),
     );
   }
 }
 
-/// 🔌 Verifica conexão com a internet
-Future<bool> temInternet() async {
-  try {
-    final result = await InternetAddress.lookup('example.com');
-    return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
-  } catch (_) {
-    return false;
+/// Com sessão salva: carrega o vendedor do aparelho e abre a Home.
+class _AberturaComSessao extends StatefulWidget {
+  const _AberturaComSessao();
+
+  @override
+  State<_AberturaComSessao> createState() => _AberturaComSessaoState();
+}
+
+class _AberturaComSessaoState extends State<_AberturaComSessao> {
+  Map<String, dynamic>? _vendedor;
+  bool _carregado = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _carregar();
+  }
+
+  Future<void> _carregar() async {
+    Map<String, dynamic>? v;
+    try {
+      v = await vendedorLocal();
+    } catch (e) {
+      debugPrint('Erro ao ler vendedor local: $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _vendedor = v;
+      _carregado = true;
+    });
+    if (v == null) {
+      // Sessão sem vendedor local: encerra depois que o login estiver na tela.
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        try {
+          await Supabase.instance.client.auth.signOut();
+        } catch (_) {}
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_carregado) {
+      return const Scaffold(
+        backgroundColor: milkdimWhite,
+        body: Center(child: CircularProgressIndicator(color: milkdimOrange)),
+      );
+    }
+    final v = _vendedor;
+    return v == null ? const LoginPage() : HomePage(vendedor: v);
   }
 }

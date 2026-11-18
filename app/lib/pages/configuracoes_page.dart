@@ -1,4 +1,7 @@
 // lib/pages/configuracoes_page.dart
+//
+// Sem PIN: só "Sincronizar" e "Cadastrar novo cliente". Cadastro de vendedor e
+// de produto ficam no app de controle.
 import 'package:flutter/material.dart';
 import '../utils/colors.dart';
 import 'novo_cliente_page.dart';
@@ -21,8 +24,11 @@ class _ConfiguracoesPageState extends State<ConfiguracoesPage> {
 
     final vendedor = await vendedorLocal();
     final codigo = vendedor?['codigo']?.toString() ?? '';
-    final sucesso =
-        codigo.isNotEmpty && await sincronizarTudo(vendedorCodigo: codigo);
+    var sucesso = false;
+    try {
+      sucesso = codigo.isNotEmpty &&
+          await sincronizarTudoERegistrar(vendedorCodigo: codigo);
+    } catch (_) {}
 
     if (!mounted) return;
     _showSnack(
