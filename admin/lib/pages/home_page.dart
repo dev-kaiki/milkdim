@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async';
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../services/auth_admin.dart';
 
 // Tabs sem conflito
 import '../tabs/vendedores_tab.dart';
@@ -24,6 +28,7 @@ class _HomePageState extends State<HomePage> {
   int _selectedIndex = 0;
   bool _loggingOut = false;
   DateTime? _lastBackPress;
+  StreamSubscription<AuthState>? _authSub;
 
   final List<Widget> _tabs = [
     const VendedoresTab(),
@@ -50,14 +55,25 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _ensureLogged());
+    // Sessão encerrada (logout, token revogado, conta desativada): volta ao login.
+    _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (data.event == AuthChangeEvent.signedOut) _goLogin();
+    });
   }
 
-  Future<void> _ensureLogged() async {
-    final prefs = await SharedPreferences.getInstance();
-    final logged = prefs.getBool('admin_logged') ?? false;
-    if (!logged && mounted) {
-      Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
-    }
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
+  }
+
+  void _goLogin() {
+    if (!mounted) return;
+    Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
+  }
+
+  void _ensureLogged() {
+    if (Supabase.instance.client.auth.currentSession == null) _goLogin();
   }
 
   Future<void> _signOut() async {
@@ -88,10 +104,8 @@ class _HomePageState extends State<HomePage> {
 
     setState(() => _loggingOut = true);
     try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('admin_logged', false);
-      if (!mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
+      await sairAdmin();
+      _goLogin();
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -58,8 +58,8 @@ class MilkDimAdminApp extends StatelessWidget {
       theme: buildAppTheme(),
       debugShowCheckedModeBanner: false,
 
-      // Inicia no login (a verificação de admin acontece na própria tela)
-      initialRoute: '/login',
+      // Só pela existência da sessão salva (nunca por isExpired).
+      initialRoute: Supabase.instance.client.auth.currentSession != null ? '/home' : '/login',
       routes: {
         '/login': (_) => const LoginPage(),
         '/home' : (_) => const HomePage(),

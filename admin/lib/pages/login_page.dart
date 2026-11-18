@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../services/auth_admin.dart';
 
 const Color milkdimYellow = Color(0xFFFFE066);
 const Color milkdimOrange = Color(0xFFE38A1D);
@@ -15,6 +16,7 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
+  final _usuarioCtrl = TextEditingController();
   final _senhaCtrl = TextEditingController();
   final _senhaFocus = FocusNode();
 
@@ -32,14 +34,12 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     _fadeAnim = CurvedAnimation(parent: _animController, curve: Curves.easeIn);
     _animController.forward();
 
-    // Se já estiver logado (flag local), pula pro /home.
+    // Se já houver sessão salva, pula pro /home.
     WidgetsBinding.instance.addPostFrameCallback((_) => _redirectIfAlreadyLogged());
   }
 
   Future<void> _redirectIfAlreadyLogged() async {
-    final prefs = await SharedPreferences.getInstance();
-    final logged = prefs.getBool('admin_logged') ?? false;
-    if (logged && mounted) {
+    if (Supabase.instance.client.auth.currentSession != null && mounted) {
       Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
     }
   }
@@ -47,6 +47,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   @override
   void dispose() {
     _animController.dispose();
+    _usuarioCtrl.dispose();
     _senhaCtrl.dispose();
     _senhaFocus.dispose();
     super.dispose();
@@ -55,34 +56,17 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final senhaInput = _senhaCtrl.text.trim();
-
     setState(() {
       _loading = true;
       _errorMsg = null;
     });
 
     try {
-      // Procura uma linha ATIVA com a senha informada
-      final res = await Supabase.instance.client
-          .from('acesso_admin')
-          .select('id')       // não traz a senha
-          .eq('ativo', true)
-          .eq('senha', senhaInput)
-          .limit(1)
-          .maybeSingle();
-
-      if (res == null) {
-        setState(() => _errorMsg = 'Senha incorreta.');
-      } else {
-        // Marca como logado e navega limpando a pilha
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('admin_logged', true);
-        if (!mounted) return;
-        Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
-      }
-    } catch (_) {
-      setState(() => _errorMsg = 'Erro de conexão.');
+      await entrarAdmin(_usuarioCtrl.text, _senhaCtrl.text);
+      if (!mounted) return;
+      Navigator.of(context).pushNamedAndRemoveUntil('/home', (_) => false);
+    } catch (e) {
+      if (mounted) setState(() => _errorMsg = mensagemErroLoginAdmin(e));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -164,7 +148,47 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                         key: _formKey,
                         child: Column(
                           children: [
-                            // SENHA ÚNICA
+                            // USUÁRIO
+                            TextFormField(
+                              controller: _usuarioCtrl,
+                              autofillHints: const [AutofillHints.username],
+                              keyboardType: TextInputType.emailAddress,
+                              autocorrect: false,
+                              textInputAction: TextInputAction.next,
+                              onFieldSubmitted: (_) => _senhaFocus.requestFocus(),
+                              onChanged: (_) {
+                                if (_errorMsg != null) setState(() => _errorMsg = null);
+                              },
+                              style: const TextStyle(
+                                fontSize: 18,
+                                color: milkdimDarkOrange,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              decoration: InputDecoration(
+                                labelText: "Usuário",
+                                labelStyle: const TextStyle(
+                                  color: milkdimDarkOrange,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
+                                  letterSpacing: 1.1,
+                                ),
+                                prefixIcon: const Icon(Icons.person_outline, color: milkdimOrange, size: 26),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                  borderSide: const BorderSide(color: milkdimOrange),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                  borderSide: const BorderSide(color: milkdimDarkOrange, width: 2),
+                                ),
+                                filled: true,
+                                fillColor: milkdimYellow.withOpacity(0.08),
+                              ),
+                              validator: (v) => (v == null || v.trim().isEmpty) ? 'Informe o usuário' : null,
+                            ),
+                            const SizedBox(height: 16),
+
+                            // SENHA
                             TextFormField(
                               controller: _senhaCtrl,
                               focusNode: _senhaFocus,
@@ -182,7 +206,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                                 fontWeight: FontWeight.w500,
                               ),
                               decoration: InputDecoration(
-                                labelText: "Senha de acesso",
+                                labelText: "Senha",
                                 labelStyle: const TextStyle(
                                   color: milkdimDarkOrange,
                                   fontWeight: FontWeight.w600,
