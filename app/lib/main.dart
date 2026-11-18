@@ -12,6 +12,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart'; // sqfliteFfiInit + databa
 
 import 'utils/auth.dart';
 import 'utils/colors.dart';
+import 'utils/http_prazo.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 
@@ -32,7 +33,12 @@ void main() async {
     if (url.isEmpty || anonKey.isEmpty) {
       throw StateError('SUPABASE_URL e SUPABASE_ANON_KEY nao configurados.');
     }
-    await Supabase.initialize(url: url, anonKey: anonKey);
+    // Prazo nas requisições: nada fica preso esperando a rede para sempre.
+    await Supabase.initialize(
+      url: url,
+      anonKey: anonKey,
+      httpClient: ClienteHttpComPrazo(),
+    );
     debugPrint('🟢 Supabase inicializado com sucesso');
 
     runApp(const MilkDimApp());

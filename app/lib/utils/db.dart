@@ -409,8 +409,9 @@ Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
   // Define o id do registro local.
   // - Se o pedido já tem id (ex.: veio do servidor), respeita-o.
   // - Se é um rascunho novo, usa um id na faixa local segura (>= kLocalIdBase),
-  //   reaproveitando o id de um rascunho já existente de mesmo (numero, vendedor)
-  //   para não trocar o id a cada novo salvamento.
+  //   reaproveitando o id de um rascunho (ou pedido aguardando envio) já
+  //   existente de mesmo (numero, vendedor) para não trocar o id a cada novo
+  //   salvamento.
   final int? idExistente = (pedido['id'] is int)
       ? pedido['id'] as int
       : int.tryParse('${pedido['id'] ?? ''}');
@@ -424,11 +425,13 @@ Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
         '$numero'.isNotEmpty &&
         vend != null &&
         '$vend'.isNotEmpty) {
+      // Rascunho ou pedido ainda aguardando envio: finalizar de novo o mesmo
+      // (numero, vendedor) atualiza a mesma linha em vez de criar outra.
       final ex = await db.query(
         'pedidos',
         columns: ['id'],
-        where: 'numero = ? AND vendedor_codigo = ? AND status = ?',
-        whereArgs: [numero, vend, 'salvo'],
+        where: "numero = ? AND vendedor_codigo = ? AND (status = 'salvo' OR pendente_envio = 1)",
+        whereArgs: [numero, vend],
         limit: 1,
       );
       if (ex.isNotEmpty) reusar = ex.first['id'] as int?;

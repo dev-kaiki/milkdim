@@ -338,28 +338,20 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
       // ignore: avoid_print
       print('[EDIT] atualizando pedido nº=${pedidoAtualizado['numero']} | status=$status total=$total | assinatura=${_assinatura == null ? 'null' : '${_assinatura!.length} bytes (tipo=${imageTypeFromBytes(_assinatura!)})'} | path=$caminhoAss');
 
-      // Sob a trava: um envio de pendentes em andamento não pode gravar o eco
-      // antigo do servidor por cima desta edição.
-      await comTravaDePedidos(() async {
-        // 1) salva local
-        await atualizarPedidoLocal(pedidoAtualizado);
-
-        // 2) se finalizado, envia ao Supabase — envie o pedido COMPLETO.
-        // O helper removerá `assinatura_path` do payload remoto e depois
-        // regravará o mesmo valor no SQLite ao consolidar o retorno.
-        if (status == 'finalizado') {
-          // ignore: avoid_print
-          print('[EDIT] enviando ao Supabase (preservando assinatura_path local) ...');
-          await salvarPedidoSupabase(pedidoAtualizado);
-        }
-      });
+      // Grava no aparelho na hora (nunca espera a rede) e, se finalizado, tenta
+      // enviar. Um envio de pendentes que esteja no ar não sobrescreve esta
+      // edição: o eco antigo é descartado em aplicarEcoDoServidor.
+      final r = await gravarPedidoEEnviar(pedidoAtualizado, novo: false);
 
       if (!mounted) return;
+      if (r == ResultadoGravacao.pendente) {
+        _showSnack('Pedido salvo. Será enviado quando houver internet.', sucesso: true);
+      }
       // ignore: avoid_print
-      print('[EDIT] concluído -> pop("$status")');
+      print('[EDIT] concluído ($r) -> pop("$status")');
       Navigator.pop(context, status);
     } catch (e) {
-      _showSnack('Erro ao atualizar: $e');
+      if (mounted) _showSnack('Erro ao atualizar pedido.');
       // ignore: avoid_print
       print('[EDIT] erro ao atualizar pedido: $e');
     } finally {
@@ -845,7 +837,7 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
       backgroundColor: sucesso ? milkdimOrange : milkdimDarkOrange,
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      duration: const Duration(seconds: 2),
+      duration: Duration(seconds: sucesso ? 3 : 4),
     );
     ScaffoldMessenger.of(context).showSnackBar(snack);
   }

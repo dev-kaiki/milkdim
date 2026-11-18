@@ -89,48 +89,154 @@ void main() {
     expect(r.map((e) => e.enviados).toList()..sort(), [0, 1]);
   });
 
-  test('gravação local sob a trava espera o envio em andamento', () async {
-    await salvarPedidoLocal({
-      'id': kLocalIdBase + 1,
-      'numero': '1',
-      'status': 'finalizado',
-      'vendedor_codigo': '0003',
-      'datahora': '2026-11-01T10:00:00Z',
-      'total': 10.0,
-    });
+  // ---- Gravação local nunca espera a rede; eco antigo não apaga edição ----
+
+  Future<Map<String, Object?>?> porId(int id) async {
+    final db = await getDb();
+    final r = await db.query('pedidos', where: 'id = ?', whereArgs: [id]);
+    return r.isEmpty ? null : r.single;
+  }
+
+  Map<String, dynamic> pedido({
+    int? id,
+    String status = 'finalizado',
+    String datahora = '2026-11-01T10:00:00Z',
+    double total = 10.0,
+  }) =>
+      {
+        if (id != null) 'id': id,
+        'numero': '1',
+        'status': status,
+        'vendedor_codigo': '0003',
+        'datahora': datahora,
+        'total': total,
+        'produtos': [
+          {'nome': 'Queijo', 'preco': total, 'quantidade': 1, 'subtotal': total},
+        ],
+        'assinatura_path': '/local/ass_1.png',
+      };
+
+  test('gravarPedidoEEnviar grava no aparelho na hora, com a trava ocupada', () async {
+    final liberaTrava = Completer<void>();
+    final ocupada = comTravaDePedidos(() => liberaTrava.future);
+
+    final gravacao = gravarPedidoEEnviar(
+      pedido(),
+      novo: true,
+      enviar: (p) => comTravaDePedidos(() async {}),
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    final db = await getDb();
+    final rows = await db.query('pedidos', where: "numero = '1'");
+    expect(rows, hasLength(1), reason: 'a gravação local não pode esperar a trava');
+    expect(rows.single['pendente_envio'], 1);
+
+    liberaTrava.complete();
+    await ocupada;
+    expect(await gravacao, ResultadoGravacao.enviado);
+  });
+
+  test('envio que falha não é erro: pedido fica salvo e pendente', () async {
+    final r = await gravarPedidoEEnviar(
+      pedido(),
+      novo: true,
+      enviar: (p) async => throw Exception('sem internet'),
+    );
+    expect(r, ResultadoGravacao.pendente);
+    final db = await getDb();
+    final rows = await db.query('pedidos', where: "numero = '1'");
+    expect(rows.single['pendente_envio'], 1);
+  });
+
+  test('rascunho não é enviado', () async {
+    var enviou = false;
+    final r = await gravarPedidoEEnviar(pedido(status: 'salvo'),
+        novo: true, enviar: (p) async => enviou = true);
+    expect(r, ResultadoGravacao.rascunho);
+    expect(enviou, isFalse);
+  });
+
+  test('finalizar de novo o mesmo numero+vendedor atualiza a linha pendente', () async {
+    await salvarPedidoLocal(pedido(total: 10.0));
+    final db = await getDb();
+    final id1 = (await db.query('pedidos')).single['id'];
+
+    await salvarPedidoLocal(pedido(total: 30.0, datahora: '2026-11-01T10:05:00Z'));
+    final rows = await db.query('pedidos', where: "numero = '1' AND vendedor_codigo = '0003'");
+    expect(rows, hasLength(1));
+    expect(rows.single['id'], id1, reason: 'mesma linha, mesmo id');
+    expect(rows.single['total'], 30.0);
+    expect(rows.single['pendente_envio'], 1);
+  });
+
+  test('eco antigo do servidor não sobrescreve edição local mais nova', () async {
+    const idLocal = kLocalIdBase + 1;
+    final enviado = pedido(id: idLocal); // versão que foi para o servidor
+    // Edição feita com o envio no ar.
+    await salvarPedidoLocal(pedido(id: idLocal, total: 25.0, datahora: '2026-11-01T11:00:00Z'));
+
+    final aplicou = await aplicarEcoDoServidor(
+      enviado: enviado,
+      remoto: {...pedido(), 'id': 55},
+    );
+
+    expect(aplicou, isFalse);
+    final p = await porId(idLocal);
+    expect(p, isNotNull, reason: 'a edição local continua lá');
+    expect(p!['total'], 25.0);
+    expect(p['pendente_envio'], 1);
+    expect(await porId(55), isNull);
+  });
+
+  test('eco do servidor aplica quando a cópia local não mudou', () async {
+    const idLocal = kLocalIdBase + 1;
+    final enviado = pedido(id: idLocal);
+    await salvarPedidoLocal(enviado);
+
+    final aplicou = await aplicarEcoDoServidor(
+      enviado: enviado,
+      remoto: {...pedido(), 'id': 55, 'assinatura_path': null},
+    );
+
+    expect(aplicou, isTrue);
+    expect(await porId(idLocal), isNull, reason: 'id local antigo sai');
+    final p = await porId(55);
+    expect(p!['pendente_envio'], 0);
+    expect(p['assinatura_path'], '/local/ass_1.png');
+  });
+
+  test('edição durante subirPedidosPendentes: grava na hora e sobrevive ao eco', () async {
+    const idLocal = kLocalIdBase + 1;
+    await salvarPedidoLocal(pedido(id: idLocal));
 
     final enviando = Completer<void>();
     final liberaEnvio = Completer<void>();
-    // Eco do servidor: versão antiga, já enviada.
-    Future<void> enviar(Map<String, dynamic> p) async {
+    Future<void> enviarComEco(Map<String, dynamic> p) async {
       enviando.complete();
       await liberaEnvio.future;
-      final db = await getDb();
-      await db.update('pedidos', {'total': 10.0, 'pendente_envio': 0},
-          where: 'id = ?', whereArgs: [p['id']]);
+      await aplicarEcoDoServidor(enviado: p, remoto: {...pedido(), 'id': 55});
     }
 
-    final subida = subirPedidosPendentes(vendedorCodigo: '0003', enviar: enviar);
+    final subida = subirPedidosPendentes(vendedorCodigo: '0003', enviar: enviarComEco);
     await enviando.future;
 
-    // Edição offline do mesmo pedido enquanto o envio está no ar.
-    final edicao = comTravaDePedidos(() => atualizarPedidoLocal({
-          'id': kLocalIdBase + 1,
-          'numero': '1',
-          'status': 'finalizado',
-          'vendedor_codigo': '0003',
-          'datahora': '2026-11-01T11:00:00Z',
-          'total': 25.0,
-        }));
-    // Sem a trava a edição já teria terminado aqui, antes do eco.
+    // A edição (offline: o envio dela falha) grava sem esperar a subida.
+    final edicao = gravarPedidoEEnviar(
+      pedido(id: idLocal, total: 25.0, datahora: '2026-11-01T11:00:00Z'),
+      novo: false,
+      enviar: (p) => comTravaDePedidos(() async => throw Exception('sem internet')),
+    );
     await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect((await porId(idLocal))!['total'], 25.0, reason: 'gravou com a subida no ar');
 
     liberaEnvio.complete();
-    await Future.wait([subida, edicao]);
+    await subida;
+    expect(await edicao, ResultadoGravacao.pendente);
 
-    final db = await getDb();
-    final p = (await db.query('pedidos', where: 'id = ?', whereArgs: [kLocalIdBase + 1])).single;
-    expect(p['total'], 25.0, reason: 'a edição mais nova vence o eco antigo');
+    final p = await porId(idLocal);
+    expect(p!['total'], 25.0, reason: 'a edição mais nova vence o eco antigo');
     expect(p['pendente_envio'], 1, reason: 'a edição continua aguardando envio');
+    expect(await porId(55), isNull);
   });
 }
