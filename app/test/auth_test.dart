@@ -76,5 +76,80 @@ void main() {
       await salvarPedidoLocal({'numero': '1', 'status': 'finalizado', 'vendedor_codigo': '0003'});
       expect(await bloqueioSair(), isNotNull);
     });
+
+    group('concluirEntrada (depois do signIn)', () {
+      late int signOuts;
+      Future<void> signOutOk() async => signOuts++;
+      Future<void> signOutOffline() async {
+        signOuts++;
+        throw Exception('sem internet no signOut');
+      }
+
+      setUp(() => signOuts = 0);
+
+      test('busca do vendedor que lanca encerra a sessao e propaga o erro', () async {
+        final erro = Exception('timeout');
+        await expectLater(
+          concluirEntrada(
+            codigoDigitado: '0003',
+            buscarVendedor: () async => throw erro,
+            encerrarSessao: signOutOk,
+          ),
+          throwsA(same(erro)),
+        );
+        expect(signOuts, 1);
+        expect(await vendedorLocal(), isNull);
+      });
+
+      test('signOut offline nao troca o erro original', () async {
+        final erro = Exception('PostgREST');
+        await expectLater(
+          concluirEntrada(
+            codigoDigitado: '0003',
+            buscarVendedor: () async => throw erro,
+            encerrarSessao: signOutOffline,
+          ),
+          throwsA(same(erro)),
+        );
+        expect(signOuts, 1);
+      });
+
+      test('conta sem vendedor: LoginRecusado mesmo com signOut offline', () async {
+        await expectLater(
+          concluirEntrada(
+            codigoDigitado: '0003',
+            buscarVendedor: () async => null,
+            encerrarSessao: signOutOffline,
+          ),
+          throwsA(isA<LoginRecusado>()),
+        );
+        expect(signOuts, 1);
+      });
+
+      test('codigo real com pendentes de outro: recusa e encerra a sessao', () async {
+        await salvarPedidoLocal({'numero': '1', 'status': 'finalizado', 'vendedor_codigo': '0004'});
+        await expectLater(
+          concluirEntrada(
+            codigoDigitado: '0004',
+            buscarVendedor: () async => {'id': 1, 'codigo': '0003', 'nome': 'A', 'ativo': true},
+            encerrarSessao: signOutOk,
+          ),
+          throwsA(isA<LoginRecusado>()),
+        );
+        expect(signOuts, 1);
+        expect(await vendedorLocal(), isNull);
+      });
+
+      test('sucesso salva o vendedor local e mantem a sessao', () async {
+        final v = await concluirEntrada(
+          codigoDigitado: '0003',
+          buscarVendedor: () async => {'id': 1, 'codigo': '0003', 'nome': 'A', 'ativo': true},
+          encerrarSessao: signOutOk,
+        );
+        expect(v['codigo'], '0003');
+        expect(signOuts, 0);
+        expect((await vendedorLocal())!['codigo'], '0003');
+      });
+    });
   });
 }

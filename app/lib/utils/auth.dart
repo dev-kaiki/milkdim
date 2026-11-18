@@ -5,6 +5,7 @@
 // - Outro vendedor não entra num aparelho com pedidos de alguém aguardando envio.
 // - "Sair" fica bloqueado enquanto o vendedor tiver pedido finalizado sem enviar.
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'db.dart';
@@ -61,33 +62,54 @@ Future<Map<String, dynamic>> entrar(String codigo, String senha) async {
   final antes = await bloqueioLogin(codigo);
   if (antes != null) throw LoginRecusado(antes);
 
-  final auth = Supabase.instance.client.auth;
-  final res = await auth.signInWithPassword(email: emailDoCodigo(codigo), password: senha);
+  final client = Supabase.instance.client;
+  final res = await client.auth
+      .signInWithPassword(email: emailDoCodigo(codigo), password: senha);
   final user = res.user;
   if (user == null) {
     throw const LoginRecusado('Login ou senha inválidos!');
   }
 
-  final row = await Supabase.instance.client
-      .from('vendedores')
-      .select('id, codigo, nome, ativo')
-      .eq('auth_user_id', user.id)
-      .maybeSingle();
-  if (row == null) {
-    await auth.signOut();
-    throw const LoginRecusado('Conta sem vendedor cadastrado. Consulte o administrador.');
-  }
-  final vendedor = Map<String, dynamic>.from(row);
+  return concluirEntrada(
+    codigoDigitado: codigo,
+    buscarVendedor: () => client
+        .from('vendedores')
+        .select('id, codigo, nome, ativo')
+        .eq('auth_user_id', user.id)
+        .maybeSingle(),
+    encerrarSessao: client.auth.signOut,
+  );
+}
 
-  // O código real pode diferir do digitado (maiúsculas): confere de novo.
-  final depois = await bloqueioLogin(vendedor['codigo']?.toString() ?? codigo);
-  if (depois != null) {
-    await auth.signOut();
-    throw LoginRecusado(depois);
-  }
+/// Passo de [entrar] depois do `signInWithPassword` (separado para testar sem
+/// rede). Qualquer falha aqui encerra a sessão antes de propagar o erro: nunca
+/// fica sessão salva sem vendedor local.
+@visibleForTesting
+Future<Map<String, dynamic>> concluirEntrada({
+  required String codigoDigitado,
+  required Future<Map<String, dynamic>?> Function() buscarVendedor,
+  required Future<void> Function() encerrarSessao,
+}) async {
+  try {
+    final row = await buscarVendedor();
+    if (row == null) {
+      throw const LoginRecusado('Conta sem vendedor cadastrado. Consulte o administrador.');
+    }
+    final vendedor = Map<String, dynamic>.from(row);
 
-  await salvarVendedorLocal(vendedor);
-  return vendedor;
+    // O código real pode diferir do digitado (maiúsculas): confere de novo.
+    final depois = await bloqueioLogin(vendedor['codigo']?.toString() ?? codigoDigitado);
+    if (depois != null) throw LoginRecusado(depois);
+
+    await salvarVendedorLocal(vendedor);
+    return vendedor;
+  } catch (_) {
+    // signOut offline não pode trocar a mensagem original por erro de rede.
+    try {
+      await encerrarSessao();
+    } catch (_) {}
+    rethrow;
+  }
 }
 
 /// Encerra a sessão. Lança [LoginRecusado] se houver pedido aguardando envio.
