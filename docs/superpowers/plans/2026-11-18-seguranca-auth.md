@@ -6,7 +6,7 @@
 
 **Architecture:** Banco em duas migrações — fase 1 aditiva (contas Auth, funções, constraint) e fase 3 que fecha (políticas, revoga `anon`, apaga senhas). Entre elas, os apps novos são instalados por cima dos atuais. O app do funcionário passa a guardar a sessão do Supabase e um flag `pendente_envio` no SQLite; o controle loga por Auth e gerencia vendedores por RPC.
 
-**Tech Stack:** Flutter 3.41 / Dart 3.11, `supabase_flutter` ^2.3.3, `sqflite` + `sqflite_common_ffi` (testes), Postgres 17 no Supabase (`<ref do projeto Supabase MilkDim>`), Supabase MCP (`execute_sql`, `apply_migration`).
+**Tech Stack:** Flutter 3.41 / Dart 3.11, `supabase_flutter` ^2.3.3, `sqflite` + `sqflite_common_ffi` (testes), Postgres 17 no projeto Supabase MilkDim, Supabase MCP (`execute_sql`, `apply_migration`).
 
 **Spec:** `docs/superpowers/specs/2026-11-18-seguranca-auth-design.md`
 
@@ -108,7 +108,7 @@ git commit -m "chore: teste de rascunho e credenciais por dart_defines.json"
 
 - [ ] **Step 2: Rodar o teste antes da migração existir**
 
-Run (Supabase MCP `execute_sql`, projeto `<ref do projeto Supabase MilkDim>`): `begin;` + conteúdo de `fase1_test.sql` + `rollback;`
+Run (Supabase MCP `execute_sql`, projeto Supabase MilkDim): `begin;` + conteúdo de `fase1_test.sql` + `rollback;`
 Expected: FAIL (coluna `auth_user_id` não existe).
 
 - [ ] **Step 3: Escrever `20261118000001_fase1_auth_aditivo.sql`** com o que está em Interfaces. Não mexe em políticas, não apaga nada.
@@ -341,7 +341,7 @@ Cada passo de banco: mostrar o SQL ao Kaiki e esperar OK no chat antes de aplica
 - [ ] **Step 2: Builds**
   - `cd app && flutter build apk --release --dart-define-from-file=../dart_defines.json`
   - `cd admin && flutter build windows --release --dart-define-from-file=../dart_defines.json` e `flutter build apk --release --dart-define-from-file=../dart_defines.json`
-  Expected: builds sem erro; `strings` do APK não contém `<PIN antigo>`.
+  Expected: builds sem erro; `strings` do APK não contém o PIN fixo de administrador.
 - [ ] **Step 3: Teste de ponta a ponta com a conta 0001** (banco ainda aberto): login, pedido finalizado com rede, pedido finalizado em modo avião (aparece "1 pedido aguardando envio"), religar a rede → enviado e contador some; conferir no banco.
 - [ ] **Step 4: Instalação** — Kaiki instala por cima nos celulares do 0002 e 0003 e o controle nos aparelhos das duas pessoas de admin. Em cada celular: login, Home mostra "0 pedidos aguardando envio" (se mostrar N > 0, esperar enviar).
   Verify: `select email, last_sign_in_at from auth.users` — 0002, 0003 e os dois admins com `last_sign_in_at` depois da instalação.

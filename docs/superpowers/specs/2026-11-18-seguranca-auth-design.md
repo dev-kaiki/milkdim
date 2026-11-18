@@ -1,6 +1,6 @@
 # MilkDim — login por Supabase Auth e banco fechado
 
-Data: 18/11/2026 · Escopo: `app/` (funcionário) e `admin/` (controle) · Projeto Supabase `MilkDim` (`<ref do projeto Supabase MilkDim>`)
+Data: 18/11/2026 · Escopo: `app/` (funcionário) e `admin/` (controle) · Projeto Supabase MilkDim
 
 ## Por que
 
@@ -22,7 +22,7 @@ dos vendedores. Um controle de "etiqueta emitida" construído em cima disso não
   constraint única no servidor (o SQLite local tem `ux_pedidos_num_vend`).
 - Views `clientes_com_ultimo_pedido` e `pedidos_with_created_at` já são `security_invoker=on`.
 - App do funcionário: login offline contra a tabela local `vendedores` (senha em texto puro no
-  SQLite), sync obrigatória a cada 7 dias, Configurações protegidas pelo PIN fixo `<PIN antigo>`
+  SQLite), sync obrigatória a cada 7 dias, Configurações protegidas pelo PIN fixo de administrador
   (publicado neste repositório). A sync baixa **todos** os pedidos de todos os vendedores.
 - App de controle: login só com senha, contra `acesso_admin`; flag `admin_logged` no
   SharedPreferences. Abas escrevem direto nas tabelas. `supabase_service.dart` tem mapas
