@@ -11,7 +11,6 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart'; // sqfliteFfiInit + databa
 
 import 'utils/colors.dart';
 import 'pages/login_page.dart';
-import 'utils/supabase_helper.dart'; // sincronizarTudo()
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -64,23 +63,7 @@ class MilkDimApp extends StatefulWidget {
 }
 
 class _MilkDimAppState extends State<MilkDimApp> {
-  @override
-  void initState() {
-    super.initState();
-    _sincronizarInicial();
-  }
-
-  Future<void> _sincronizarInicial() async {
-    final conectado = await temInternet();
-    if (conectado) {
-      debugPrint('🌐 Conectado à internet — sincronizando...');
-      final ok = await sincronizarTudo();
-      debugPrint(ok ? '✔️ Sincronização concluída' : '❌ Falha na sincronização');
-    } else {
-      debugPrint('⚠ Sem internet, sincronização ignorada');
-    }
-  }
-
+  // A sync só roda com sessão (depois do login), nunca anônima aqui.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

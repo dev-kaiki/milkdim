@@ -2,9 +2,8 @@
 import 'package:flutter/material.dart';
 import '../utils/colors.dart';
 import 'novo_cliente_page.dart';
-import 'novo_vendedor_page.dart';
-import 'novo_produto_page.dart';
 import '../utils/supabase_helper.dart';
+import '../utils/auth.dart';
 
 class ConfiguracoesPage extends StatefulWidget {
   const ConfiguracoesPage({super.key});
@@ -20,7 +19,10 @@ class _ConfiguracoesPageState extends State<ConfiguracoesPage> {
     if (_sincronizando) return;
     setState(() => _sincronizando = true);
 
-    final sucesso = await sincronizarTudo();
+    final vendedor = await vendedorLocal();
+    final codigo = vendedor?['codigo']?.toString() ?? '';
+    final sucesso =
+        codigo.isNotEmpty && await sincronizarTudo(vendedorCodigo: codigo);
 
     if (!mounted) return;
     _showSnack(
@@ -54,20 +56,6 @@ class _ConfiguracoesPageState extends State<ConfiguracoesPage> {
     );
   }
 
-  Future<void> _adicionarVendedor() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const NovoVendedorPage()),
-    );
-  }
-
-  Future<void> _adicionarProduto() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const NovoProdutoPage()),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -92,7 +80,7 @@ class _ConfiguracoesPageState extends State<ConfiguracoesPage> {
                   'Sincronizar dados com servidor',
                   style: TextStyle(fontWeight: FontWeight.bold, color: milkdimDarkOrange),
                 ),
-                subtitle: const Text('Clientes, vendedores, produtos e pedidos'),
+                subtitle: const Text('Clientes, produtos e pedidos'),
                 onTap: _sincronizando ? null : _sincronizar,
                 trailing: _sincronizando
                     ? const SizedBox(
@@ -118,36 +106,6 @@ class _ConfiguracoesPageState extends State<ConfiguracoesPage> {
                   style: TextStyle(fontWeight: FontWeight.bold, color: milkdimOrange),
                 ),
                 onTap: _adicionarCliente,
-                trailing: const Icon(Icons.arrow_forward_ios, color: milkdimOrange, size: 20),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Card(
-              color: milkdimWhite,
-              elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              child: ListTile(
-                leading: const Icon(Icons.badge_outlined, color: milkdimOrange, size: 34),
-                title: const Text(
-                  'Cadastrar novo vendedor',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: milkdimDarkOrange),
-                ),
-                onTap: _adicionarVendedor,
-                trailing: const Icon(Icons.arrow_forward_ios, color: milkdimOrange, size: 20),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Card(
-              color: milkdimWhite,
-              elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              child: ListTile(
-                leading: const Icon(Icons.add_box_outlined, color: milkdimOrange, size: 34),
-                title: const Text(
-                  'Cadastrar novo produto',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: milkdimOrange),
-                ),
-                onTap: _adicionarProduto,
                 trailing: const Icon(Icons.arrow_forward_ios, color: milkdimOrange, size: 20),
               ),
             ),

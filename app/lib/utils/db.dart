@@ -521,20 +521,6 @@ Future<List<Map<String, dynamic>>> listarPedidosLocaisPorVendedor(
   }
 }
 
-/// Pedidos com status 'finalizado' (útil para sync)
-Future<List<Map<String, dynamic>>> listarPedidosPendentes({String? vendedorCodigo}) async {
-  final db = await getDb();
-  if (vendedorCodigo == null) {
-    return db.query('pedidos', where: 'status = ?', whereArgs: ['finalizado'], orderBy: 'datetime(datahora) ASC');
-  }
-  return db.query(
-    'pedidos',
-    where: 'status = ? AND vendedor_codigo = ?',
-    whereArgs: ['finalizado', vendedorCodigo],
-    orderBy: 'datetime(datahora) ASC',
-  );
-}
-
 /// Pedidos finalizados que ainda precisam ser enviados ao servidor.
 Future<List<Map<String, dynamic>>> listarPedidosPendentesEnvio(String vendedorCodigo) async {
   final db = await getDb();

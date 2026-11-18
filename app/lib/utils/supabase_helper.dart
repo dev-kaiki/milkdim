@@ -45,18 +45,32 @@ Map<String, dynamic> _stripNulls(Map<String, dynamic> m) {
 
 // ---------------------- Sincronização geral ----------------------
 
-Future<bool> sincronizarTudo() async {
+/// Sync completa do vendedor logado: baixa clientes, produtos e os pedidos
+/// dele, depois tenta subir os pedidos que aguardam envio.
+/// Devolve `true` se os downloads deram certo; falhas de envio continuam
+/// visíveis pelo contador de pendentes (`contarPedidosPendentesEnvio`).
+Future<bool> sincronizarTudo({required String vendedorCodigo}) async {
+  var ok = true;
+  for (final passo in <Future<void> Function()>[
+    sincronizarClientes,
+    sincronizarProdutos,
+    () => sincronizarPedidos(vendedorCodigo: vendedorCodigo),
+  ]) {
+    try {
+      await passo();
+    } catch (_) {
+      ok = false; // o passo já registrou o erro
+    }
+  }
   try {
-    await sincronizarClientes();
-    await sincronizarVendedores();
-    await sincronizarProdutos();
-    await sincronizarPedidos();
-    return true;
+    final r = await subirPedidosPendentes(vendedorCodigo: vendedorCodigo);
+    // ignore: avoid_print
+    print('📤 Pendentes: ${r.enviados} enviados, ${r.falhas} falhas');
   } catch (e) {
     // ignore: avoid_print
-    print('❌ Erro ao sincronizar tudo: $e');
-    return false;
+    print('❌ Erro ao subir pendentes: $e');
   }
+  return ok;
 }
 
 // ---------------------- CLIENTES ----------------------
@@ -99,6 +113,7 @@ Future<void> sincronizarClientes() async {
   } catch (e) {
     // ignore: avoid_print
     print('❌ Erro ao sincronizar clientes: $e');
+    rethrow;
   }
 }
 
@@ -110,66 +125,6 @@ Future<void> inserirClienteSupabase(Map<String, dynamic> cliente) async {
   } catch (e) {
     // ignore: avoid_print
     print('❌ Erro ao enviar cliente: $e');
-  }
-}
-
-// ---------------------- VENDEDORES ----------------------
-
-Future<void> sincronizarVendedores() async {
-  try {
-    final response = await supabase.from('vendedores').select('*');
-    final List<dynamic> vendedores = response;
-
-    final db = await getDb();
-    await db.transaction((txn) async {
-      final batch = txn.batch();
-      for (final raw in vendedores) {
-        final v = Map<String, dynamic>.from(raw as Map);
-        final map = <String, dynamic>{
-          'codigo': v['codigo'],
-          'nome': v['nome'],
-          'senha': v['senha'],
-          'ativo': (v['ativo'] is bool)
-              ? (v['ativo'] == true ? 1 : 0)
-              : (v['ativo'] is int ? v['ativo'] : 1),
-        };
-        batch.insert('vendedores', map, conflictAlgorithm: ConflictAlgorithm.replace);
-      }
-      await batch.commit(noResult: true);
-    });
-
-    // ignore: avoid_print
-    print('🟢 Vendedores sincronizados (${vendedores.length})');
-  } catch (e) {
-    // ignore: avoid_print
-    print('❌ Erro ao sincronizar vendedores: $e');
-  }
-}
-
-Future<void> inserirVendedorSupabase(Map<String, dynamic> vendedor) async {
-  try {
-    await supabase.from('vendedores').insert(_stripNulls(vendedor));
-    // ignore: avoid_print
-    print('✅ Vendedor enviado ao Supabase');
-  } catch (e) {
-    // ignore: avoid_print
-    print('❌ Erro ao enviar vendedor: $e');
-  }
-}
-
-Future<Map<String, dynamic>?> loginSupabaseVendedor(String codigo, String senha) async {
-  try {
-    final response = await supabase
-        .from('vendedores')
-        .select()
-        .eq('codigo', codigo)
-        .eq('senha', senha)
-        .maybeSingle();
-    return response;
-  } catch (e) {
-    // ignore: avoid_print
-    print('❌ Erro no login vendedor: $e');
-    return null;
   }
 }
 
@@ -215,38 +170,62 @@ Future<void> sincronizarProdutos() async {
   } catch (e) {
     // ignore: avoid_print
     print('❌ Erro ao sincronizar produtos: $e');
-  }
-}
-
-Future<void> inserirProdutoSupabase(Map<String, dynamic> produto) async {
-  try {
-    await supabase.from('produtos').insert(_stripNulls(produto));
-    // ignore: avoid_print
-    print('✅ Produto enviado ao Supabase');
-  } catch (e) {
-    // ignore: avoid_print
-    print('❌ Erro ao enviar produto: $e');
+    rethrow;
   }
 }
 
 // ---------------------- PEDIDOS ----------------------
 
-Future<void> sincronizarPedidos() async {
+/// Baixa só os pedidos do vendedor (o RLS já filtra; o app filtra também).
+Future<void> sincronizarPedidos({required String vendedorCodigo}) async {
   try {
-    final response = await supabase.from('pedidos').select('*');
-    final List<dynamic> pedidos = response;
+    final response =
+        await supabase.from('pedidos').select('*').eq('vendedor_codigo', vendedorCodigo);
+    final pedidos = [
+      for (final raw in response) Map<String, dynamic>.from(raw),
+    ];
+    await aplicarPedidosRemotos(pedidos);
 
-    final db = await getDb();
-    await db.transaction((txn) async {
-      // 🛡️ Protege rascunhos locais: se algum pedido remoto traz um id que
-      // colide com um rascunho local (status='salvo'), realoca o rascunho para
-      // a faixa de id local segura ANTES de aplicar os remotos. Sem isso, o
-      // `INSERT OR REPLACE` abaixo apagaria o rascunho.
-      for (final raw in pedidos) {
-        final m = Map<String, dynamic>.from(raw as Map);
-        final rid =
-            (m['id'] is int) ? m['id'] as int : int.tryParse('${m['id'] ?? ''}');
-        if (rid == null) continue;
+    // ignore: avoid_print
+    print('🟢 Pedidos sincronizados (${pedidos.length})');
+  } catch (e) {
+    // ignore: avoid_print
+    print('❌ Erro ao sincronizar pedidos: $e');
+    rethrow;
+  }
+}
+
+/// Aplica no SQLite os pedidos vindos do servidor.
+/// - Pula o remoto se há pedido local aguardando envio (`pendente_envio = 1`)
+///   com o mesmo `id` ou o mesmo `(numero, vendedor_codigo)`: a edição local
+///   vence, e o índice único (numero, vendedor_codigo) não pode apagá-la no
+///   `INSERT OR REPLACE`.
+/// - Protege rascunhos (status='salvo') cujo id colide com um remoto,
+///   realocando-os para a faixa local segura antes do `INSERT OR REPLACE`.
+Future<void> aplicarPedidosRemotos(List<Map<String, dynamic>> remotos) async {
+  final db = await getDb();
+  await db.transaction((txn) async {
+    final aplicar = <Map<String, dynamic>>[];
+    for (final m in remotos) {
+      final rid =
+          (m['id'] is int) ? m['id'] as int : int.tryParse('${m['id'] ?? ''}');
+      final numero = m['numero']?.toString();
+      final vend = m['vendedor_codigo']?.toString();
+
+      final pendente = await txn.query(
+        'pedidos',
+        columns: ['id'],
+        where: 'pendente_envio = 1 AND (id = ? OR (numero = ? AND vendedor_codigo = ?))',
+        whereArgs: [rid, numero, vend],
+        limit: 1,
+      );
+      if (pendente.isNotEmpty) continue;
+
+      // 🛡️ Protege rascunhos locais: se o remoto traz um id que colide com um
+      // rascunho local (status='salvo'), realoca o rascunho para a faixa de id
+      // local segura ANTES de aplicar. Sem isso, o `INSERT OR REPLACE` abaixo
+      // apagaria o rascunho.
+      if (rid != null) {
         final col = await txn.query(
           'pedidos',
           columns: ['id', 'status'],
@@ -260,80 +239,75 @@ Future<void> sincronizarPedidos() async {
               where: 'id = ?', whereArgs: [rid]);
         }
       }
+      aplicar.add(m);
+    }
 
-      final batch = txn.batch();
-      for (final raw in pedidos) {
-        final ped = Map<String, dynamic>.from(raw as Map);
+    final batch = txn.batch();
+    for (final ped in aplicar) {
+      final produtosLocal = (ped['produtos'] is String)
+          ? ped['produtos']
+          : jsonEncode(ped['produtos'] ?? []);
 
-        final produtosLocal = (ped['produtos'] is String)
-            ? ped['produtos']
-            : jsonEncode(ped['produtos'] ?? []);
+      final assinaturaHex = _toHex0x(ped['assinatura']);
 
-        final assinaturaHex = _toHex0x(ped['assinatura']);
+      final map = <String, dynamic>{
+        'id': ped['id'],
+        'numero': ped['numero']?.toString(), // pode não existir no Supabase (ok => null)
+        'produtos': produtosLocal,
+        'total': (ped['total'] is num)
+            ? (ped['total'] as num).toDouble()
+            : double.tryParse('${ped['total']}') ?? 0.0,
+        'status': (ped['status'] ?? 'salvo').toString(),
+        'datahora': ped['datahora'],
+        'vendedor_codigo': ped['vendedor_codigo']?.toString(),
+        'vendedor_nome': ped['vendedor_nome']?.toString(),
+        'cliente_id': (ped['cliente_id'] is int) ? ped['cliente_id'] : null,
+        'cliente_nome': ped['cliente_nome']?.toString(),
+        'assinatura': assinaturaHex,
+        'cliente_telefone': ped['cliente_telefone']?.toString(),
+        'cliente_endereco': ped['cliente_endereco']?.toString(),
+        'cliente_cidade': ped['cliente_cidade']?.toString(),
+        'cliente_cpf_cnpj': ped['cliente_cpf_cnpj']?.toString(),
+        'cliente_insc_estadual': ped['cliente_insc_estadual']?.toString(),
+        'cliente_cep': ped['cliente_cep']?.toString(),
+        'cliente_anotacao': ped['cliente_anotacao']?.toString(),
+        // Os três abaixo podem não existir no servidor; manteremos só localmente se houver.
+        'cliente_nome_fantasia': ped['cliente_nome_fantasia']?.toString(),
+        'cliente_whatsapp': ped['cliente_whatsapp']?.toString(),
+        'cliente_email': ped['cliente_email']?.toString(),
+        // Veio do servidor: não está aguardando envio.
+        'pendente_envio': 0,
+        // `assinatura_path` não existe no servidor; ficará null ao sincronizar tudo.
+      };
 
-        final map = <String, dynamic>{
-          'id': ped['id'],
-          'numero': ped['numero']?.toString(), // pode não existir no Supabase (ok => null)
-          'produtos': produtosLocal,
-          'total': (ped['total'] is num)
-              ? (ped['total'] as num).toDouble()
-              : double.tryParse('${ped['total']}') ?? 0.0,
-          'status': (ped['status'] ?? 'salvo').toString(),
-          'datahora': ped['datahora'],
-          'vendedor_codigo': ped['vendedor_codigo']?.toString(),
-          'vendedor_nome': ped['vendedor_nome']?.toString(),
-          'cliente_id': (ped['cliente_id'] is int) ? ped['cliente_id'] : null,
-          'cliente_nome': ped['cliente_nome']?.toString(),
-          'assinatura': assinaturaHex,
-          'cliente_telefone': ped['cliente_telefone']?.toString(),
-          'cliente_endereco': ped['cliente_endereco']?.toString(),
-          'cliente_cidade': ped['cliente_cidade']?.toString(),
-          'cliente_cpf_cnpj': ped['cliente_cpf_cnpj']?.toString(),
-          'cliente_insc_estadual': ped['cliente_insc_estadual']?.toString(),
-          'cliente_cep': ped['cliente_cep']?.toString(),
-          'cliente_anotacao': ped['cliente_anotacao']?.toString(),
-          // Os três abaixo podem não existir no servidor; manteremos só localmente se houver.
-          'cliente_nome_fantasia': ped['cliente_nome_fantasia']?.toString(),
-          'cliente_whatsapp': ped['cliente_whatsapp']?.toString(),
-          'cliente_email': ped['cliente_email']?.toString(),
-          // `assinatura_path` não existe no servidor; ficará null ao sincronizar tudo.
-        };
-
-        batch.insert('pedidos', map, conflictAlgorithm: ConflictAlgorithm.replace);
-      }
-      await batch.commit(noResult: true);
-    });
-
-    // ignore: avoid_print
-    print('🟢 Pedidos sincronizados (${pedidos.length})');
-  } catch (e) {
-    // ignore: avoid_print
-    print('❌ Erro ao sincronizar pedidos: $e');
-  }
+      batch.insert('pedidos', map, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  });
 }
 
-/// Sobe pedidos "finalizados" que ficaram locais quando estava offline.
-/// Chame ao abrir o app, ao entrar na tela de Pedidos e num botão "Sincronizar".
-Future<void> subirPedidosPendentes({String? vendedorCodigo}) async {
-  final db = await getDb();
-  final where = vendedorCodigo == null ? 'status = ?' : 'status = ? AND vendedor_codigo = ?';
-  final args = vendedorCodigo == null ? ['finalizado'] : ['finalizado', vendedorCodigo];
-
-  final rows = await db.query(
-    'pedidos',
-    where: where,
-    whereArgs: args,
-    orderBy: 'datetime(datahora) ASC',
-  );
-
-  for (final ped in rows) {
+/// Sobe os pedidos finalizados do vendedor que ainda aguardam envio
+/// (`pendente_envio = 1`). Cada falha deixa o pedido pendente e segue para o
+/// próximo. Chamar ao abrir com internet, depois do login e depois da sync.
+Future<({int enviados, int falhas})> subirPedidosPendentes({
+  required String vendedorCodigo,
+  Future<void> Function(Map<String, dynamic>) enviar = salvarPedidoSupabase,
+}) async {
+  final rows = await listarPedidosPendentesEnvio(vendedorCodigo);
+  var enviados = 0;
+  var falhas = 0;
+  for (final row in rows) {
+    if (row['vendedor_codigo']?.toString() != vendedorCodigo) continue;
     try {
-      await salvarPedidoSupabase(ped);
+      await enviar(Map<String, dynamic>.from(row));
+      enviados++;
     } catch (e) {
+      falhas++;
       // ignore: avoid_print
-      print('⚠️ Falha ao subir pendente ${ped['numero'] ?? ped['id']}: $e');
+      print('⚠️ Falha ao subir pendente ${row['numero'] ?? row['id']}: $e');
     }
   }
+  return (enviados: enviados, falhas: falhas);
 }
 
 /// Apaga duplicados locais após salvar no servidor:
@@ -470,6 +444,7 @@ Future<void> salvarPedidoSupabase(Map<String, dynamic> pedido) async {
     ped.remove('cliente_whatsapp');
     ped.remove('cliente_email');
     ped.remove('assinatura_path'); // 👈 NÃO enviar essa coluna ao servidor
+    ped.remove('pendente_envio'); // controle local, não existe no servidor
 
     // Força usar o id remoto válido (evita 23503)
     ped['cliente_id'] = clienteIdRemoto;
@@ -581,6 +556,9 @@ Future<void> salvarPedidoSupabase(Map<String, dynamic> pedido) async {
 
         // 👇 PRESERVAR SEMPRE o caminho local da assinatura ao regravar no SQLite
         'assinatura_path': assinaturaPathLocal,
+
+        // O servidor confirmou: não está mais aguardando envio.
+        'pendente_envio': 0,
       };
 
       await db.insert('pedidos', mapLocal, conflictAlgorithm: ConflictAlgorithm.replace);
@@ -591,8 +569,9 @@ Future<void> salvarPedidoSupabase(Map<String, dynamic> pedido) async {
       // ignore: avoid_print
       print('✅ Pedido salvo/atualizado no Supabase e conciliado no SQLite (preservando assinatura_path).');
     } else {
-      // Último recurso: puxa tudo do servidor
-      await sincronizarPedidos();
+      // Último recurso: puxa do servidor os pedidos do vendedor
+      final vend = (pedido['vendedor_codigo'] ?? '').toString();
+      if (vend.isNotEmpty) await sincronizarPedidos(vendedorCodigo: vend);
     }
   } catch (e) {
     // ignore: avoid_print

@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/colors.dart';
 import '../utils/supabase_helper.dart';
 import '../utils/db.dart';
+import '../utils/auth.dart';
 import 'home_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -83,19 +84,28 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
-    // LOGIN SUPABASE
-    final vendedorSupabase = await loginSupabaseVendedor(codigo, senha);
+    // LOGIN SUPABASE AUTH
+    Map<String, dynamic>? vendedorSupabase;
+    try {
+      vendedorSupabase = await entrar(codigo, senha);
+    } on LoginRecusado catch (e) {
+      if (!mounted) return;
+      _showMsg(e.mensagem);
+      setState(() => carregando = false);
+      return;
+    } catch (_) {
+      vendedorSupabase = null;
+    }
     if (!mounted) return;
     if (vendedorSupabase != null) {
       if (!_isAtivo(vendedorSupabase['ativo'])) {
         _showMsg('Vendedor inativo! Consulte o administrador.');
       } else {
-        _showMsg('Login online OK, salvando local...', isError: false);
-        await salvarVendedorLocal(vendedorSupabase);
-        if (!mounted) return;
+        _showMsg('Login online OK!', isError: false);
         setState(() => carregando = false);
+        final vendedor = vendedorSupabase;
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => HomePage(vendedor: vendedorSupabase)),
+          MaterialPageRoute(builder: (_) => HomePage(vendedor: vendedor)),
         );
         return;
       }
@@ -108,8 +118,15 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _sincronizar() async {
+    final vendedor = await vendedorLocal();
+    final codigo = vendedor?['codigo']?.toString() ?? '';
+    if (codigo.isEmpty) {
+      _showMsg('Entre com internet para sincronizar.');
+      return;
+    }
+    if (!mounted) return;
     setState(() => carregando = true);
-    final sucesso = await sincronizarTudo();
+    final sucesso = await sincronizarTudo(vendedorCodigo: codigo);
     if (!mounted) return;
     if (sucesso) {
       await _atualizarUltimaSync();
