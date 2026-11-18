@@ -5,13 +5,13 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart' as sq;
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:convert/convert.dart' as hex_conv;
 
 sq.Database? _db;
 
 /// ⬆️ aumente quando mudar o schema
-const _dbVersion = 15;
+const _dbVersion = 16;
 
 /// Faixa reservada para IDs de pedidos criados SOMENTE localmente (rascunhos).
 ///
@@ -51,6 +51,36 @@ Future<void> _relocarRascunhosParaFaixaSegura(sq.DatabaseExecutor db) async {
   }
 }
 
+/// Recria `vendedores` sem a coluna `senha`, mantendo as linhas. Idempotente.
+Future<void> _recriarVendedoresSemSenha(sq.DatabaseExecutor db) async {
+  final info = await db.rawQuery('PRAGMA table_info(vendedores)');
+  final cols = info.map((r) => r['name'] as String).toSet();
+  if (!cols.contains('senha')) return;
+  await db.execute('DROP TABLE IF EXISTS vendedores_new');
+  await db.execute('''
+    CREATE TABLE vendedores_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      codigo TEXT UNIQUE,
+      nome TEXT,
+      ativo INTEGER
+    );
+  ''');
+  await db.execute(
+    'INSERT INTO vendedores_new (id, codigo, nome, ativo) '
+    'SELECT id, codigo, nome, ativo FROM vendedores',
+  );
+  await db.execute('DROP TABLE vendedores');
+  await db.execute('ALTER TABLE vendedores_new RENAME TO vendedores');
+}
+
+/// Fecha o banco em cache (testes que montam um banco antigo à mão).
+@visibleForTesting
+Future<void> fecharDbParaTeste() async {
+  final d = _db;
+  _db = null;
+  if (d != null) await d.close();
+}
+
 /// Abre/cria o banco local
 Future<sq.Database> getDb() async {
   if (_db != null) return _db!;
@@ -66,7 +96,6 @@ Future<sq.Database> getDb() async {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           codigo TEXT UNIQUE,
           nome TEXT,
-          senha TEXT,
           ativo INTEGER
         );
       ''');
@@ -127,7 +156,8 @@ Future<sq.Database> getDb() async {
           cliente_anotacao TEXT,
           cliente_nome_fantasia TEXT,
           cliente_whatsapp TEXT,
-          cliente_email TEXT
+          cliente_email TEXT,
+          pendente_envio INTEGER NOT NULL DEFAULT 0
         );
       ''');
 
@@ -163,6 +193,16 @@ Future<sq.Database> getDb() async {
         // para que a sincronização não sobrescreva rascunhos por colisão de id.
         await _relocarRascunhosParaFaixaSegura(db);
       }
+      if (oldV < 16) {
+        // v16: pedidos finalizados offline ficam marcados para reenvio e a
+        // senha em texto puro some da tabela local de vendedores.
+        await _ensureColumn(db, 'pedidos', 'pendente_envio', 'INTEGER NOT NULL DEFAULT 0');
+        await db.execute(
+          "UPDATE pedidos SET pendente_envio = 1 "
+          "WHERE status = 'finalizado' AND id >= $kLocalIdBase",
+        );
+        await _recriarVendedoresSemSenha(db);
+      }
     },
     onOpen: (db) async {
       await _ensureColumn(db, 'produtos', 'codigo', 'TEXT');
@@ -179,6 +219,7 @@ Future<sq.Database> getDb() async {
 
       // Garante coluna nova mesmo se a base já existia (idempotente)
       await _ensureColumn(db, 'pedidos', 'assinatura_path', 'TEXT');
+      await _ensureColumn(db, 'pedidos', 'pendente_envio', 'INTEGER NOT NULL DEFAULT 0');
 
       // Segurança extra: garante que rascunhos antigos estejam na faixa de id
       // reservada (caso o app tenha pulado o onUpgrade por algum motivo).
@@ -264,12 +305,16 @@ Future<void> salvarVendedorLocal(Map<String, dynamic> vendedor) async {
   final v = {
     'codigo': vendedor['codigo']?.toString(),
     'nome': vendedor['nome']?.toString(),
-    'senha': vendedor['senha']?.toString(),
     'ativo': (vendedor['ativo'] is bool)
         ? (vendedor['ativo'] ? 1 : 0)
         : (vendedor['ativo'] is int ? vendedor['ativo'] : 1),
   };
-  await _insertOrReplaceFiltered(db, 'vendedores', v);
+  // Só o vendedor logado fica no aparelho.
+  final filtered = await _filterToTableColumns(db, 'vendedores', v);
+  await db.transaction((txn) async {
+    await txn.delete('vendedores', where: 'codigo IS NOT ?', whereArgs: [v['codigo']]);
+    await txn.insert('vendedores', filtered, conflictAlgorithm: sq.ConflictAlgorithm.replace);
+  });
 }
 
 Future<Map<String, dynamic>?> loginLocalVendedor(String codigo, String senha) async {
@@ -370,6 +415,7 @@ Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
     'cliente_nome_fantasia': pedido['cliente_nome_fantasia']?.toString(),
     'cliente_whatsapp': pedido['cliente_whatsapp']?.toString(),
     'cliente_email': pedido['cliente_email']?.toString(),
+    'pendente_envio': ((pedido['status'] ?? 'salvo').toString() == 'finalizado') ? 1 : 0,
   };
 
   // Define o id do registro local.
@@ -434,6 +480,7 @@ Future<void> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
     'cliente_nome_fantasia': pedido['cliente_nome_fantasia']?.toString(),
     'cliente_whatsapp': pedido['cliente_whatsapp']?.toString(),
     'cliente_email': pedido['cliente_email']?.toString(),
+    'pendente_envio': ((pedido['status'] ?? 'salvo').toString() == 'finalizado') ? 1 : 0,
   };
 
   final filtered = await _filterToTableColumns(db, 'pedidos', map);
@@ -486,6 +533,36 @@ Future<List<Map<String, dynamic>>> listarPedidosPendentes({String? vendedorCodig
     whereArgs: ['finalizado', vendedorCodigo],
     orderBy: 'datetime(datahora) ASC',
   );
+}
+
+/// Pedidos finalizados que ainda precisam ser enviados ao servidor.
+Future<List<Map<String, dynamic>>> listarPedidosPendentesEnvio(String vendedorCodigo) async {
+  final db = await getDb();
+  return db.query(
+    'pedidos',
+    where: 'pendente_envio = 1 AND vendedor_codigo = ?',
+    whereArgs: [vendedorCodigo],
+    orderBy: 'datetime(datahora) ASC',
+  );
+}
+
+Future<int> contarPedidosPendentesEnvio(String vendedorCodigo) async {
+  final db = await getDb();
+  final r = await db.rawQuery(
+    'SELECT COUNT(*) AS c FROM pedidos WHERE pendente_envio = 1 AND vendedor_codigo = ?',
+    [vendedorCodigo],
+  );
+  return sq.Sqflite.firstIntValue(r) ?? 0;
+}
+
+/// Códigos de vendedores que têm pedidos aguardando envio.
+Future<Set<String>> codigosComPendentesEnvio() async {
+  final db = await getDb();
+  final r = await db.rawQuery(
+    'SELECT DISTINCT vendedor_codigo AS c FROM pedidos '
+    'WHERE pendente_envio = 1 AND vendedor_codigo IS NOT NULL',
+  );
+  return r.map((e) => e['c'].toString()).toSet();
 }
 
 /// Muda status do pedido
