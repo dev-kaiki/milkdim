@@ -9,7 +9,8 @@
 --   tabela      ler                        inserir     alterar        apagar
 --   clientes    todos                      todos       admin          admin
 --   produtos    todos                      admin       admin          admin
---   vendedores  a propria linha; admin     so por RPC  admin          so por RPC
+--   vendedores  a propria linha; admin     so por RPC  admin (nome,   so por RPC
+--                                                      anotacao)
 --   pedidos     os proprios; admin         os proprios os proprios;   admin
 --                                                      admin
 --
@@ -18,6 +19,58 @@
 -- vendedor herdar os pedidos de outro.
 --
 -- Este arquivo nao abre nem fecha transacao: quem aplica decide.
+
+-- ---------------------------------------------------------------------------
+-- Pre-condicoes: sem elas esta migracao apagaria a unica copia das senhas
+-- ---------------------------------------------------------------------------
+-- Mais abaixo saem vendedores.senha e acesso_admin. Antes disso as contas
+-- do Auth tem que existir: as dos vendedores (fase 1) e as dos admins
+-- (app_migrar_admin, rodado a mao). Faltando qualquer uma, para tudo aqui,
+-- antes de mexer em qualquer coisa.
+
+do $$
+declare
+  v_admins  bigint;
+  v_acessos bigint;
+  v_lista   text;
+begin
+  select count(*) into v_admins
+    from auth.users
+   where raw_app_meta_data ->> 'role' = 'admin';
+
+  if v_admins = 0 then
+    raise exception 'Fase 3 cancelada: nenhuma conta de admin no Auth. Rode app_migrar_admin para cada linha de acesso_admin antes.';
+  end if;
+
+  select string_agg(coalesce(codigo, '(sem codigo)') || ' (id ' || id || ')', ', ' order by id)
+    into v_lista
+    from public.vendedores
+   where auth_user_id is null;
+
+  if v_lista is not null then
+    raise exception 'Fase 3 cancelada: vendedor(es) sem conta no Auth: %.', v_lista;
+  end if;
+
+  -- Mesmo e-mail que a fase 1 montou e que o app usa no login.
+  select string_agg(v.codigo || ' -> ' || coalesce(u.email, '(conta inexistente)'), ', ' order by v.id)
+    into v_lista
+    from public.vendedores v
+    left join auth.users u on u.id = v.auth_user_id
+   where u.email is distinct from lower(btrim(v.codigo)) || '@milkdim.local';
+
+  if v_lista is not null then
+    raise exception 'Fase 3 cancelada: vendedor(es) ligados a conta com e-mail diferente do codigo: %.', v_lista;
+  end if;
+
+  select count(*) into v_acessos
+    from public.acesso_admin
+   where coalesce(ativo, true);
+
+  if v_admins < v_acessos then
+    raise exception 'Fase 3 cancelada: % conta(s) de admin no Auth para % senha(s) ativa(s) em acesso_admin. Rode app_migrar_admin para as que faltam.',
+      v_admins, v_acessos;
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- Politicas antigas (abertas para public)
@@ -101,6 +154,14 @@ create policy vendedores_alterar_admin on public.vendedores
   using ((select public.app_is_admin()))
   with check ((select public.app_is_admin()));
 
+-- A politica nao escolhe coluna; o grant escolhe. Admin so muda nome e
+-- anotacao direto na tabela. codigo nao: app_meu_codigo() liga a conta ao
+-- codigo, e trocar o codigo deixaria os pedidos pendentes do vendedor fora
+-- do alcance dele. ativo, senha e exclusao vao pelas funcoes de gestao
+-- (SECURITY DEFINER, nao dependem deste grant).
+revoke update on public.vendedores from authenticated;
+grant update (nome, anotacao) on public.vendedores to authenticated;
+
 -- pedidos: o with check impede gravar pedido com o codigo de outro vendedor.
 create policy pedidos_ler on public.pedidos
   for select to authenticated
@@ -180,9 +241,20 @@ revoke all on all functions in schema public from anon;
 revoke execute on all functions in schema public from public;
 revoke truncate on all tables in schema public from authenticated;
 
--- O Supabase da grant a anon em tudo que for criado depois em public.
--- Corta isso para objetos criados pelo papel que aplica esta migracao.
-alter default privileges in schema public revoke all on tables    from anon;
-alter default privileges in schema public revoke all on sequences from anon;
-alter default privileges in schema public revoke all on functions from anon;
-alter default privileges in schema public revoke execute on functions from public;
+-- O Supabase da grant a anon em tudo que o postgres criar depois em public
+-- (default privilege por schema): o revoke por schema desfaz isso.
+--
+-- EXECUTE para PUBLIC e outra historia: vem do default global do Postgres,
+-- e default por schema so SOMA ao global, nunca tira. Um revoke "in schema"
+-- dele nao faz nada, e anon (que herda de PUBLIC) executaria toda funcao
+-- nova. Tem que ser o global, sem "in schema". Ele vale para funcoes que o
+-- postgres criar em qualquer schema; as que precisam de grant para
+-- authenticated o recebem explicito, como na fase 1.
+--
+-- TRUNCATE nao passa pela RLS: tabelas novas tambem nascem sem ele para
+-- authenticated.
+alter default privileges for role postgres in schema public revoke all on tables    from anon;
+alter default privileges for role postgres in schema public revoke all on sequences from anon;
+alter default privileges for role postgres in schema public revoke all on functions from anon;
+alter default privileges for role postgres revoke execute on functions from public;
+alter default privileges for role postgres in schema public revoke truncate on tables from authenticated;

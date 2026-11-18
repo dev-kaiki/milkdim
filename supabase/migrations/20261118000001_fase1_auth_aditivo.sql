@@ -204,6 +204,12 @@ begin
     raise exception 'Ja existe vendedor com o codigo %.', p_codigo;
   end if;
 
+  -- Excluir vendedor nao apaga os pedidos dele (nao ha FK). Um vendedor novo
+  -- com o mesmo codigo herdaria esses pedidos pelo app_meu_codigo().
+  if exists (select 1 from public.pedidos where vendedor_codigo = p_codigo) then
+    raise exception 'Ja existem pedidos com o codigo %. Use outro codigo.', p_codigo;
+  end if;
+
   v_uid := public.app_criar_usuario_auth(
     v_email,
     extensions.crypt(p_senha, extensions.gen_salt('bf')),

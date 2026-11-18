@@ -1,20 +1,42 @@
 -- Teste da fase 3 (fecha o banco). Roda dentro de begin ... rollback,
--- montado por quem executa, depois da fase 1: este arquivo nao abre nem
--- fecha transacao. Cada bloco da raise exception quando a verificacao falha.
+-- montado por quem executa: este arquivo nao abre nem fecha transacao.
+-- Cada bloco da raise exception quando a verificacao falha.
+--
+-- Ordem:  begin; <fase 1>; fase3_preparo.sql; <fase 3>; <este arquivo>; rollback;
+--
+-- A guarda do inicio da fase 3 se testa em rodadas proprias, porque o erro
+-- dela derruba a transacao inteira: cada uma deve terminar no erro indicado.
+--   begin; <fase 1>; <fase 3>; rollback;
+--     -> Fase 3 cancelada: nenhuma conta de admin no Auth...
+--   begin; <fase 1>; select public.app_migrar_admin('teste_admin_1', 1); <fase 3>; rollback;
+--     -> Fase 3 cancelada: 1 conta(s) de admin no Auth para 2 senha(s) ativa(s)...
+--   begin; <fase 1>; fase3_preparo.sql;
+--          update auth.users set email = 'outro@milkdim.local'
+--           where id = (select auth_user_id from public.vendedores where codigo = '0002');
+--          <fase 3>; rollback;
+--     -> Fase 3 cancelada: vendedor(es) ligados a conta com e-mail diferente...
+--   begin; <fase 1>; fase3_preparo.sql;
+--          insert into public.vendedores (id, codigo, nome) values (-5, 'teste_sem_conta', 'X');
+--          <fase 3>; rollback;
+--     -> Fase 3 cancelada: vendedor(es) sem conta no Auth: teste_sem_conta (id -5).
 --
 -- Ids passados na mao (overriding / max + 1): nextval nao volta no rollback,
 -- e um teste que so le nao deve deixar buraco nas sequencias de producao.
 
--- 0. Preparacao, sem JWT: conta de admin de teste (como a que
---    app_migrar_admin cria, com app_metadata.role = admin e senha aleatoria)
---    e os proximos ids livres.
+-- 0. Preparacao, sem JWT: uma das contas de admin que fase3_preparo.sql
+--    criou com app_migrar_admin, e os proximos ids livres.
 select set_config('teste.admin_uid',
-  public.app_criar_usuario_auth(
-    'teste_admin@milkdim.local',
-    extensions.crypt(gen_random_uuid()::text, extensions.gen_salt('bf')),
-    '{"provider":"email","providers":["email"],"role":"admin"}'::jsonb,
-    '{"usuario":"teste_admin"}'::jsonb,
-    true)::text, true);
+  (select id::text from auth.users
+    where email like 'teste\_admin\_%@milkdim.local'
+      and raw_app_meta_data ->> 'role' = 'admin'
+    order by email limit 1), true);
+do $$
+begin
+  if current_setting('teste.admin_uid', true) is null
+     or current_setting('teste.admin_uid', true) = '' then
+    raise exception 'FALHA: sem conta de admin de teste (rodar fase3_preparo.sql antes da fase 3)';
+  end if;
+end $$;
 select set_config('teste.uid_0002',
   (select auth_user_id::text from public.vendedores where codigo = '0002'), true);
 select set_config('teste.total_pedidos', (select count(*)::text from public.pedidos), true);
@@ -140,11 +162,13 @@ begin
     raise exception 'FALHA: vendedor 0002 ve % linha(s) de vendedores', v_n;
   end if;
 
-  update public.vendedores set codigo = '0003' where auth_user_id = auth.uid();
-  get diagnostics v_n = row_count;
-  if v_n <> 0 then
+  -- codigo fora do grant de update: recusado antes da RLS.
+  begin
+    update public.vendedores set codigo = '0003' where auth_user_id = auth.uid();
     raise exception 'FALHA: vendedor trocou o proprio codigo';
-  end if;
+  exception when sqlstate '42501' then
+    null;
+  end;
 
   update public.vendedores set nome = 'x';
   get diagnostics v_n = row_count;
@@ -247,11 +271,26 @@ begin
     raise exception 'FALHA: admin ve % vendedores, esperado %', v_n, current_setting('teste.total_vendedores');
   end if;
 
-  update public.vendedores set nome = nome where codigo = '0002';
+  update public.vendedores set nome = nome, anotacao = anotacao where codigo = '0002';
   get diagnostics v_n = row_count;
   if v_n <> 1 then
     raise exception 'FALHA: admin nao alterou vendedor';
   end if;
+
+  -- Nem admin troca o codigo (moveria os pedidos do vendedor) nem mexe em
+  -- ativo direto (isso e app_definir_ativo_vendedor, que bane a conta junto).
+  begin
+    update public.vendedores set codigo = 'x' where codigo = '0002';
+    raise exception 'FALHA: admin trocou o codigo do vendedor';
+  exception when sqlstate '42501' then
+    null;
+  end;
+  begin
+    update public.vendedores set ativo = false where codigo = '0002';
+    raise exception 'FALHA: admin mudou ativo direto na tabela';
+  exception when sqlstate '42501' then
+    null;
+  end;
 
   update public.clientes set nome = 'teste2' where id = current_setting('teste.prox_cliente')::integer;
   get diagnostics v_n = row_count;
@@ -272,6 +311,28 @@ select set_config('request.jwt.claims', '', true);
 
 -- 4. Estrutura: senha, acesso_admin e app_migrar_admin sumiram; nenhuma
 --    politica para anon/public; anon sem privilegio em nada de public.
+--    Inclui objetos criados DEPOIS da fase 3 pelo postgres (default
+--    privileges): uma funcao e uma tabela de teste, criadas aqui.
+create function public.teste_default_priv() returns integer
+language sql as 'select 1';
+create table public.teste_default_priv_t (x integer);
+
+do $$
+begin
+  if current_user <> 'postgres' then
+    raise exception 'FALHA: teste precisa rodar como postgres (roda como %)', current_user;
+  end if;
+  if has_function_privilege('anon', 'public.teste_default_priv()', 'execute') then
+    raise exception 'FALHA: anon executa funcao nova de public (default privilege de EXECUTE para PUBLIC continua)';
+  end if;
+  if has_table_privilege('anon', 'public.teste_default_priv_t', 'select, insert, update, delete, truncate') then
+    raise exception 'FALHA: anon com privilegio em tabela nova de public';
+  end if;
+  if has_table_privilege('authenticated', 'public.teste_default_priv_t', 'truncate') then
+    raise exception 'FALHA: authenticated com TRUNCATE em tabela nova de public';
+  end if;
+end $$;
+
 do $$
 declare
   v_n bigint;

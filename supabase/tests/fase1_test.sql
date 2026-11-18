@@ -404,4 +404,37 @@ begin
   end;
 end $$;
 
+-- 10. Codigo com pedidos (de um vendedor ja excluido): app_criar_vendedor
+--     recusa, para o vendedor novo nao herdar pedidos alheios.
+insert into public.pedidos (id, numero, vendedor_codigo)
+overriding system value
+values ((select max(id) + 1 from public.pedidos), 'teste-reuso', 'teste_reuso');
+
+select set_config('request.jwt.claims',
+  json_build_object('sub', (select id from auth.users where email = 'teste_admin@milkdim.local'),
+                    'role', 'authenticated',
+                    'app_metadata', json_build_object('role', 'admin'))::text, true);
+set local role authenticated;
+do $$
+begin
+  begin
+    perform public.app_criar_vendedor('teste_reuso', 'X', '123456');
+    raise exception 'FALHA: app_criar_vendedor aceitou codigo que ja tem pedidos';
+  exception when others then
+    if sqlerrm not like 'Ja existem pedidos com o codigo teste_reuso.%' then
+      raise exception 'FALHA: erro inesperado ao reusar codigo: %', sqlerrm;
+    end if;
+  end;
+end $$;
+reset role;
+select set_config('request.jwt.claims', '', true);
+
+do $$
+begin
+  if exists (select 1 from public.vendedores where codigo = 'teste_reuso')
+     or exists (select 1 from auth.users where email = 'teste_reuso@milkdim.local') then
+    raise exception 'FALHA: recusa do codigo reusado deixou linha ou conta para tras';
+  end if;
+end $$;
+
 select 'fase1_test: OK' as resultado;
