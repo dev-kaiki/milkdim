@@ -81,6 +81,54 @@ begin
   end if;
 end $$;
 
+-- 3b. As funcoes de vendedor nunca alcancam a conta de um admin, nem quando
+--     nao ha linha em vendedores, nem quando ha uma linha sem vinculo com o
+--     mesmo codigo do usuario admin.
+select set_config('request.jwt.claims',
+  json_build_object('sub', (select id from auth.users where email = 'teste_admin@milkdim.local'),
+                    'role', 'authenticated',
+                    'app_metadata', json_build_object('role', 'admin'))::text, true);
+do $$
+declare
+  v_antes text;
+  u record;
+begin
+  select encrypted_password into v_antes
+    from auth.users where email = 'teste_admin@milkdim.local';
+
+  begin
+    perform public.app_alterar_senha_vendedor('teste_admin', '123456');
+    raise exception 'FALHA: app_alterar_senha_vendedor aceitou codigo sem vendedor (conta de admin)';
+  exception when others then
+    if sqlerrm like 'FALHA:%' then raise; end if;
+  end;
+
+  insert into public.vendedores (id, codigo, nome, ativo) values (-2, 'teste_admin', 'Homonimo', true);
+  begin
+    perform public.app_alterar_senha_vendedor('teste_admin', '123456');
+    raise exception 'FALHA: troca de senha caiu na conta do admin pelo e-mail montado';
+  exception when others then
+    if sqlerrm like 'FALHA:%' then raise; end if;
+  end;
+  perform public.app_definir_ativo_vendedor('teste_admin', false);
+  perform public.app_excluir_vendedor('teste_admin');
+
+  select * into u from auth.users where email = 'teste_admin@milkdim.local';
+  if not found then
+    raise exception 'FALHA: app_excluir_vendedor apagou a conta do admin homonimo';
+  end if;
+  if u.encrypted_password is distinct from v_antes then
+    raise exception 'FALHA: senha do admin mudou';
+  end if;
+  if u.banned_until is not null then
+    raise exception 'FALHA: app_definir_ativo_vendedor baniu a conta do admin';
+  end if;
+  if exists (select 1 from public.vendedores where codigo = 'teste_admin') then
+    raise exception 'FALHA: linha homonima continua depois de excluir';
+  end if;
+end $$;
+select set_config('request.jwt.claims', '', true);
+
 -- 4. Com JWT (qualquer role), app_migrar_admin recusa.
 select set_config('request.jwt.claims',
   json_build_object('sub', (select id from auth.users where email = 'teste_admin@milkdim.local'),
@@ -136,6 +184,104 @@ begin
   end;
 end $$;
 reset role;
+
+-- 5b. Enquanto as politicas abertas existem, is_admin e auth_user_id so
+--     mudam por admin. O resto da linha continua editavel como hoje.
+select set_config('teste.admin_uid',
+  (select id::text from auth.users where email = 'teste_admin@milkdim.local'), true);
+set local role authenticated;
+do $$
+begin
+  update public.vendedores set nome = nome where auth_user_id = auth.uid();
+  if not found then
+    raise exception 'FALHA: vendedor nao alterou o nome da propria linha (app antigo quebraria)';
+  end if;
+  begin
+    update public.vendedores set is_admin = true where auth_user_id = auth.uid();
+    raise exception 'FALHA: vendedor se fez admin';
+  exception when sqlstate '42501' then
+    null;
+  end;
+  begin
+    update public.vendedores
+       set auth_user_id = current_setting('teste.admin_uid')::uuid
+     where codigo = '0003';
+    raise exception 'FALHA: vendedor reapontou auth_user_id de outro vendedor';
+  exception when sqlstate '42501' then
+    null;
+  end;
+  begin
+    insert into public.vendedores (id, codigo, nome, is_admin) values (-1, '8888', 'Y', true);
+    raise exception 'FALHA: vendedor inseriu vendedor admin';
+  exception when sqlstate '42501' then
+    null;
+  end;
+  if public.app_is_admin() then
+    raise exception 'FALHA: vendedor virou admin';
+  end if;
+end $$;
+reset role;
+select set_config('request.jwt.claims', '', true);
+
+-- Chave anonima sem claims (o caso do enunciado)...
+set local role anon;
+do $$
+begin
+  update public.vendedores set nome = nome where codigo = '0001';
+  if not found then
+    raise exception 'FALHA: anon nao alterou nome (app antigo quebraria)';
+  end if;
+  begin
+    update public.vendedores
+       set auth_user_id = current_setting('teste.admin_uid')::uuid
+     where codigo = '0001';
+    raise exception 'FALHA: anon sem claims reapontou auth_user_id';
+  exception when sqlstate '42501' then
+    null;
+  end;
+  begin
+    update public.vendedores set is_admin = true where codigo = '0001';
+    raise exception 'FALHA: anon sem claims marcou is_admin';
+  exception when sqlstate '42501' then
+    null;
+  end;
+  begin
+    insert into public.vendedores (id, codigo, nome, is_admin) values (-1, '8888', 'Y', true);
+    raise exception 'FALHA: anon sem claims inseriu vendedor admin';
+  exception when sqlstate '42501' then
+    null;
+  end;
+end $$;
+reset role;
+
+-- ...e com as claims que o PostgREST manda para a chave anonima.
+select set_config('request.jwt.claims', json_build_object('role', 'anon')::text, true);
+set local role anon;
+do $$
+begin
+  begin
+    update public.vendedores
+       set auth_user_id = current_setting('teste.admin_uid')::uuid
+     where codigo = '0001';
+    raise exception 'FALHA: anon reapontou auth_user_id';
+  exception when sqlstate '42501' then
+    null;
+  end;
+end $$;
+reset role;
+select set_config('request.jwt.claims', '', true);
+
+do $$
+begin
+  if exists (select 1 from public.vendedores where is_admin) then
+    raise exception 'FALHA: algum vendedor ficou com is_admin';
+  end if;
+  if exists (select 1 from public.vendedores v
+              join auth.users u on u.id = v.auth_user_id
+             where u.email <> lower(v.codigo) || '@milkdim.local') then
+    raise exception 'FALHA: algum auth_user_id foi reapontado';
+  end if;
+end $$;
 
 -- 6. JWT da chave anonima (role anon) tambem nao e admin.
 select set_config('request.jwt.claims', json_build_object('role', 'anon')::text, true);

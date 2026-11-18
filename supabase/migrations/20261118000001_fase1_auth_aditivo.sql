@@ -239,14 +239,22 @@ begin
   end if;
 
   -- Preferir o vinculo gravado na linha; sem ele, o e-mail montado do codigo.
+  -- So conta de vendedor: sem linha em vendedores, nada de montar e-mail,
+  -- porque as contas de admin moram no mesmo dominio @milkdim.local.
   select v.auth_user_id into v_uid
     from public.vendedores v
    where v.codigo = btrim(p_codigo);
 
+  if not found then
+    raise exception 'Nao ha vendedor com o codigo %.', p_codigo;
+  end if;
+
+  -- Linha sem vinculo: o e-mail montado do codigo, nunca uma conta de admin.
   if v_uid is null then
     select u.id into v_uid
       from auth.users u
-     where u.email = lower(btrim(p_codigo)) || '@milkdim.local';
+     where u.email = lower(btrim(p_codigo)) || '@milkdim.local'
+       and coalesce(u.raw_app_meta_data ->> 'role', '') <> 'admin';
   end if;
 
   update auth.users
@@ -285,7 +293,8 @@ begin
   if v_uid is null then
     select u.id into v_uid
       from auth.users u
-     where u.email = lower(btrim(p_codigo)) || '@milkdim.local';
+     where u.email = lower(btrim(p_codigo)) || '@milkdim.local'
+       and coalesce(u.raw_app_meta_data ->> 'role', '') <> 'admin';
   end if;
 
   -- Data distante em vez de 'infinity' (ver app_criar_usuario_auth).
@@ -326,7 +335,8 @@ begin
   if v_uid is null then
     select u.id into v_uid
       from auth.users u
-     where u.email = lower(btrim(p_codigo)) || '@milkdim.local';
+     where u.email = lower(btrim(p_codigo)) || '@milkdim.local'
+       and coalesce(u.raw_app_meta_data ->> 'role', '') <> 'admin';
   end if;
 
   delete from public.vendedores where codigo = btrim(p_codigo);
@@ -354,6 +364,52 @@ grant execute on function public.app_criar_vendedor(text, text, text, text, bool
 grant execute on function public.app_alterar_senha_vendedor(text, text) to authenticated;
 grant execute on function public.app_definir_ativo_vendedor(text, boolean) to authenticated;
 grant execute on function public.app_excluir_vendedor(text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Protecao de is_admin e auth_user_id enquanto as politicas abertas existem
+-- ---------------------------------------------------------------------------
+-- Ate a fase 3, vendedores ainda tem politicas FOR ALL USING (true) para
+-- public. Sem isto, um vendedor logado se faria admin
+-- (update ... set is_admin = true) e a chave anonima poderia apontar o
+-- auth_user_id de um vendedor para a conta de um admin, que
+-- app_excluir_vendedor apagaria depois. Os apps atuais nunca escrevem nessas
+-- duas colunas, entao continuam funcionando.
+--
+-- So o que mexe em is_admin/auth_user_id passa por app_is_admin(); o resto
+-- (nome, senha, ativo, anotacao pelo controle antigo) segue como hoje.
+-- A chave anonima nunca passa: current_setting('role') e o papel que o
+-- PostgREST ligou (anon/authenticated) e nao muda dentro de SECURITY DEFINER.
+
+create or replace function public.app_proteger_vendedores()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.is_admin or new.auth_user_id is not null then
+      if current_setting('role', true) = 'anon' or not public.app_is_admin() then
+        raise exception 'Sem permissao para definir is_admin ou auth_user_id.'
+          using errcode = '42501';
+      end if;
+    end if;
+  elsif new.is_admin is distinct from old.is_admin
+     or new.auth_user_id is distinct from old.auth_user_id then
+    if current_setting('role', true) = 'anon' or not public.app_is_admin() then
+      raise exception 'Sem permissao para alterar is_admin ou auth_user_id.'
+        using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+revoke execute on function public.app_proteger_vendedores() from public, anon, authenticated;
+
+create trigger trg_vendedores_proteger
+  before insert or update on public.vendedores
+  for each row execute function public.app_proteger_vendedores();
 
 -- ---------------------------------------------------------------------------
 -- app_migrar_admin: cria a conta de admin a partir de acesso_admin
