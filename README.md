@@ -28,11 +28,12 @@ depending on whatever fonts the phone happens to have.
 Needs a Supabase project. Credentials are **not** in the source — pass them at build time:
 
 ```bash
+cp dart_defines.example.json dart_defines.json   # then fill in your URL and anon key
 cd app     # or: cd admin
-flutter run \
-  --dart-define=SUPABASE_URL=https://your-project.supabase.co \
-  --dart-define=SUPABASE_ANON_KEY=your-anon-key
+flutter run --dart-define-from-file=../dart_defines.json
 ```
+
+`dart_defines.json` is git-ignored.
 
 Both refuse to start without them rather than falling back to a default.
 

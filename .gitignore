@@ -23,3 +23,6 @@ local.properties
 .env
 .env.*
 *.pem
+
+# Credenciais locais do Supabase (modelo: dart_defines.example.json)
+dart_defines.json
