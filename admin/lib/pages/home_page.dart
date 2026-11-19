@@ -160,7 +160,12 @@ class _HomePageState extends State<HomePage> {
 
   void _selecionar(int i) => setState(() => _selectedIndex = i);
 
-  Widget _conteudo() => IndexedStack(index: _selectedIndex, children: _tabs);
+  // A chave global mantém as abas (e o que já carregaram) quando a janela
+  // cruza a largura do menu lateral e a árvore de layout muda.
+  final GlobalKey _chaveAbas = GlobalKey();
+
+  Widget _conteudo() =>
+      IndexedStack(key: _chaveAbas, index: _selectedIndex, children: _tabs);
 
   Widget _acaoSair({required bool comRotulo}) {
     if (_loggingOut) {

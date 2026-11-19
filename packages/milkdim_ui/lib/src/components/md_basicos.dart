@@ -254,9 +254,9 @@ void showMdSnack(BuildContext context, String texto, {MdTipo tipo = MdTipo.neutr
         color: Colors.white,
         fontWeight: FontWeight.w600,
       );
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(
+  // Entra na fila como o showSnackBar comum: não corta a mensagem atual
+  // (nem um "DESFAZER" que ainda está na tela).
+  ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: fundo,
         behavior: SnackBarBehavior.floating,

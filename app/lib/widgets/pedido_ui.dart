@@ -45,7 +45,8 @@ class SeloUltimoPedido extends StatelessWidget {
   final DateTime? ultimoPedido;
   final bool comHora;
 
-  const SeloUltimoPedido({super.key, required this.ultimoPedido, this.comHora = false});
+  const SeloUltimoPedido(
+      {super.key, required this.ultimoPedido, this.comHora = false});
 
   @override
   Widget build(BuildContext context) {
@@ -76,7 +77,8 @@ class LinhaInfo extends StatelessWidget {
         children: [
           SizedBox(
             width: 120,
-            child: Text(rotulo, style: tt.bodyMedium!.copyWith(color: MdColors.textMuted)),
+            child: Text(rotulo,
+                style: tt.bodyMedium!.copyWith(color: MdColors.textMuted)),
           ),
           const SizedBox(width: MdSpace.sm),
           Expanded(
@@ -127,7 +129,8 @@ class ProdutoQtdTile extends StatelessWidget {
         ),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: MdSpace.lg, vertical: MdSpace.md),
+        padding: const EdgeInsets.symmetric(
+            horizontal: MdSpace.lg, vertical: MdSpace.md),
         child: Row(
           children: [
             Expanded(
@@ -163,7 +166,8 @@ class ProdutoQtdTile extends StatelessWidget {
                 style: tt.titleMedium,
                 decoration: const InputDecoration(
                   labelText: 'Qtd',
-                  contentPadding: EdgeInsets.symmetric(horizontal: MdSpace.sm, vertical: 14),
+                  contentPadding: EdgeInsets.symmetric(
+                      horizontal: MdSpace.sm, vertical: 14),
                 ),
                 onChanged: onChanged,
               ),
@@ -219,7 +223,8 @@ class ResumoPedido extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Resumo do Pedido', style: tt.titleLarge, textAlign: TextAlign.center),
+        Text('Resumo do Pedido',
+            style: tt.titleLarge, textAlign: TextAlign.center),
         const SizedBox(height: MdSpace.lg),
         LinhaInfo('Nº Pedido', numero),
         LinhaInfo('Cliente', cliente),
@@ -233,7 +238,9 @@ class ResumoPedido extends StatelessWidget {
                     style: tt.bodyMedium!.copyWith(color: MdColors.textMuted)),
               ),
               const SizedBox(width: MdSpace.sm),
-              Flexible(child: SeloUltimoPedido(ultimoPedido: ultimoPedido, comHora: true)),
+              Flexible(
+                  child: SeloUltimoPedido(
+                      ultimoPedido: ultimoPedido, comHora: true)),
             ],
           ),
         ),
@@ -251,10 +258,13 @@ class ResumoPedido extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(it.nome, style: tt.bodyLarge!.copyWith(fontWeight: FontWeight.w600)),
+                      Text(it.nome,
+                          style: tt.bodyLarge!
+                              .copyWith(fontWeight: FontWeight.w600)),
                       Text(
                         formatarReais(it.subtotal),
-                        style: tt.bodyMedium!.copyWith(color: MdColors.textMuted),
+                        style:
+                            tt.bodyMedium!.copyWith(color: MdColors.textMuted),
                       ),
                     ],
                   ),
@@ -262,7 +272,8 @@ class ResumoPedido extends StatelessWidget {
                 const SizedBox(width: MdSpace.sm),
                 Text(
                   'x${it.quantidade}',
-                  style: tt.titleMedium!.copyWith(color: MdColors.primaryStrong),
+                  style:
+                      tt.titleMedium!.copyWith(color: MdColors.primaryStrong),
                 ),
               ],
             ),
@@ -289,7 +300,9 @@ class ResumoPedido extends StatelessWidget {
                 height: 64,
                 padding: const EdgeInsets.all(MdSpace.xs),
                 decoration: BoxDecoration(
-                  color: assinatura == null ? MdColors.background : MdColors.surface,
+                  color: assinatura == null
+                      ? MdColors.background
+                      : MdColors.surface,
                   border: Border.all(color: MdColors.border),
                   borderRadius: BorderRadius.circular(MdRadius.field),
                 ),
@@ -370,7 +383,8 @@ class BarraResumo extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(MdSpace.lg, MdSpace.md, MdSpace.lg, MdSpace.md),
+          padding: const EdgeInsets.fromLTRB(
+              MdSpace.lg, MdSpace.md, MdSpace.lg, MdSpace.md),
           // Align com heightFactor 1: a barra fica só da altura do botão.
           child: Align(
             heightFactor: 1,
@@ -423,36 +437,45 @@ class ConteudoBuscaCliente extends StatelessWidget {
           onChanged: (_) => onBuscar(),
         ),
         const SizedBox(height: MdSpace.md),
-        SizedBox(
-          height: 280,
-          width: double.maxFinite,
-          child: resultados.isEmpty
-              ? Center(
-                  child: Text(
-                    'Nenhum cliente encontrado',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium!
-                        .copyWith(color: MdColors.textMuted),
-                  ),
-                )
-              : ListView.separated(
-                  itemCount: resultados.length,
-                  separatorBuilder: (_, __) => const Divider(),
-                  itemBuilder: (ctx, i) {
-                    final cli = resultados[i];
-                    return ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: MdSpace.sm),
-                      leading: const Icon(Icons.person_outline),
-                      title: Text(cli['nome'] ?? ''),
-                      subtitle: Text(
-                        (cli['cpf_cnpj'] ?? '') +
-                            (cli['telefone'] != null ? " • ${cli['telefone']}" : ""),
+        // Flexível: com o teclado aberto num celular pequeno a lista encolhe
+        // em vez de passar da borda do diálogo.
+        Flexible(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 280),
+            child: SizedBox(
+              width: double.maxFinite,
+              child: resultados.isEmpty
+                  ? Center(
+                      child: Text(
+                        'Nenhum cliente encontrado',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodyMedium!
+                            .copyWith(color: MdColors.textMuted),
                       ),
-                      onTap: () => onEscolher(cli),
-                    );
-                  },
-                ),
+                    )
+                  : ListView.separated(
+                      itemCount: resultados.length,
+                      separatorBuilder: (_, __) => const Divider(),
+                      itemBuilder: (ctx, i) {
+                        final cli = resultados[i];
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: MdSpace.sm),
+                          leading: const Icon(Icons.person_outline),
+                          title: Text(cli['nome'] ?? ''),
+                          subtitle: Text(
+                            (cli['cpf_cnpj'] ?? '') +
+                                (cli['telefone'] != null
+                                    ? " • ${cli['telefone']}"
+                                    : ""),
+                          ),
+                          onTap: () => onEscolher(cli),
+                        );
+                      },
+                    ),
+            ),
+          ),
         ),
       ],
     );

@@ -347,8 +347,8 @@ class _PedidosPageState extends State<PedidosPage>
       if (v != _vendedorFiltro) return false;
     }
     // total
-    final minT = double.tryParse(_minTotalCtrl.text.replaceAll(',', '.'));
-    final maxT = double.tryParse(_maxTotalCtrl.text.replaceAll(',', '.'));
+    final minT = _lerValorDigitado(_minTotalCtrl.text);
+    final maxT = _lerValorDigitado(_maxTotalCtrl.text);
     final t = _asDouble(p['total']);
     if (minT != null && t < minT) return false;
     if (maxT != null && t > maxT) return false;
@@ -465,6 +465,13 @@ class _PedidosPageState extends State<PedidosPage>
     } catch (_) {
       return v.toString();
     }
+  }
+
+  /// Aceita "1234.56", "1234,56" e "1.234,56" (como a tela mostra agora).
+  double? _lerValorDigitado(String texto) {
+    var t = texto.replaceAll('R\$', '').trim();
+    if (t.contains(',')) t = t.replaceAll('.', '').replaceAll(',', '.');
+    return double.tryParse(t);
   }
 
   String _fmtTotal(dynamic v) {
@@ -678,16 +685,16 @@ class _PedidosPageState extends State<PedidosPage>
           ]
         : [
             _acao(
-              label: 'Apagar',
-              icon: Icons.delete_outline,
-              onPressed: () => _apagarPedidoSalvo(p),
-              perigo: true,
-            ),
-            _acao(
               label: 'Editar',
               icon: Icons.edit_outlined,
               onPressed: () => _editar(p),
               principal: true,
+            ),
+            _acao(
+              label: 'Apagar',
+              icon: Icons.delete_outline,
+              onPressed: () => _apagarPedidoSalvo(p),
+              perigo: true,
             ),
           ];
 
