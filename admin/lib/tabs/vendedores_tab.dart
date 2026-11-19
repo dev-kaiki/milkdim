@@ -1,25 +1,27 @@
 // lib/tabs/vendedores_tab.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/vendedor.dart';
 import '../services/supabase_service.dart';
-
-const Color milkdimYellow = Color(0xFFFFE066);
-const Color milkdimOrange = Color(0xFFE38A1D);
-const Color milkdimWhite  = Color(0xFFFFFFFF);
-const Color milkdimGrey   = Color(0xFFF7F7F7);
+import '../widgets/lista_adaptavel.dart';
 
 class VendedoresTab extends StatefulWidget {
-  const VendedoresTab({super.key});
+  /// Só para captura visual: fonte dos vendedores no lugar do Supabase.
+  /// Nulo (padrão) usa [SupabaseService.buscarVendedores].
+  @visibleForTesting
+  final Future<List<Vendedor>> Function()? carregar;
+
+  const VendedoresTab({super.key, this.carregar});
 
   @override
   State<VendedoresTab> createState() => _VendedoresTabState();
 }
 
 class _VendedoresTabState extends State<VendedoresTab> {
-  final _service = SupabaseService();
+  late final _service = SupabaseService();
   final _searchCtrl = TextEditingController();
 
   List<Vendedor> _vendedores = [];
@@ -47,15 +49,7 @@ class _VendedoresTabState extends State<VendedoresTab> {
 
   void _toast(String msg, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: error ? Colors.red[700] : milkdimOrange,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    showMdSnack(context, msg, tipo: error ? MdTipo.erro : MdTipo.sucesso);
   }
 
   String? _nullIfEmpty(String? v) {
@@ -80,7 +74,7 @@ class _VendedoresTabState extends State<VendedoresTab> {
       _error = null;
     });
     try {
-      final data = await _service.buscarVendedores(); // List<Vendedor>
+      final data = await (widget.carregar?.call() ?? _service.buscarVendedores()); // List<Vendedor>
       if (!mounted) return;
       data.sort((a, b) => (a.nome ?? '').toLowerCase().compareTo((b.nome ?? '').toLowerCase()));
       setState(() {
@@ -128,25 +122,13 @@ class _VendedoresTabState extends State<VendedoresTab> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        backgroundColor: milkdimWhite,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-        title: Row(
-          children: [
-            const Icon(Icons.delete_forever, color: Colors.red),
-            const SizedBox(width: 8),
-            Text('Remover Vendedor',
-                style: TextStyle(color: Colors.red[800], fontWeight: FontWeight.bold)),
-          ],
-        ),
+        title: const TituloDialogo(
+            icone: Icons.delete_forever, texto: 'Remover Vendedor', destrutivo: true),
         content: Text('Tem certeza que deseja remover "${v.nome ?? '-'}"?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[700], foregroundColor: milkdimWhite),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remover'),
-          ),
+          BotaoDestrutivo(texto: 'Remover', onPressed: () => Navigator.pop(context, true)),
         ],
       ),
     );
@@ -171,17 +153,8 @@ class _VendedoresTabState extends State<VendedoresTab> {
       barrierDismissible: false,
       builder: (dialogCtx) => StatefulBuilder(
         builder: (context, setStateSB) => AlertDialog(
-          backgroundColor: milkdimWhite,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-          title: const Row(
-            children: [
-              Icon(Icons.lock_reset, color: milkdimOrange),
-              SizedBox(width: 6),
-              Text('Trocar senha',
-                  style: TextStyle(color: milkdimOrange, fontWeight: FontWeight.bold)),
-            ],
-          ),
+          title: const TituloDialogo(icone: Icons.lock_reset, texto: 'Trocar senha'),
           content: Form(
             key: formKey,
             autovalidateMode: AutovalidateMode.onUserInteraction,
@@ -190,14 +163,13 @@ class _VendedoresTabState extends State<VendedoresTab> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Vendedor: ${v.nome} (${v.codigo})'),
-                const SizedBox(height: 10),
+                const SizedBox(height: MdSpace.lg),
                 TextFormField(
                   controller: senhaCtrl,
                   obscureText: hidePwd,
                   decoration: InputDecoration(
                     labelText: 'Nova senha *',
                     prefixIcon: const Icon(Icons.lock_outline),
-                    filled: true,
                     suffixIcon: IconButton(
                       icon: Icon(hidePwd ? Icons.visibility : Icons.visibility_off),
                       onPressed: () => setStateSB(() => hidePwd = !hidePwd),
@@ -214,7 +186,6 @@ class _VendedoresTabState extends State<VendedoresTab> {
             FilledButton.icon(
               icon: const Icon(Icons.save),
               label: const Text('Salvar'),
-              style: FilledButton.styleFrom(backgroundColor: milkdimOrange, foregroundColor: milkdimWhite),
               onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
                 try {
@@ -252,18 +223,10 @@ class _VendedoresTabState extends State<VendedoresTab> {
 
         return StatefulBuilder(
           builder: (context, setStateSB) => AlertDialog(
-            backgroundColor: milkdimWhite,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-            title: Row(
-              children: [
-                Icon(vendedor == null ? Icons.person_add_alt : Icons.edit, color: milkdimOrange),
-                const SizedBox(width: 6),
-                Text(
-                  vendedor == null ? 'Novo Vendedor' : 'Editar Vendedor',
-                  style: const TextStyle(color: milkdimOrange, fontWeight: FontWeight.bold),
-                ),
-              ],
+            title: TituloDialogo(
+              icone: vendedor == null ? Icons.person_add_alt : Icons.edit,
+              texto: vendedor == null ? 'Novo Vendedor' : 'Editar Vendedor',
             ),
             content: Form(
               key: formKey,
@@ -285,17 +248,15 @@ class _VendedoresTabState extends State<VendedoresTab> {
                             decoration: const InputDecoration(
                               labelText: 'Código *',
                               prefixIcon: Icon(Icons.badge),
-                              filled: true,
                             ),
                             validator: (v) => (v == null || v.trim().isEmpty) ? 'Informe o código' : null,
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: MdSpace.md),
                           TextFormField(
                             controller: nomeCtrl,
                             decoration: const InputDecoration(
                               labelText: 'Nome *',
                               prefixIcon: Icon(Icons.person_outline),
-                              filled: true,
                             ),
                             validator: (v) => (v == null || v.trim().isEmpty) ? 'Informe o nome' : null,
                           ),
@@ -311,19 +272,17 @@ class _VendedoresTabState extends State<VendedoresTab> {
                               decoration: const InputDecoration(
                                 labelText: 'Código *',
                                 prefixIcon: Icon(Icons.badge),
-                                filled: true,
                               ),
                               validator: (v) => (v == null || v.trim().isEmpty) ? 'Informe o código' : null,
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: MdSpace.md),
                           Expanded(
                             child: TextFormField(
                               controller: nomeCtrl,
                               decoration: const InputDecoration(
                                 labelText: 'Nome *',
                                 prefixIcon: Icon(Icons.person_outline),
-                                filled: true,
                               ),
                               validator: (v) => (v == null || v.trim().isEmpty) ? 'Informe o nome' : null,
                             ),
@@ -331,14 +290,13 @@ class _VendedoresTabState extends State<VendedoresTab> {
                         ],
                       ),
                       if (vendedor == null) ...[
-                        const SizedBox(height: 10),
+                        const SizedBox(height: MdSpace.md),
                         TextFormField(
                           controller: senhaCtrl,
                           obscureText: hidePwd,
                           decoration: InputDecoration(
                             labelText: 'Senha *',
                             prefixIcon: const Icon(Icons.lock_outline),
-                            filled: true,
                             suffixIcon: IconButton(
                               icon: Icon(hidePwd ? Icons.visibility : Icons.visibility_off),
                               onPressed: () => setStateSB(() => hidePwd = !hidePwd),
@@ -349,13 +307,12 @@ class _VendedoresTabState extends State<VendedoresTab> {
                               : null,
                         ),
                       ],
-                      const SizedBox(height: 10),
+                      const SizedBox(height: MdSpace.md),
                       TextFormField(
                         controller: anotacaoCtrl,
                         decoration: const InputDecoration(
                           labelText: 'Anotação',
                           prefixIcon: Icon(Icons.note_alt_outlined),
-                          filled: true,
                         ),
                         maxLines: 2,
                       ),
@@ -363,11 +320,10 @@ class _VendedoresTabState extends State<VendedoresTab> {
                         const SizedBox(height: 8),
                         Row(
                           children: [
-                            const Text('Ativo', style: TextStyle(fontWeight: FontWeight.w600)),
+                            Text('Ativo', style: Theme.of(context).textTheme.titleSmall),
                             const Spacer(),
                             Switch(
                               value: ativo,
-                              activeColor: milkdimOrange,
                               onChanged: (v) => setStateSB(() => ativo = v),
                             ),
                           ],
@@ -407,7 +363,6 @@ class _VendedoresTabState extends State<VendedoresTab> {
                     _toast('Erro ao salvar: ${_msgErro(e)}', error: true);
                   }
                 },
-                style: FilledButton.styleFrom(backgroundColor: milkdimOrange, foregroundColor: milkdimWhite),
               ),
             ],
           ),
@@ -423,204 +378,136 @@ class _VendedoresTabState extends State<VendedoresTab> {
 
   // -------------------- UI --------------------
 
+  Widget _cartao(Vendedor v) {
+    final tt = Theme.of(context).textTheme;
+    return MdCard(
+      // Tocar no item abre edição
+      onTap: () => _showAddOrEditDialog(vendedor: v),
+      padding: const EdgeInsets.fromLTRB(MdSpace.lg, MdSpace.md, MdSpace.xs, MdSpace.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AvatarLista(icone: Icons.person, ativo: v.ativo),
+          const SizedBox(width: MdSpace.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  v.nome,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: tt.bodyLarge!.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Código: ${v.codigo}',
+                  style: tt.bodyMedium!.copyWith(color: MdColors.textMuted),
+                ),
+                if ((v.anotacao ?? '').isNotEmpty) ...[
+                  const SizedBox(height: MdSpace.xs),
+                  LinhaInfo(
+                    icone: Icons.note_alt_outlined,
+                    texto: 'Anotação: ${v.anotacao}',
+                    maxLines: 2,
+                  ),
+                ],
+                const SizedBox(height: MdSpace.sm),
+                SeloAtivo(ativo: v.ativo),
+              ],
+            ),
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'Mais ações',
+            onSelected: (value) {
+              switch (value) {
+                case 'editar':
+                  _showAddOrEditDialog(vendedor: v);
+                  break;
+                case 'senha':
+                  _trocarSenha(v);
+                  break;
+                case 'ativar':
+                  _toggleAtivo(v, !v.ativo);
+                  break;
+                case 'remover':
+                  _delete(v);
+                  break;
+              }
+            },
+            itemBuilder: (_) => [
+              itemMenu('editar', Icons.edit, 'Editar'),
+              itemMenu('senha', Icons.lock_reset, 'Trocar senha'),
+              itemMenu(
+                'ativar',
+                v.ativo ? Icons.visibility_off : Icons.visibility,
+                v.ativo ? 'Marcar como Inativo' : 'Marcar como Ativo',
+              ),
+              const PopupMenuDivider(),
+              itemMenu('remover', Icons.delete, 'Remover', destrutivo: true),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= 640;
 
-    return Column(
+    final Widget lista;
+    if (_loading) {
+      lista = const Center(child: CircularProgressIndicator());
+    } else if (_error != null) {
+      lista = ErroDaLista(texto: _error!);
+    } else if (_filtered.isEmpty) {
+      lista = MdEmptyState(
+        icone: Icons.people_alt_outlined,
+        titulo: 'Nenhum vendedor encontrado.',
+        texto: _searchCtrl.text.trim().isEmpty ? null : 'Tente outro termo de busca.',
+      );
+    } else {
+      lista = ListaAdaptavel(
+        onRefresh: _fetchVendedores,
+        itemCount: _filtered.length,
+        espacoFinal: isWide ? 0 : 72,
+        itemBuilder: (context, i) => _cartao(_filtered[i]),
+      );
+    }
+
+    return Stack(
       children: [
-        // Busca + Ação (responsivo)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _searchCtrl,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: milkdimWhite,
-                    hintText: 'Buscar por nome ou código...',
-                    prefixIcon: const Icon(Icons.search, color: milkdimOrange),
-                    suffixIcon: (_searchCtrl.text.isEmpty)
-                        ? null
-                        : IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        _searchCtrl.clear();
-                        _onSearchChanged();
-                      },
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 2),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: milkdimYellow, width: 2),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: const BorderSide(color: milkdimOrange, width: 2.2),
-                    ),
-                  ),
-                ),
+        Column(
+          children: [
+            // Busca + Ação (responsivo)
+            BarraDaAba(
+              busca: MdSearchField(
+                controller: _searchCtrl,
+                hint: 'Buscar por nome ou código...',
               ),
-              if (isWide) const SizedBox(width: 12),
-              if (isWide)
-                FilledButton.icon(
-                  onPressed: () => _showAddOrEditDialog(),
-                  icon: const Icon(Icons.person_add_alt_1),
-                  label: const Text('Adicionar'),
-                  style: FilledButton.styleFrom(backgroundColor: milkdimOrange, foregroundColor: milkdimWhite),
-                ),
-            ],
-          ),
-        ),
-
-        // Lista
-        Expanded(
-          child: _loading
-              ? const Center(child: CircularProgressIndicator(color: milkdimOrange))
-              : _error != null
-              ? Center(child: Text(_error!, style: const TextStyle(color: Colors.red)))
-              : _filtered.isEmpty
-              ? const Center(
-            child: Text('Nenhum vendedor encontrado.',
-                style: TextStyle(color: milkdimOrange, fontSize: 18)),
-          )
-              : RefreshIndicator(
-            onRefresh: _fetchVendedores,
-            child: ListView.separated(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              itemCount: _filtered.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 4),
-              itemBuilder: (context, i) {
-                final v = _filtered[i];
-
-                return Card(
-                  color: milkdimWhite,
-                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                  elevation: 2.8,
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: v.ativo ? milkdimOrange.withOpacity(.15) : milkdimGrey,
-                      child: Icon(Icons.person,
-                          color: v.ativo ? milkdimOrange : Colors.grey),
-                    ),
-                    title: Text(
-                      v.nome ?? '',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: milkdimOrange, fontWeight: FontWeight.w600),
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Código: ${v.codigo ?? '-'}'),
-                        if ((v.anotacao ?? '').isNotEmpty)
-                          Text(
-                            'Anotação: ${v.anotacao}',
-                            style: const TextStyle(fontSize: 13, color: Colors.black54),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        const SizedBox(height: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: v.ativo ? Colors.green.shade50 : Colors.red.shade50,
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(
-                              color: v.ativo ? Colors.green.shade300 : Colors.red.shade300,
-                            ),
-                          ),
-                          child: Text(
-                            v.ativo ? 'Ativo' : 'Inativo',
-                            style: TextStyle(
-                              color: v.ativo ? Colors.green.shade800 : Colors.red.shade800,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    // 👉 Tocar no item abre edição
-                    onTap: () => _showAddOrEditDialog(vendedor: v),
-
-                    trailing: PopupMenuButton<String>(
-                      onSelected: (value) {
-                        switch (value) {
-                          case 'editar':
-                            _showAddOrEditDialog(vendedor: v);
-                            break;
-                          case 'senha':
-                            _trocarSenha(v);
-                            break;
-                          case 'ativar':
-                            _toggleAtivo(v, !v.ativo);
-                            break;
-                          case 'remover':
-                            _delete(v);
-                            break;
-                        }
-                      },
-                      itemBuilder: (_) => [
-                        const PopupMenuItem(
-                          value: 'editar',
-                          child: ListTile(
-                            leading: Icon(Icons.edit),
-                            title: Text('Editar'),
-                          ),
-                        ),
-                        const PopupMenuItem(
-                          value: 'senha',
-                          child: ListTile(
-                            leading: Icon(Icons.lock_reset),
-                            title: Text('Trocar senha'),
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'ativar',
-                          child: ListTile(
-                            leading: Icon(v.ativo ? Icons.visibility_off : Icons.visibility),
-                            title:
-                            Text(v.ativo ? 'Marcar como Inativo' : 'Marcar como Ativo'),
-                          ),
-                        ),
-                        const PopupMenuDivider(),
-                        const PopupMenuItem(
-                          value: 'remover',
-                          child: ListTile(
-                            leading: Icon(Icons.delete, color: Colors.red),
-                            title: Text('Remover', style: TextStyle(color: Colors.red)),
-                          ),
-                        ),
-                      ],
-                    ),
-                    contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              acoes: [
+                if (isWide)
+                  FilledButton.icon(
+                    onPressed: () => _showAddOrEditDialog(),
+                    icon: const Icon(Icons.person_add_alt_1),
+                    label: const Text('Adicionar'),
                   ),
-                );
-              },
+              ],
             ),
-          ),
+            Expanded(child: lista),
+          ],
         ),
 
         // FAB (telas estreitas)
         if (!isWide)
-          Padding(
-            padding: const EdgeInsets.all(20.0),
-            child: Align(
-              alignment: Alignment.bottomRight,
-              child: FloatingActionButton.extended(
-                onPressed: () => _showAddOrEditDialog(),
-                backgroundColor: milkdimOrange,
-                foregroundColor: milkdimWhite,
-                icon: const Icon(Icons.person_add_alt_1),
-                label: const Text('Adicionar Vendedor'),
-                elevation: 3,
-              ),
+          Positioned(
+            right: MdSpace.lg,
+            bottom: MdSpace.lg,
+            child: FloatingActionButton.extended(
+              onPressed: () => _showAddOrEditDialog(),
+              icon: const Icon(Icons.person_add_alt_1),
+              label: const Text('Adicionar Vendedor'),
             ),
           ),
       ],

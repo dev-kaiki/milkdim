@@ -344,6 +344,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.17.0"
+  milkdim_ui:
+    dependency: "direct main"
+    description:
+      path: "../packages/milkdim_ui"
+      relative: true
+    source: path
+    version: "1.0.0"
   mime:
     dependency: transitive
     description:

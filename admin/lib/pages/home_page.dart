@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/auth_admin.dart';
@@ -13,29 +14,40 @@ import '../tabs/clientes_tab.dart';
 import '../tabs/produtos_tab.dart' as prod;
 import '../tabs/pedidos_tab.dart' as ped;
 
-const Color milkdimYellow = Color(0xFFFFE066);
-const Color milkdimOrange = Color(0xFFE38A1D);
-const Color milkdimWhite  = Color(0xFFFFFFFF);
+/// Largura a partir da qual a navegação vira trilho lateral (Windows/tablet deitado).
+const double _larguraTrilho = 900;
+
+/// Largura a partir da qual o trilho mostra os rótulos ao lado dos ícones.
+const double _larguraTrilhoEstendido = 1200;
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  /// Só para captura visual (sem Supabase): troca as quatro abas e desliga as
+  /// checagens de sessão. Nulo (padrão) mantém o comportamento normal.
+  @visibleForTesting
+  final List<Widget>? abasDeTeste;
+
+  /// Aba aberta ao montar (padrão: Vendedores).
+  final int indiceInicial;
+
+  const HomePage({super.key, this.abasDeTeste, this.indiceInicial = 0});
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> {
-  int _selectedIndex = 0;
+  late int _selectedIndex = widget.indiceInicial;
   bool _loggingOut = false;
   DateTime? _lastBackPress;
   StreamSubscription<AuthState>? _authSub;
 
-  final List<Widget> _tabs = [
-    const VendedoresTab(),
-    const prod.ProdutosTab(),
-    const ped.PedidosTab(),
-    const ClientesTab(),
-  ];
+  late final List<Widget> _tabs = widget.abasDeTeste ??
+      [
+        const VendedoresTab(),
+        const prod.ProdutosTab(),
+        const ped.PedidosTab(),
+        const ClientesTab(),
+      ];
 
   static const List<String> _titles = [
     'Vendedores',
@@ -54,6 +66,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    if (widget.abasDeTeste != null) return; // captura visual: sem Supabase
     WidgetsBinding.instance.addPostFrameCallback((_) => _ensureLogged());
     // Sessão encerrada (logout, token revogado, conta desativada): volta ao login.
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
@@ -83,9 +96,7 @@ class _HomePageState extends State<HomePage> {
         await sairAdmin();
       } catch (_) {}
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sem acesso ao controle.')),
-      );
+      showMdSnack(context, 'Sem acesso ao controle.', tipo: MdTipo.erro);
       _goLogin();
     }
   }
@@ -94,20 +105,17 @@ class _HomePageState extends State<HomePage> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: milkdimWhite,
-        title: Row(
+        title: const Row(
           children: [
-            const Icon(Icons.logout, color: milkdimOrange),
-            const SizedBox(width: 8),
-            const Text('Sair da conta',
-                style: TextStyle(color: milkdimOrange, fontWeight: FontWeight.bold)),
+            Icon(Icons.logout, color: MdColors.primaryStrong),
+            SizedBox(width: MdSpace.sm),
+            Text('Sair da conta'),
           ],
         ),
         content: const Text('Tem certeza que deseja sair?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: milkdimOrange, foregroundColor: milkdimWhite),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Sair'),
           ),
@@ -122,13 +130,7 @@ class _HomePageState extends State<HomePage> {
       _goLogin();
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Não foi possível sair. Tente novamente.'),
-          backgroundColor: Colors.red[700],
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      showMdSnack(context, 'Não foi possível sair. Tente novamente.', tipo: MdTipo.erro);
     } finally {
       if (mounted) setState(() => _loggingOut = false);
     }
@@ -143,10 +145,10 @@ class _HomePageState extends State<HomePage> {
     if (_lastBackPress == null || now.difference(_lastBackPress!) > const Duration(seconds: 2)) {
       _lastBackPress = now;
       if (mounted) {
+        // SnackBar do tema (e não showMdSnack): a duração tem que casar com a janela de 2 s.
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Toque novamente para sair'),
-            behavior: SnackBarBehavior.floating,
             duration: Duration(seconds: 2),
           ),
         );
@@ -156,75 +158,161 @@ class _HomePageState extends State<HomePage> {
     return true;
   }
 
+  void _selecionar(int i) => setState(() => _selectedIndex = i);
+
+  Widget _conteudo() => IndexedStack(index: _selectedIndex, children: _tabs);
+
+  Widget _acaoSair({required bool comRotulo}) {
+    if (_loggingOut) {
+      return const Padding(
+        padding: EdgeInsets.all(MdSpace.md),
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    if (comRotulo) {
+      return Tooltip(
+        message: 'Sair',
+        child: TextButton.icon(
+          onPressed: _signOut,
+          icon: const Icon(Icons.logout),
+          label: const Text('Sair'),
+        ),
+      );
+    }
+    return IconButton(
+      icon: const Icon(Icons.logout),
+      tooltip: 'Sair',
+      onPressed: _signOut,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final largura = MediaQuery.sizeOf(context).width;
     return WillPopScope(
       onWillPop: _onWillPop,
-      child: Scaffold(
-        backgroundColor: milkdimWhite,
-        appBar: AppBar(
-          backgroundColor: milkdimYellow,
-          elevation: 0,
-          centerTitle: true,
-          title: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Image.asset(
-                'assets/logo.jpg',
-                height: 34,
-                errorBuilder: (_, __, ___) =>
-                const Icon(Icons.local_cafe, size: 32, color: milkdimOrange),
+      child: largura >= _larguraTrilho ? _layoutLargo(largura) : _layoutEstreito(),
+    );
+  }
+
+  /// Celular / janela estreita: barra de cima com logo + seção e navegação embaixo.
+  Widget _layoutEstreito() {
+    return Scaffold(
+      appBar: AppBar(
+        title: MdLogoTitle(texto: _titles[_selectedIndex]),
+        actions: [
+          _acaoSair(comRotulo: false),
+          const SizedBox(width: MdSpace.xs),
+        ],
+      ),
+      body: SafeArea(child: _conteudo()),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: _selecionar,
+        destinations: List.generate(
+          _tabs.length,
+          (i) => NavigationDestination(icon: Icon(_tabIcons[i]), label: _titles[i]),
+        ),
+      ),
+    );
+  }
+
+  /// Tela larga (Windows): trilho à esquerda com o logo e conteúdo centralizado.
+  Widget _layoutLargo(double largura) {
+    final estendido = largura >= _larguraTrilhoEstendido;
+    final tt = Theme.of(context).textTheme;
+
+    return Scaffold(
+      body: SafeArea(
+        child: Row(
+          children: [
+            NavigationRail(
+              extended: estendido,
+              minExtendedWidth: 232,
+              labelType:
+                  estendido ? NavigationRailLabelType.none : NavigationRailLabelType.all,
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: _selecionar,
+              leading: Padding(
+                padding: const EdgeInsets.only(top: MdSpace.sm, bottom: MdSpace.xl),
+                child: estendido
+                    ? const SizedBox(
+                        width: 232,
+                        child: Padding(
+                          padding: EdgeInsets.only(left: MdSpace.xl),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: MdLogoTitle(logoSize: 36),
+                          ),
+                        ),
+                      )
+                    : const _LogoCompacto(),
               ),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Text(
-                  _titles[_selectedIndex],
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: milkdimOrange,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 22,
-                    letterSpacing: 1.1,
+              destinations: List.generate(
+                _tabs.length,
+                (i) => NavigationRailDestination(
+                  icon: Icon(_tabIcons[i]),
+                  label: Text(_titles[i]),
+                ),
+              ),
+            ),
+            const VerticalDivider(width: 1),
+            Expanded(
+              child: MdContentWidth(
+                maxWidth: 1100,
+                child: SizedBox(
+                  width: double.infinity,
+                  height: double.infinity,
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                            MdSpace.lg, MdSpace.xl, MdSpace.sm, MdSpace.xs),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _titles[_selectedIndex],
+                                style: tt.headlineSmall,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            _acaoSair(comRotulo: true),
+                          ],
+                        ),
+                      ),
+                      Expanded(child: _conteudo()),
+                    ],
                   ),
                 ),
               ),
-            ],
-          ),
-          actions: [
-            if (_loggingOut)
-              const Padding(
-                padding: EdgeInsets.all(8.0),
-                child: SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(color: milkdimOrange, strokeWidth: 2),
-                ),
-              )
-            else
-              IconButton(
-                icon: const Icon(Icons.logout, color: milkdimOrange),
-                tooltip: 'Sair',
-                onPressed: _signOut,
-              ),
+            ),
           ],
         ),
-        body: SafeArea(
-          child: IndexedStack(index: _selectedIndex, children: _tabs),
-        ),
-        bottomNavigationBar: BottomNavigationBar(
-          backgroundColor: milkdimYellow,
-          selectedItemColor: milkdimOrange,
-          unselectedItemColor: milkdimOrange.withOpacity(0.55),
-          showUnselectedLabels: true,
-          type: BottomNavigationBarType.fixed,
-          currentIndex: _selectedIndex,
-          onTap: (i) => setState(() => _selectedIndex = i),
-          items: List.generate(
-            _tabs.length,
-                (i) => BottomNavigationBarItem(icon: Icon(_tabIcons[i]), label: _titles[i]),
-          ),
-        ),
+      ),
+    );
+  }
+}
+
+/// Só o logo, para o trilho recolhido.
+class _LogoCompacto extends StatelessWidget {
+  const _LogoCompacto();
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: const Image(
+        image: MdLogoTitle.logoPadrao,
+        width: 40,
+        height: 40,
+        fit: BoxFit.cover,
+        semanticLabel: 'Logo MilkDim',
       ),
     );
   }

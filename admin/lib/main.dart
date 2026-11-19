@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'pages/home_page.dart';
@@ -55,7 +56,7 @@ class MilkDimAdminApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'MilkDim Admin',
-      theme: buildAppTheme(),
+      theme: buildMilkdimTheme(),
       debugShowCheckedModeBanner: false,
 
       // Só pela existência da sessão salva (nunca por isExpired).
@@ -69,21 +70,3 @@ class MilkDimAdminApp extends StatelessWidget {
   }
 }
 
-/// Tema básico alinhado às cores do MilkDim.
-ThemeData buildAppTheme() {
-  const milkdimOrange = Color(0xFFE38A1D);
-  return ThemeData(
-    useMaterial3: true,
-    colorScheme: ColorScheme.fromSeed(seedColor: milkdimOrange, brightness: Brightness.light),
-    scaffoldBackgroundColor: Colors.white,
-    appBarTheme: const AppBarTheme(
-      backgroundColor: Colors.white,
-      foregroundColor: milkdimOrange,
-      elevation: 1,
-    ),
-    inputDecorationTheme: const InputDecorationTheme(
-      filled: true,
-      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(16))),
-    ),
-  );
-}

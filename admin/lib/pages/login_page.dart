@@ -1,15 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/auth_admin.dart';
 
-const Color milkdimYellow = Color(0xFFFFE066);
-const Color milkdimOrange = Color(0xFFE38A1D);
-const Color milkdimWhite  = Color(0xFFFFFFFF);
-const Color milkdimDarkOrange = Color(0xFFC06617);
-
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  /// Se há sessão salva, pula para /home. Falso só na captura visual (sem Supabase).
+  final bool verificarSessaoSalva;
+
+  const LoginPage({super.key, this.verificarSessaoSalva = true});
   @override
   State<LoginPage> createState() => _LoginPageState();
 }
@@ -30,12 +29,14 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   @override
   void initState() {
     super.initState();
-    _animController = AnimationController(vsync: this, duration: const Duration(milliseconds: 650));
+    _animController = AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
     _fadeAnim = CurvedAnimation(parent: _animController, curve: Curves.easeIn);
     _animController.forward();
 
     // Se já houver sessão salva, pula pro /home.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _redirectIfAlreadyLogged());
+    if (widget.verificarSessaoSalva) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _redirectIfAlreadyLogged());
+    }
   }
 
   Future<void> _redirectIfAlreadyLogged() async {
@@ -74,249 +75,150 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       child: Scaffold(
-        backgroundColor: milkdimYellow,
-        body: Center(
-          child: FadeTransition(
-            opacity: _fadeAnim,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 22),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // LOGO
-                  Container(
-                    width: 120,
-                    height: 120,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: milkdimWhite,
-                      boxShadow: [
-                        BoxShadow(
-                          color: milkdimOrange.withOpacity(0.18),
-                          blurRadius: 32,
-                          spreadRadius: 4,
-                          offset: const Offset(0, 6),
-                        )
-                      ],
-                      border: Border.all(color: milkdimOrange.withOpacity(0.14), width: 3.5),
-                    ),
-                    child: Center(
-                      child: Image.asset(
-                        'assets/logo_circular.png',
-                        width: 86,
-                        height: 86,
-                        errorBuilder: (_, __, ___) =>
-                        const Icon(Icons.local_cafe, size: 64, color: milkdimOrange),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    'MilkDim Admin',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 27,
-                      color: milkdimDarkOrange,
-                      letterSpacing: 1.5,
-                      shadows: [
-                        Shadow(
-                          color: milkdimOrange.withOpacity(0.09),
-                          blurRadius: 5,
-                          offset: const Offset(1, 2),
-                        )
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 5),
-                  Text(
-                    'Acesso exclusivo',
-                    style: TextStyle(color: milkdimOrange.withOpacity(0.80), fontSize: 14.5, letterSpacing: 1),
-                  ),
-                  const SizedBox(height: 32),
-
-                  // CARD
-                  Card(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-                    elevation: 7,
-                    color: milkdimWhite,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 30),
-                      child: Form(
-                        key: _formKey,
-                        child: Column(
-                          children: [
-                            // USUÁRIO
-                            TextFormField(
-                              controller: _usuarioCtrl,
-                              autofillHints: const [AutofillHints.username],
-                              keyboardType: TextInputType.emailAddress,
-                              autocorrect: false,
-                              textInputAction: TextInputAction.next,
-                              onFieldSubmitted: (_) => _senhaFocus.requestFocus(),
-                              onChanged: (_) {
-                                if (_errorMsg != null) setState(() => _errorMsg = null);
-                              },
-                              style: const TextStyle(
-                                fontSize: 18,
-                                color: milkdimDarkOrange,
-                                fontWeight: FontWeight.w500,
-                              ),
-                              decoration: InputDecoration(
-                                labelText: "Usuário",
-                                labelStyle: const TextStyle(
-                                  color: milkdimDarkOrange,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 16,
-                                  letterSpacing: 1.1,
-                                ),
-                                prefixIcon: const Icon(Icons.person_outline, color: milkdimOrange, size: 26),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                  borderSide: const BorderSide(color: milkdimOrange),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                  borderSide: const BorderSide(color: milkdimDarkOrange, width: 2),
-                                ),
-                                filled: true,
-                                fillColor: milkdimYellow.withOpacity(0.08),
-                              ),
-                              validator: (v) => (v == null || v.trim().isEmpty) ? 'Informe o usuário' : null,
-                            ),
-                            const SizedBox(height: 16),
-
-                            // SENHA
-                            TextFormField(
-                              controller: _senhaCtrl,
-                              focusNode: _senhaFocus,
-                              autofillHints: const [AutofillHints.password],
-                              obscureText: !_showSenha,
-                              textInputAction: TextInputAction.done,
-                              onFieldSubmitted: (_) => _loading ? null : _login(),
-                              onChanged: (_) {
-                                if (_errorMsg != null) setState(() => _errorMsg = null);
-                              },
-                              style: const TextStyle(
-                                fontSize: 18,
-                                letterSpacing: 2,
-                                color: milkdimDarkOrange,
-                                fontWeight: FontWeight.w500,
-                              ),
-                              decoration: InputDecoration(
-                                labelText: "Senha",
-                                labelStyle: const TextStyle(
-                                  color: milkdimDarkOrange,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 16,
-                                  letterSpacing: 1.1,
-                                ),
-                                prefixIcon: const Icon(Icons.lock_outline, color: milkdimOrange, size: 26),
-                                suffixIcon: IconButton(
-                                  tooltip: _showSenha ? 'Ocultar' : 'Mostrar',
-                                  onPressed: () => setState(() => _showSenha = !_showSenha),
-                                  icon: Icon(_showSenha ? Icons.visibility_off : Icons.visibility,
-                                      color: milkdimOrange),
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                  borderSide: const BorderSide(color: milkdimOrange),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                  borderSide: const BorderSide(color: milkdimDarkOrange, width: 2),
-                                ),
-                                filled: true,
-                                fillColor: milkdimYellow.withOpacity(0.08),
-                              ),
-                              validator: (v) => (v == null || v.isEmpty) ? 'Informe a senha' : null,
-                            ),
-                            const SizedBox(height: 16),
-
-                            // ERRO
-                            AnimatedOpacity(
-                              duration: const Duration(milliseconds: 300),
-                              opacity: _errorMsg == null ? 0.0 : 1.0,
-                              child: _errorMsg == null
-                                  ? const SizedBox.shrink()
-                                  : Row(
-                                children: [
-                                  const Icon(Icons.error, color: Colors.red, size: 18),
-                                  const SizedBox(width: 5),
-                                  Expanded(
-                                    child: Text(
-                                      _errorMsg!,
-                                      style: const TextStyle(
-                                        color: Colors.red,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-
-                            // BOTÃO
-                            SizedBox(
-                              width: double.infinity,
-                              height: 52,
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: milkdimOrange,
-                                  foregroundColor: milkdimWhite,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                                  elevation: 2,
-                                ),
-                                onPressed: _loading
-                                    ? null
-                                    : () {
-                                  if (_formKey.currentState!.validate()) {
-                                    _login();
-                                  }
-                                },
-                                child: _loading
-                                    ? const SizedBox(
-                                  width: 26,
-                                  height: 26,
-                                  child: CircularProgressIndicator(color: milkdimWhite, strokeWidth: 3.1),
-                                )
-                                    : const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.login, color: milkdimWhite),
-                                    SizedBox(width: 12),
-                                    Text(
-                                      'Entrar',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 19,
-                                        letterSpacing: 1.2,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
+        body: SafeArea(
+          child: Center(
+            child: FadeTransition(
+              opacity: _fadeAnim,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: MdSpace.xl, vertical: MdSpace.xl),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // LOGO
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(22),
+                        child: const Image(
+                          image: MdLogoTitle.logoPadrao,
+                          width: 88,
+                          height: 88,
+                          fit: BoxFit.cover,
+                          semanticLabel: 'Logo MilkDim',
                         ),
                       ),
-                    ),
-                  ),
+                      const SizedBox(height: MdSpace.lg),
+                      Text('MilkDim Admin', style: tt.headlineSmall),
+                      const SizedBox(height: MdSpace.xs),
+                      Text(
+                        'Acesso exclusivo',
+                        style: tt.bodyLarge!.copyWith(color: MdColors.textMuted),
+                      ),
+                      const SizedBox(height: MdSpace.xxl),
 
-                  const SizedBox(height: 32),
-                  Text(
-                    '© ${DateTime.now().year} MilkDim Alimentos',
-                    style: TextStyle(
-                      color: milkdimDarkOrange.withOpacity(0.48),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
+                      // CARD
+                      MdCard(
+                        padding: const EdgeInsets.all(MdSpace.xl),
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // USUÁRIO
+                              TextFormField(
+                                controller: _usuarioCtrl,
+                                autofillHints: const [AutofillHints.username],
+                                keyboardType: TextInputType.emailAddress,
+                                autocorrect: false,
+                                textInputAction: TextInputAction.next,
+                                onFieldSubmitted: (_) => _senhaFocus.requestFocus(),
+                                onChanged: (_) {
+                                  if (_errorMsg != null) setState(() => _errorMsg = null);
+                                },
+                                style: tt.bodyLarge,
+                                decoration: const InputDecoration(
+                                  labelText: "Usuário",
+                                  prefixIcon: Icon(Icons.person_outline),
+                                ),
+                                validator: (v) =>
+                                    (v == null || v.trim().isEmpty) ? 'Informe o usuário' : null,
+                              ),
+                              const SizedBox(height: MdSpace.lg),
+
+                              // SENHA
+                              TextFormField(
+                                controller: _senhaCtrl,
+                                focusNode: _senhaFocus,
+                                autofillHints: const [AutofillHints.password],
+                                obscureText: !_showSenha,
+                                textInputAction: TextInputAction.done,
+                                onFieldSubmitted: (_) => _loading ? null : _login(),
+                                onChanged: (_) {
+                                  if (_errorMsg != null) setState(() => _errorMsg = null);
+                                },
+                                style: tt.bodyLarge,
+                                decoration: InputDecoration(
+                                  labelText: "Senha",
+                                  prefixIcon: const Icon(Icons.lock_outline),
+                                  suffixIcon: IconButton(
+                                    tooltip: _showSenha ? 'Ocultar' : 'Mostrar',
+                                    onPressed: () => setState(() => _showSenha = !_showSenha),
+                                    icon: Icon(_showSenha ? Icons.visibility_off : Icons.visibility),
+                                  ),
+                                ),
+                                validator: (v) => (v == null || v.isEmpty) ? 'Informe a senha' : null,
+                              ),
+
+                              // ERRO
+                              AnimatedSize(
+                                duration: const Duration(milliseconds: 200),
+                                child: _errorMsg == null
+                                    ? const SizedBox(width: double.infinity)
+                                    : Padding(
+                                        padding: const EdgeInsets.only(top: MdSpace.lg),
+                                        child: MdBanner(tipo: MdTipo.erro, texto: _errorMsg!),
+                                      ),
+                              ),
+                              const SizedBox(height: MdSpace.xl),
+
+                              // BOTÃO
+                              SizedBox(
+                                height: 52,
+                                child: FilledButton(
+                                  onPressed: _loading
+                                      ? null
+                                      : () {
+                                          if (_formKey.currentState!.validate()) {
+                                            _login();
+                                          }
+                                        },
+                                  child: _loading
+                                      ? const SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: CircularProgressIndicator(
+                                            color: MdColors.primaryFill,
+                                            strokeWidth: 3,
+                                          ),
+                                        )
+                                      : const Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(Icons.login),
+                                            SizedBox(width: MdSpace.md),
+                                            Text('Entrar'),
+                                          ],
+                                        ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: MdSpace.xxl),
+                      Text(
+                        '© ${DateTime.now().year} MilkDim Alimentos',
+                        style: tt.bodySmall,
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ),

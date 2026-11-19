@@ -2,25 +2,27 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/produto.dart';
 import '../services/supabase_service.dart';
-
-const Color milkdimYellow = Color(0xFFFFE066);
-const Color milkdimOrange = Color(0xFFE38A1D);
-const Color milkdimWhite  = Color(0xFFFFFFFF);
-const Color milkdimGrey   = Color(0xFFF7F7F7);
+import '../widgets/lista_adaptavel.dart';
 
 class ProdutosTab extends StatefulWidget {
-  const ProdutosTab({super.key});
+  /// Só para captura visual: fonte dos produtos no lugar do Supabase.
+  /// Nulo (padrão) usa [SupabaseService.buscarProdutos].
+  @visibleForTesting
+  final Future<List<Produto>> Function()? carregar;
+
+  const ProdutosTab({super.key, this.carregar});
 
   @override
   State<ProdutosTab> createState() => _ProdutosTabState();
 }
 
 class _ProdutosTabState extends State<ProdutosTab> {
-  final _service    = SupabaseService();
+  late final _service = SupabaseService();
   final _searchCtrl = TextEditingController();
 
   final _brl = NumberFormat.simpleCurrency(locale: 'pt_BR');
@@ -54,7 +56,7 @@ class _ProdutosTabState extends State<ProdutosTab> {
       _error = null;
     });
     try {
-      final data = await _service.buscarProdutos(); // List<Produto>
+      final data = await (widget.carregar?.call() ?? _service.buscarProdutos()); // List<Produto>
       if (!mounted) return;
       data.sort((a, b) => a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));
       setState(() {
@@ -150,14 +152,7 @@ class _ProdutosTabState extends State<ProdutosTab> {
 
   void _toast(String msg, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: error ? Colors.red[700] : milkdimOrange,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.0)),
-      ),
-    );
+    showMdSnack(context, msg, tipo: error ? MdTipo.erro : MdTipo.sucesso);
   }
 
   // -------------------- CRUD --------------------
@@ -181,24 +176,12 @@ class _ProdutosTabState extends State<ProdutosTab> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        backgroundColor: milkdimWhite,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
-        title: Row(
-          children: [
-            const Icon(Icons.delete_forever, color: Colors.red),
-            const SizedBox(width: 8.0),
-            Text('Remover Produto',
-                style: TextStyle(color: Colors.red[800], fontWeight: FontWeight.bold)),
-          ],
-        ),
+        title: const TituloDialogo(
+            icone: Icons.delete_forever, texto: 'Remover Produto', destrutivo: true),
         content: Text('Tem certeza que deseja remover "${p.nome}"?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[700], foregroundColor: milkdimWhite),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remover'),
-          ),
+          BotaoDestrutivo(texto: 'Remover', onPressed: () => Navigator.pop(context, true)),
         ],
       ),
     );
@@ -233,17 +216,9 @@ class _ProdutosTabState extends State<ProdutosTab> {
 
         return StatefulBuilder(
           builder: (context, setStateSB) => AlertDialog(
-            backgroundColor: milkdimWhite,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.0)),
-            title: Row(
-              children: [
-                Icon(produto == null ? Icons.add_box : Icons.edit, color: milkdimOrange),
-                const SizedBox(width: 6.0),
-                Text(
-                  produto == null ? 'Novo Produto' : 'Editar Produto',
-                  style: const TextStyle(color: milkdimOrange, fontWeight: FontWeight.bold),
-                ),
-              ],
+            title: TituloDialogo(
+              icone: produto == null ? Icons.add_box : Icons.edit,
+              texto: produto == null ? 'Novo Produto' : 'Editar Produto',
             ),
             content: Form(
               key: formKey,
@@ -263,16 +238,14 @@ class _ProdutosTabState extends State<ProdutosTab> {
                             decoration: const InputDecoration(
                               labelText: 'Código',
                               prefixIcon: Icon(Icons.qr_code_2),
-                              filled: true,
                             ),
                           ),
-                          const SizedBox(height: 10.0),
+                          const SizedBox(height: MdSpace.md),
                           TextFormField(
                             controller: unidadeCtrl,
                             decoration: const InputDecoration(
                               labelText: 'Unidade (EX: CX, UN, KG)',
                               prefixIcon: Icon(Icons.straighten),
-                              filled: true,
                             ),
                             textCapitalization: TextCapitalization.characters,
                           ),
@@ -286,36 +259,33 @@ class _ProdutosTabState extends State<ProdutosTab> {
                               decoration: const InputDecoration(
                                 labelText: 'Código',
                                 prefixIcon: Icon(Icons.qr_code_2),
-                                filled: true,
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8.0),
+                          const SizedBox(width: MdSpace.md),
                           Expanded(
                             child: TextFormField(
                               controller: unidadeCtrl,
                               decoration: const InputDecoration(
                                 labelText: 'Unidade (EX: CX, UN, KG)',
                                 prefixIcon: Icon(Icons.straighten),
-                                filled: true,
                               ),
                               textCapitalization: TextCapitalization.characters,
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10.0),
+                      const SizedBox(height: MdSpace.md),
                       TextFormField(
                         controller: nomeCtrl,
                         decoration: const InputDecoration(
                           labelText: 'Nome *',
                           prefixIcon: Icon(Icons.inventory_2_outlined),
-                          filled: true,
                         ),
                         validator: (v) => (v == null || v.trim().isEmpty) ? 'Informe o nome' : null,
                         textInputAction: TextInputAction.next,
                       ),
-                      const SizedBox(height: 10.0),
+                      const SizedBox(height: MdSpace.md),
                       TextFormField(
                         controller: precoCtrl,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -323,7 +293,6 @@ class _ProdutosTabState extends State<ProdutosTab> {
                           labelText: 'Preço *',
                           prefixIcon: Icon(Icons.attach_money),
                           helperText: 'Aceita vírgula ou ponto como separador',
-                          filled: true,
                         ),
                         validator: (v) {
                           if (v == null || v.trim().isEmpty) return 'Informe o preço';
@@ -337,11 +306,10 @@ class _ProdutosTabState extends State<ProdutosTab> {
                       const SizedBox(height: 8.0),
                       Row(
                         children: [
-                          const Text('Ativo', style: TextStyle(fontWeight: FontWeight.w600)),
+                          Text('Ativo', style: Theme.of(context).textTheme.titleSmall),
                           const Spacer(),
                           Switch(
                             value: ativo,
-                            activeColor: milkdimOrange,
                             onChanged: (v) => setStateSB(() => ativo = v),
                           ),
                         ],
@@ -385,7 +353,6 @@ class _ProdutosTabState extends State<ProdutosTab> {
                     _toast('Erro ao salvar: $e', error: true);
                   }
                 },
-                style: FilledButton.styleFrom(backgroundColor: milkdimOrange, foregroundColor: milkdimWhite),
               ),
             ],
           ),
@@ -401,182 +368,114 @@ class _ProdutosTabState extends State<ProdutosTab> {
 
   // -------------------- UI --------------------
 
+  Widget _cartao(Produto p) {
+    final tt = Theme.of(context).textTheme;
+    return MdCard(
+      // Tocar no item abre edição
+      onTap: () => _showAddOrEditDialog(produto: p),
+      padding: const EdgeInsets.fromLTRB(MdSpace.lg, MdSpace.md, MdSpace.xs, MdSpace.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AvatarLista(icone: Icons.inventory_2, ativo: p.ativo),
+          const SizedBox(width: MdSpace.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  p.nome,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: tt.bodyLarge!.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Código: ${p.codigo ?? '-'} • Unidade: ${p.unidade ?? '-'}',
+                  style: tt.bodyMedium!.copyWith(color: MdColors.textMuted),
+                ),
+                const SizedBox(height: MdSpace.sm),
+                SeloAtivo(ativo: p.ativo),
+              ],
+            ),
+          ),
+          const SizedBox(width: MdSpace.sm),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              _brl.format(p.preco),
+              style: tt.titleMedium,
+            ),
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'Mais ações',
+            onSelected: (value) {
+              switch (value) {
+                case 'editar':
+                  _showAddOrEditDialog(produto: p);
+                  break;
+                case 'ativar':
+                  _toggleAtivo(p, !p.ativo);
+                  break;
+                case 'remover':
+                  _deleteProduto(p);
+                  break;
+              }
+            },
+            itemBuilder: (_) => [
+              itemMenu('editar', Icons.edit, 'Editar'),
+              itemMenu(
+                'ativar',
+                p.ativo ? Icons.visibility_off : Icons.visibility,
+                p.ativo ? 'Marcar como Inativo' : 'Marcar como Ativo',
+              ),
+              const PopupMenuDivider(),
+              itemMenu('remover', Icons.delete, 'Remover', destrutivo: true),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= 640.0;
 
-    final header = Padding(
-      padding: const EdgeInsets.fromLTRB(16.0, 18.0, 16.0, 8.0),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _searchCtrl,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: milkdimWhite,
-                hintText: 'Buscar por nome, código ou unidade...',
-                prefixIcon: const Icon(Icons.search, color: milkdimOrange),
-                suffixIcon: (_searchCtrl.text.isEmpty)
-                    ? null
-                    : IconButton(
-                  icon: const Icon(Icons.clear),
-                  onPressed: () {
-                    _searchCtrl.clear();
-                    _onSearchChanged();
-                  },
-                ),
-                contentPadding: const EdgeInsets.symmetric(vertical: 2.0),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16.0),
-                  borderSide: const BorderSide(color: milkdimYellow, width: 2.0),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16.0),
-                  borderSide: const BorderSide(color: milkdimOrange, width: 2.2),
-                ),
-              ),
-            ),
+    final header = BarraDaAba(
+      busca: MdSearchField(
+        controller: _searchCtrl,
+        hint: 'Buscar por nome, código ou unidade...',
+      ),
+      acoes: [
+        if (isWide)
+          FilledButton.icon(
+            onPressed: () => _showAddOrEditDialog(),
+            icon: const Icon(Icons.add),
+            label: const Text('Adicionar'),
           ),
-          if (isWide) const SizedBox(width: 12.0),
-          if (isWide)
-            FilledButton.icon(
-              onPressed: () => _showAddOrEditDialog(),
-              icon: const Icon(Icons.add),
-              label: const Text('Adicionar'),
-              style: FilledButton.styleFrom(backgroundColor: milkdimOrange, foregroundColor: milkdimWhite),
-            ),
-        ],
-      ),
+      ],
     );
 
-    final list = _loading
-        ? const Center(child: CircularProgressIndicator(color: milkdimOrange))
-        : _error != null
-        ? Center(child: Text(_error!, style: const TextStyle(color: Colors.red)))
-        : _filtered.isEmpty
-        ? const Center(
-      child: Text('Nenhum produto encontrado.',
-          style: TextStyle(color: milkdimOrange, fontSize: 18.0)),
-    )
-        : RefreshIndicator(
-      onRefresh: _fetchProdutos,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(vertical: 6.0),
+    final Widget list;
+    if (_loading) {
+      list = const Center(child: CircularProgressIndicator());
+    } else if (_error != null) {
+      list = ErroDaLista(texto: _error!);
+    } else if (_filtered.isEmpty) {
+      list = MdEmptyState(
+        icone: Icons.inventory_2_outlined,
+        titulo: 'Nenhum produto encontrado.',
+        texto: _searchCtrl.text.trim().isEmpty ? null : 'Tente outro termo de busca.',
+      );
+    } else {
+      list = ListaAdaptavel(
+        onRefresh: _fetchProdutos,
         itemCount: _filtered.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 4.0),
-        itemBuilder: (context, i) {
-          final p = _filtered[i];
-          return Card(
-            color: milkdimWhite,
-            margin: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 7.0),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18.0)),
-            elevation: 2.6,
-            child: ListTile(
-              leading: CircleAvatar(
-                backgroundColor: p.ativo ? milkdimOrange.withOpacity(.15) : milkdimGrey,
-                child: Icon(Icons.inventory_2,
-                    color: p.ativo ? milkdimOrange : Colors.grey),
-              ),
-              title: Text(
-                p.nome,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    color: milkdimOrange, fontWeight: FontWeight.w600),
-              ),
-              subtitle: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Código: ${p.codigo ?? '-'} • Unidade: ${p.unidade ?? '-'}',
-                        ),
-                      ),
-                      const SizedBox(width: 8.0),
-                      Text(
-                        _brl.format(p.preco),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16.0,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6.0),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-                    decoration: BoxDecoration(
-                      color: p.ativo ? Colors.green.shade50 : Colors.red.shade50,
-                      borderRadius: BorderRadius.circular(999.0),
-                      border: Border.all(
-                        color: p.ativo
-                            ? Colors.green.shade300
-                            : Colors.red.shade300,
-                      ),
-                    ),
-                    child: Text(
-                      p.ativo ? 'Ativo' : 'Inativo',
-                      style: TextStyle(
-                        color: p.ativo
-                            ? Colors.green.shade800
-                            : Colors.red.shade800,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              // 👉 Tocar no item abre edição
-              onTap: () => _showAddOrEditDialog(produto: p),
-
-              trailing: PopupMenuButton<String>(
-                onSelected: (value) {
-                  switch (value) {
-                    case 'editar':
-                      _showAddOrEditDialog(produto: p);
-                      break;
-                    case 'ativar':
-                      _toggleAtivo(p, !p.ativo);
-                      break;
-                    case 'remover':
-                      _deleteProduto(p);
-                      break;
-                  }
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(
-                    value: 'editar',
-                    child: ListTile(
-                      leading: Icon(Icons.edit),
-                      title: Text('Editar'),
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'ativar',
-                    child: ListTile(
-                      leading: Icon(p.ativo ? Icons.visibility_off : Icons.visibility),
-                      title: Text(p.ativo ? 'Marcar como Inativo' : 'Marcar como Ativo'),
-                    ),
-                  ),
-                  const PopupMenuDivider(),
-                  const PopupMenuItem(
-                    value: 'remover',
-                    child: ListTile(
-                      leading: Icon(Icons.delete, color: Colors.red),
-                      title: Text('Remover', style: TextStyle(color: Colors.red)),
-                    ),
-                  ),
-                ],
-              ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 8.0),
-            ),
-          );
-        },
-      ),
-    );
+        espacoFinal: isWide ? 0 : 72,
+        itemBuilder: (context, i) => _cartao(_filtered[i]),
+      );
+    }
 
     return Stack(
       children: [
@@ -589,15 +488,12 @@ class _ProdutosTabState extends State<ProdutosTab> {
         // FAB em telas estreitas
         if (!isWide)
           Positioned(
-            right: 16,
-            bottom: 16,
+            right: MdSpace.lg,
+            bottom: MdSpace.lg,
             child: FloatingActionButton.extended(
               onPressed: () => _showAddOrEditDialog(),
-              backgroundColor: milkdimOrange,
-              foregroundColor: milkdimWhite,
               icon: const Icon(Icons.add),
               label: const Text('Adicionar Produto'),
-              elevation: 3.0,
             ),
           ),
       ],
