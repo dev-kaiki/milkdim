@@ -1,9 +1,8 @@
 // lib/pages/assinatura_page.dart
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:signature/signature.dart';
-
-import '../utils/colors.dart'; // usa as cores do app
 
 class AssinaturaPage extends StatefulWidget {
   /// PNG opcional para pré-visualização (assinatura já existente)
@@ -37,9 +36,7 @@ class _AssinaturaPageState extends State<AssinaturaPage> {
 
   Future<void> _salvarAssinatura() async {
     if (_controller.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Assinatura em branco!')),
-      );
+      showMdSnack(context, 'Assinatura em branco!', tipo: MdTipo.atencao);
       return;
     }
 
@@ -47,9 +44,7 @@ class _AssinaturaPageState extends State<AssinaturaPage> {
     // usamos um canvas MAIOR na tela para aumentar a nitidez.
     final Uint8List? bytes = await _controller.toPngBytes();
     if (bytes == null || bytes.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Assine dentro do quadro.')),
-      );
+      showMdSnack(context, 'Assine dentro do quadro.', tipo: MdTipo.atencao);
       return;
     }
     if (!mounted) return;
@@ -63,138 +58,102 @@ class _AssinaturaPageState extends State<AssinaturaPage> {
 
   @override
   Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F4F4),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 2,
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Image.asset(
-              'assets/logo_circular.png',
-              height: 30,
-              errorBuilder: (_, __, ___) => const SizedBox(height: 30, width: 30),
-            ),
-            const SizedBox(width: 12),
-            const Text(
-              'Assinatura',
-              style: TextStyle(
-                color: milkdimOrange,
-                fontWeight: FontWeight.bold,
-                fontSize: 20,
-              ),
-            ),
-          ],
-        ),
-        centerTitle: true,
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(22),
-        child: Card(
-          elevation: 6,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              children: [
-                const Text(
-                  'Assine dentro do quadro abaixo:',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: milkdimOrange,
-                  ),
-                ),
-                const SizedBox(height: 20),
+      appBar: AppBar(title: const Text('Assinatura')),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(MdSpace.lg),
+          child: MdContentWidth(
+            maxWidth: 840,
+            child: MdCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('Assine dentro do quadro abaixo:', style: tt.titleMedium),
+                  const SizedBox(height: MdSpace.lg),
 
-                // Preview opcional se já existir assinatura salva
-                if (widget.assinatura != null) ...[
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Assinatura atual:',
-                      style: TextStyle(fontSize: 12, color: Colors.black54),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.memory(
-                      widget.assinatura!,
+                  // Preview opcional se já existir assinatura salva
+                  if (widget.assinatura != null) ...[
+                    Text('Assinatura atual:', style: tt.bodySmall),
+                    const SizedBox(height: MdSpace.xs),
+                    Container(
                       height: 70,
-                      fit: BoxFit.contain,
+                      padding: const EdgeInsets.all(MdSpace.xs),
+                      decoration: BoxDecoration(
+                        color: MdColors.background,
+                        borderRadius: BorderRadius.circular(MdRadius.field),
+                      ),
+                      child: Image.memory(widget.assinatura!, fit: BoxFit.contain),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
+                    const SizedBox(height: MdSpace.lg),
+                  ],
 
-                // QUADRO DE ASSINATURA — MAIOR E RESPONSIVO
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    // Deixa bem grande: ~40% da largura (mín. 200, máx. 340 px de altura)
-                    final double h =
-                    (constraints.maxWidth * 0.40).clamp(200.0, 340.0);
-                    return SizedBox(
-                      height: h,
-                      width: double.infinity,
-                      child: Container(
+                  // QUADRO DE ASSINATURA — MAIOR E RESPONSIVO
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Deixa bem grande: ~40% da largura (mín. 200, máx. 340 px de altura)
+                      final double h = (constraints.maxWidth * 0.40).clamp(200.0, 340.0);
+                      return Container(
+                        height: h,
+                        width: double.infinity,
                         decoration: BoxDecoration(
-                          color: Colors.white,
-                          border: Border.all(color: milkdimOrange, width: 2),
-                          borderRadius: BorderRadius.circular(12),
+                          color: MdColors.surface,
+                          border: Border.all(color: MdColors.primary, width: 2),
+                          borderRadius: BorderRadius.circular(MdRadius.field),
                         ),
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Signature(
-                            controller: _controller,
-                            backgroundColor: Colors.transparent,
+                          borderRadius: BorderRadius.circular(MdRadius.field - 2),
+                          child: Stack(
+                            children: [
+                              // Linha-guia (só na tela; não entra no PNG exportado).
+                              Positioned(
+                                left: MdSpace.xl,
+                                right: MdSpace.xl,
+                                bottom: h * 0.25,
+                                child: Container(height: 1, color: MdColors.border),
+                              ),
+                              Positioned.fill(
+                                child: Signature(
+                                  controller: _controller,
+                                  backgroundColor: Colors.transparent,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                    );
-                  },
-                ),
+                      );
+                    },
+                  ),
 
-                const SizedBox(height: 16),
+                  const SizedBox(height: MdSpace.lg),
 
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    OutlinedButton.icon(
-                      onPressed: _limparAssinatura,
-                      icon: const Icon(Icons.clear, color: Colors.red),
-                      label: const Text('Limpar', style: TextStyle(color: Colors.red)),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Colors.red),
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 12,
-                          horizontal: 24,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: _limparAssinatura,
+                        icon: const Icon(Icons.clear),
+                        label: const Text('Limpar'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: MdColors.danger,
+                          side: const BorderSide(color: MdColors.danger),
+                          minimumSize: const Size(0, 52),
+                          padding: const EdgeInsets.symmetric(horizontal: MdSpace.lg),
                         ),
                       ),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: _salvarAssinatura,
-                      icon: const Icon(Icons.check),
-                      label: const Text('Salvar Assinatura'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: milkdimOrange,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 12,
-                          horizontal: 24,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                      const SizedBox(width: MdSpace.md),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _salvarAssinatura,
+                          icon: const Icon(Icons.check),
+                          label: const Text('Salvar Assinatura'),
+                          style: FilledButton.styleFrom(minimumSize: const Size(0, 52)),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),

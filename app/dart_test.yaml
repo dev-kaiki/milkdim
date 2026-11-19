@@ -1,0 +1,4 @@
+# Testes de captura (geram PNG em build/visual/). Rodam junto com o resto;
+# para rodar só eles: flutter test --tags visual
+tags:
+  visual:

@@ -5,13 +5,14 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:milkdim_app/pages/pedido_edit_page.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:sqflite/sqflite.dart' as sq;
 
-import '../utils/colors.dart';
 import '../utils/db.dart';
+import '../utils/moeda.dart';
 import '../utils/json_utils.dart';
 import '../utils/pdf_utils.dart';
 import '../utils/convert.dart'; // assinaturaToBytes / signatureToImageBytes
@@ -19,7 +20,12 @@ import '../utils/convert.dart'; // assinaturaToBytes / signatureToImageBytes
 class PedidosPage extends StatefulWidget {
   /// Código do vendedor para filtrar os pedidos. Se null/vazio, mostra todos.
   final String? vendedorCodigo;
-  const PedidosPage({super.key, this.vendedorCodigo});
+
+  /// Só para a captura visual: quando informado, mostra estes pedidos e não
+  /// lê o SQLite ao abrir.
+  final List<Map<String, dynamic>>? pedidosParaCaptura;
+
+  const PedidosPage({super.key, this.vendedorCodigo, this.pedidosParaCaptura});
 
   @override
   State<PedidosPage> createState() => _PedidosPageState();
@@ -48,6 +54,15 @@ class _PedidosPageState extends State<PedidosPage>
   @override
   void initState() {
     super.initState();
+    final captura = widget.pedidosParaCaptura;
+    if (captura != null) {
+      _pedidos = captura;
+      _carregando = false;
+      if (widget.vendedorCodigo != null && widget.vendedorCodigo!.isNotEmpty) {
+        _vendedorFiltro = widget.vendedorCodigo;
+      }
+      return;
+    }
     _carregar();
   }
 
@@ -126,18 +141,16 @@ class _PedidosPageState extends State<PedidosPage>
     final confirmou = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Apagar rascunho?',
-            style: TextStyle(color: milkdimDarkOrange)),
+        title: const Text('Apagar rascunho?'),
         content: const Text(
             'Esse pedido ainda não foi finalizado. Deseja removê-lo do aparelho?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child:
-            const Text('Cancelar', style: TextStyle(color: milkdimDarkOrange)),
+            child: const Text('Cancelar'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            style: FilledButton.styleFrom(backgroundColor: MdColors.danger),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Apagar'),
           ),
@@ -159,7 +172,6 @@ class _PedidosPageState extends State<PedidosPage>
         content: const Text('Rascunho apagado.'),
         action: SnackBarAction(
           label: 'DESFAZER',
-          textColor: milkdimWhite,
           onPressed: () async {
             final db2 = await getDb();
             await db2.insert(
@@ -170,24 +182,13 @@ class _PedidosPageState extends State<PedidosPage>
             await _carregar();
           },
         ),
-        backgroundColor: milkdimDarkOrange,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         duration: const Duration(seconds: 3),
       ),
     );
   }
 
   void _snack(String msg, {bool ok = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: ok ? milkdimOrange : milkdimDarkOrange,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    showMdSnack(context, msg, tipo: ok ? MdTipo.sucesso : MdTipo.erro);
   }
 
   Future<void> _editar(Map<String, dynamic> pedido) async {
@@ -346,8 +347,8 @@ class _PedidosPageState extends State<PedidosPage>
       if (v != _vendedorFiltro) return false;
     }
     // total
-    final minT = double.tryParse(_minTotalCtrl.text.replaceAll(',', '.'));
-    final maxT = double.tryParse(_maxTotalCtrl.text.replaceAll(',', '.'));
+    final minT = _lerValorDigitado(_minTotalCtrl.text);
+    final maxT = _lerValorDigitado(_maxTotalCtrl.text);
     final t = _asDouble(p['total']);
     if (minT != null && t < minT) return false;
     if (maxT != null && t > maxT) return false;
@@ -466,10 +467,17 @@ class _PedidosPageState extends State<PedidosPage>
     }
   }
 
+  /// Aceita "1234.56", "1234,56" e "1.234,56" (como a tela mostra agora).
+  double? _lerValorDigitado(String texto) {
+    var t = texto.replaceAll('R\$', '').trim();
+    if (t.contains(',')) t = t.replaceAll('.', '').replaceAll(',', '.');
+    return double.tryParse(t);
+  }
+
   String _fmtTotal(dynamic v) {
-    if (v is num) return v.toStringAsFixed(2);
+    if (v is num) return formatarReais(v);
     final n = double.tryParse(v?.toString().replaceAll(',', '.') ?? '');
-    return (n ?? 0).toStringAsFixed(2);
+    return formatarReais(n ?? 0);
   }
 
   List _parseProdutos(dynamic raw) {
@@ -511,57 +519,72 @@ class _PedidosPageState extends State<PedidosPage>
     return '${nomes.take(maxNames).join(', ')} +$rest';
   }
 
-  Widget _pill(String text, Color color, {IconData? icon}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withOpacity(0.5)),
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        if (icon != null) ...[
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 6),
-        ],
-        Text(text,
-            style: TextStyle(
-                color: color, fontWeight: FontWeight.w700, fontSize: 12)),
-      ]),
-    );
+  /// Selo de status do pedido: finalizado ainda não enviado aparece como
+  /// "Aguardando envio"; finalizado enviado, "Finalizado"; rascunho, "Salvo".
+  Widget _seloStatus(Map<String, dynamic> p) {
+    final status = (p['status'] ?? '-').toString();
+    final pendente = (p['pendente_envio'] ?? 0).toString() == '1';
+    if (status == 'finalizado' && pendente) {
+      return const MdStatusChip(
+          tipo: MdTipo.atencao, texto: 'Aguardando envio', icone: Icons.cloud_upload_outlined);
+    }
+    if (status == 'finalizado') {
+      return const MdStatusChip(
+          tipo: MdTipo.sucesso, texto: 'Finalizado', icone: Icons.check_circle_outline);
+    }
+    if (status == 'salvo') {
+      return const MdStatusChip(
+          tipo: MdTipo.neutro, texto: 'Salvo', icone: Icons.edit_note);
+    }
+    return MdStatusChip(tipo: MdTipo.info, texto: status);
   }
 
-  Widget _smallAction({
+  Widget _meta(IconData icone, String texto, TextStyle estilo) {
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icone, size: 16, color: MdColors.textMuted),
+      const SizedBox(width: MdSpace.xs),
+      Flexible(child: Text(texto, style: estilo, overflow: TextOverflow.ellipsis)),
+    ]);
+  }
+
+  Widget _acao({
     required String label,
     required IconData icon,
     required VoidCallback onPressed,
-    required Color color,
-    Color? fg,
+    bool principal = false,
+    bool perigo = false,
   }) {
-    return FilledButton.icon(
+    const compacto = EdgeInsets.symmetric(horizontal: MdSpace.sm);
+    if (principal) {
+      return FilledButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 20),
+        label: Text(label),
+        style: FilledButton.styleFrom(padding: compacto),
+      );
+    }
+    return OutlinedButton.icon(
       onPressed: onPressed,
-      icon: Icon(icon, size: 18),
+      icon: Icon(icon, size: 20),
       label: Text(label),
-      style: FilledButton.styleFrom(
-        backgroundColor: color,
-        foregroundColor: fg ?? milkdimWhite,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        textStyle: const TextStyle(fontWeight: FontWeight.w600),
-        elevation: 1,
-      ),
+      style: perigo
+          ? OutlinedButton.styleFrom(
+              padding: compacto,
+              foregroundColor: MdColors.danger,
+              side: BorderSide(color: MdColors.danger.withValues(alpha: 0.5)),
+            )
+          : OutlinedButton.styleFrom(padding: compacto),
     );
   }
 
   // Card/item com pré-visualização mais rica
   Widget _pedidoTile(
       Map<String, dynamic> p, {
-        required bool compacto,
         required bool isFinalizado,
       }) {
+    final tt = Theme.of(context).textTheme;
     final numero = (p['numero'] ?? '-').toString();
     final cliente = (p['cliente_nome'] ?? '-').toString();
-    final status = (p['status'] ?? '-').toString();
     final total = _fmtTotal(p['total']);
     final data = _fmtData(p['datahora']);
     final telefone = (p['cliente_telefone'] ?? '').toString();
@@ -575,248 +598,133 @@ class _PedidosPageState extends State<PedidosPage>
     final itensCount = _countItens(itens);
     final produtosResumo = _resumoProdutos(itens);
 
-    final Color badgeColor =
-    status == 'finalizado' ? Colors.green : milkdimDarkOrange;
+    final meta = tt.bodySmall!;
 
     final header = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(
-          child: Text(
-            cliente,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: milkdimOrange,
-              fontWeight: FontWeight.w800,
-              fontSize: 16,
-              letterSpacing: .2,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                cliente,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: tt.titleMedium,
+              ),
+              const SizedBox(height: 2),
+              Text('#$numero • $data', style: meta, overflow: TextOverflow.ellipsis),
+            ],
           ),
         ),
-        if (temAssinatura) ...[
-          _pill('ASSINADO', Colors.teal, icon: Icons.draw_rounded),
-          const SizedBox(width: 8),
-        ],
-        _pill(status.toUpperCase(), badgeColor),
+        const SizedBox(width: MdSpace.sm),
+        Text(
+          total,
+          style: tt.titleMedium!.copyWith(color: MdColors.primaryStrong),
+        ),
       ],
     );
 
-    final metaTop = Row(
+    final selos = Wrap(
+      spacing: MdSpace.sm,
+      runSpacing: MdSpace.sm,
       children: [
-        Expanded(
-          child: Text(
-            '#$numero • $data',
-            style: const TextStyle(fontSize: 12, color: Colors.black54),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        const SizedBox(width: 6),
-        Tooltip(
-          message: 'Vendedor $vendedor ($vendedorCod)',
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.badge_outlined, size: 14, color: Colors.black54),
-              const SizedBox(width: 4),
-              Text(
-                vendedorCod,
-                style: const TextStyle(fontSize: 12, color: Colors.black54),
-              ),
-            ],
-          ),
+        _seloStatus(p),
+        if (temAssinatura)
+          const MdStatusChip(tipo: MdTipo.info, texto: 'Assinado', icone: Icons.draw_outlined),
+        MdStatusChip(
+          tipo: MdTipo.neutro,
+          texto: '$itensCount iten${itensCount == 1 ? '' : 's'}',
+          icone: Icons.shopping_bag_outlined,
         ),
       ],
     );
 
     final linhaCliente = Wrap(
-      spacing: 12,
-      runSpacing: 4,
+      spacing: MdSpace.md,
+      runSpacing: MdSpace.xs,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        if (telefone.isNotEmpty)
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.call_outlined, size: 14, color: Colors.black54),
-            const SizedBox(width: 4),
-            Text(telefone, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-          ]),
-        if (cidade.isNotEmpty)
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.location_on_outlined, size: 14, color: Colors.black54),
-            const SizedBox(width: 4),
-            Text(cidade, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-          ]),
-        if (cpfCnpj.isNotEmpty)
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.credit_card, size: 14, color: Colors.black54),
-            const SizedBox(width: 4),
-            Text(cpfCnpj, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-          ]),
-      ],
-    );
-
-    final produtosLinha = Row(
-      children: [
-        Expanded(
-          child: Text(
-            produtosResumo,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12.5, color: Colors.black87),
+        if (telefone.isNotEmpty) _meta(Icons.call_outlined, telefone, meta),
+        if (cidade.isNotEmpty) _meta(Icons.location_on_outlined, cidade, meta),
+        if (cpfCnpj.isNotEmpty) _meta(Icons.credit_card, cpfCnpj, meta),
+        if (vendedorCod.isNotEmpty)
+          Tooltip(
+            message: 'Vendedor $vendedor ($vendedorCod)',
+            child: _meta(Icons.badge_outlined, vendedorCod, meta),
           ),
-        ),
-        const SizedBox(width: 8),
-        _pill('$itensCount iten${itensCount == 1 ? '' : 's'}',
-            milkdimDarkOrange,
-            icon: Icons.shopping_bag_outlined),
       ],
     );
 
-    final totalBox = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: milkdimYellow.withOpacity(0.22),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        'R\$ $total',
-        style: const TextStyle(
-          color: milkdimDarkOrange,
-          fontWeight: FontWeight.w900,
-          fontSize: 14,
-          letterSpacing: .2,
-        ),
-      ),
+    final produtosLinha = Text(
+      produtosResumo,
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: tt.bodyMedium,
     );
 
     // ações por status
-    Widget actions;
-    if (isFinalizado) {
-      actions = Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          _smallAction(
-            label: 'Ver',
-            icon: Icons.visibility_outlined,
-            onPressed: () => _imprimirPdf(p),
-            color: Colors.blueGrey,
-          ),
-          _smallAction(
-            label: 'PDF',
-            icon: Icons.picture_as_pdf,
-            onPressed: () => _compartilharPdf(p),
-            color: milkdimDarkOrange,
-          ),
-          _smallAction(
-            label: 'JSON',
-            icon: Icons.data_object,
-            onPressed: () => _compartilharJson(p),
-            color: milkdimOrange,
-          ),
-        ],
-      );
-    } else {
-      actions = Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          _smallAction(
-            label: 'Editar',
-            icon: Icons.edit,
-            onPressed: () => _editar(p),
-            color: milkdimDarkOrange,
-          ),
-          _smallAction(
-            label: 'Apagar',
-            icon: Icons.delete_outline,
-            onPressed: () => _apagarPedidoSalvo(p),
-            color: Colors.redAccent,
-          ),
-        ],
-      );
-    }
+    final List<Widget> botoes = isFinalizado
+        ? [
+            _acao(
+              label: 'Ver',
+              icon: Icons.visibility_outlined,
+              onPressed: () => _imprimirPdf(p),
+            ),
+            _acao(
+              label: 'PDF',
+              icon: Icons.picture_as_pdf_outlined,
+              onPressed: () => _compartilharPdf(p),
+            ),
+            _acao(
+              label: 'JSON',
+              icon: Icons.data_object,
+              onPressed: () => _compartilharJson(p),
+            ),
+          ]
+        : [
+            _acao(
+              label: 'Editar',
+              icon: Icons.edit_outlined,
+              onPressed: () => _editar(p),
+              principal: true,
+            ),
+            _acao(
+              label: 'Apagar',
+              icon: Icons.delete_outline,
+              onPressed: () => _apagarPedidoSalvo(p),
+              perigo: true,
+            ),
+          ];
 
-    final contentCol = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final actions = Row(
       children: [
-        header,
-        const SizedBox(height: 6),
-        metaTop,
-        const SizedBox(height: 6),
-        linhaCliente,
-        const SizedBox(height: 8),
-        produtosLinha,
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            totalBox,
-            const Spacer(),
-            actions,
-          ],
-        ),
+        for (var i = 0; i < botoes.length; i++) ...[
+          if (i > 0) const SizedBox(width: MdSpace.sm),
+          Expanded(child: botoes[i]),
+        ],
       ],
     );
 
-    final cardChild = compacto
-        ? contentCol
-        : Row(children: [Expanded(flex: 3, child: contentCol)]);
-
-    return Material(
-      color: milkdimWhite,
-      borderRadius: BorderRadius.circular(18),
-      elevation: 1,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: isFinalizado ? () => _imprimirPdf(p) : () => _editar(p),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: [
-              BoxShadow(
-                color: milkdimYellow.withOpacity(0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 2),
-              )
-            ],
-            border: Border.all(color: milkdimYellow.withOpacity(0.20)),
-          ),
-          child: cardChild,
-        ),
-      ),
-    );
-  }
-
-  Widget _emptyState(String titulo, {VoidCallback? onReload}) {
-    return Center(
+    return MdCard(
+      onTap: isFinalizado ? () => _imprimirPdf(p) : () => _editar(p),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: milkdimYellow.withOpacity(0.18),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.inbox, size: 40, color: milkdimDarkOrange),
-          ),
-          const SizedBox(height: 12),
-          Text(titulo,
-              style: const TextStyle(
-                  color: milkdimDarkOrange, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 10),
-          if (onReload != null)
-            FilledButton.tonalIcon(
-              onPressed: onReload,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Recarregar'),
-              style: FilledButton.styleFrom(
-                foregroundColor: milkdimDarkOrange,
-                backgroundColor: milkdimYellow.withOpacity(0.25),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-              ),
-            ),
+          header,
+          const SizedBox(height: MdSpace.md),
+          selos,
+          const SizedBox(height: MdSpace.md),
+          produtosLinha,
+          if (linhaCliente.children.isNotEmpty) ...[
+            const SizedBox(height: MdSpace.sm),
+            linhaCliente,
+          ],
+          const SizedBox(height: MdSpace.md),
+          const Divider(),
+          const SizedBox(height: MdSpace.md),
+          actions,
         ],
       ),
     );
@@ -829,42 +737,47 @@ class _PedidosPageState extends State<PedidosPage>
     final isFinalizado = status == 'finalizado';
 
     return RefreshIndicator(
-      color: milkdimOrange,
       onRefresh: _carregar,
       child: LayoutBuilder(
         builder: (context, c) {
-          final isCompact = c.maxWidth < 720;
           if (_carregando) {
-            return const Center(
-                child: CircularProgressIndicator(color: milkdimOrange));
+            return const Center(child: CircularProgressIndicator());
           }
           if (lista.isEmpty) {
-            return _emptyState(isFinalizado
-                ? 'Nenhum pedido finalizado.'
-                : 'Nenhum rascunho salvo.');
+            return MdEmptyState(
+              icone: isFinalizado ? Icons.receipt_long_outlined : Icons.edit_note,
+              titulo: isFinalizado
+                  ? 'Nenhum pedido finalizado.'
+                  : 'Nenhum rascunho salvo.',
+            );
           }
-          if (isCompact) {
+          const pad = EdgeInsets.fromLTRB(MdSpace.lg, MdSpace.sm, MdSpace.lg, MdSpace.lg);
+          final colunas = (c.maxWidth / 520).floor().clamp(1, 3);
+          if (colunas == 1) {
             return ListView.separated(
-              padding: const EdgeInsets.all(12),
+              padding: pad,
               itemCount: lista.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemBuilder: (_, i) => _pedidoTile(lista[i],
-                  compacto: true, isFinalizado: isFinalizado),
-            );
-          } else {
-            return GridView.builder(
-              padding: const EdgeInsets.all(12),
-              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                maxCrossAxisExtent: 720,
-                mainAxisSpacing: 12,
-                crossAxisSpacing: 12,
-                childAspectRatio: 2.2,
-              ),
-              itemCount: lista.length,
-              itemBuilder: (_, i) => _pedidoTile(lista[i],
-                  compacto: false, isFinalizado: isFinalizado),
+              separatorBuilder: (_, __) => const SizedBox(height: MdSpace.md),
+              itemBuilder: (_, i) => _pedidoTile(lista[i], isFinalizado: isFinalizado),
             );
           }
+          final largura =
+              (c.maxWidth - pad.horizontal - MdSpace.md * (colunas - 1)) / colunas;
+          return SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: pad,
+            child: Wrap(
+              spacing: MdSpace.md,
+              runSpacing: MdSpace.md,
+              children: [
+                for (final p in lista)
+                  SizedBox(
+                    width: largura,
+                    child: _pedidoTile(p, isFinalizado: isFinalizado),
+                  ),
+              ],
+            ),
+          );
         },
       ),
     );
@@ -905,12 +818,19 @@ class _PedidosPageState extends State<PedidosPage>
     }
     chips.add(_chipAtivo(_labelOrdenacao(_ordenacao), _alternarOrdenacao));
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: chips,
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: MdSpace.lg),
+        child: Row(
+          children: [
+            for (var i = 0; i < chips.length; i++) ...[
+              if (i > 0) const SizedBox(width: MdSpace.sm),
+              chips[i],
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -950,9 +870,7 @@ class _PedidosPageState extends State<PedidosPage>
   Widget _chipAtivo(String label, VoidCallback onDeleted) => InputChip(
     label: Text(label),
     onDeleted: onDeleted,
-    deleteIconColor: milkdimDarkOrange,
-    backgroundColor: milkdimYellow.withOpacity(0.18),
-    labelStyle: const TextStyle(color: milkdimDarkOrange),
+    deleteIconColor: MdColors.textMuted,
   );
 
   // ---- BottomSheet de filtros ----
@@ -963,10 +881,7 @@ class _PedidosPageState extends State<PedidosPage>
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: milkdimWhite,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      showDragHandle: true,
       builder: (ctx) {
         final minCtrl = TextEditingController(text: _minTotalCtrl.text);
         final maxCtrl = TextEditingController(text: _maxTotalCtrl.text);
@@ -978,13 +893,13 @@ class _PedidosPageState extends State<PedidosPage>
 
         return Padding(
           padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            top: 16,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+            left: MdSpace.lg,
+            right: MdSpace.lg,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + MdSpace.lg,
           ),
           child: StatefulBuilder(
             builder: (ctx, setModal) {
+              final tt = Theme.of(ctx).textTheme;
               Future<void> pickRange() async {
                 final now = DateTime.now();
                 final init = range ??
@@ -1002,26 +917,12 @@ class _PedidosPageState extends State<PedidosPage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Center(
-                      child: Container(
-                        width: 40,
-                        height: 4,
-                        margin: const EdgeInsets.only(bottom: 12),
-                        decoration: BoxDecoration(
-                          color: milkdimYellow,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                    ),
-                    const Text('Filtros',
-                        style: TextStyle(
-                            color: milkdimDarkOrange,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18)),
-                    const SizedBox(height: 12),
+                    Text('Filtros', style: tt.titleLarge),
+                    const SizedBox(height: MdSpace.md),
 
                     ListTile(
-                      leading: const Icon(Icons.date_range, color: milkdimDarkOrange),
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.date_range_outlined),
                       title: const Text('Período'),
                       subtitle: Text(
                         range == null
@@ -1037,12 +938,14 @@ class _PedidosPageState extends State<PedidosPage>
                           : null,
                     ),
                     const Divider(),
+                    const SizedBox(height: MdSpace.md),
 
                     Row(
                       children: [
                         Expanded(
                           child: DropdownButtonFormField<String>(
                             value: cidadeSel?.isEmpty == true ? null : cidadeSel,
+                            isExpanded: true,
                             items: [
                               const DropdownMenuItem<String>(
                                   value: null, child: Text('Todas as cidades')),
@@ -1056,12 +959,13 @@ class _PedidosPageState extends State<PedidosPage>
                             ),
                           ),
                         ),
-                        const SizedBox(width: 10),
                         if (widget.vendedorCodigo == null ||
-                            widget.vendedorCodigo!.isEmpty)
+                            widget.vendedorCodigo!.isEmpty) ...[
+                          const SizedBox(width: MdSpace.md),
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               value: vendSel?.isEmpty == true ? null : vendSel,
+                              isExpanded: true,
                               items: [
                                 const DropdownMenuItem<String>(
                                     value: null, child: Text('Todos vendedores')),
@@ -1075,18 +979,19 @@ class _PedidosPageState extends State<PedidosPage>
                               ),
                             ),
                           ),
+                        ],
                       ],
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: MdSpace.sm),
 
                     SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
                       value: assinados,
                       onChanged: (v) => setModal(() => assinados = v),
                       title: const Text('Somente pedidos assinados'),
-                      secondary:
-                      const Icon(Icons.draw_rounded, color: milkdimDarkOrange),
+                      secondary: const Icon(Icons.draw_outlined),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: MdSpace.sm),
 
                     Row(
                       children: [
@@ -1100,7 +1005,7 @@ class _PedidosPageState extends State<PedidosPage>
                             ),
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: MdSpace.md),
                         Expanded(
                           child: TextField(
                             controller: maxCtrl,
@@ -1114,15 +1019,12 @@ class _PedidosPageState extends State<PedidosPage>
                       ],
                     ),
 
-                    const SizedBox(height: 12),
-                    const Text('Ordenação',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: milkdimDarkOrange)),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: MdSpace.lg),
+                    Text('Ordenação', style: tt.titleSmall),
+                    const SizedBox(height: MdSpace.sm),
                     Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                      spacing: MdSpace.sm,
+                      runSpacing: MdSpace.sm,
                       children: [
                         for (final opt in const [
                           'data_desc',
@@ -1140,52 +1042,54 @@ class _PedidosPageState extends State<PedidosPage>
                       ],
                     ),
 
-                    const SizedBox(height: 16),
+                    const SizedBox(height: MdSpace.xl),
                     Row(
                       children: [
-                        TextButton.icon(
-                          onPressed: () {
-                            setState(() {
-                              _range = null;
-                              _cidadeFiltro = null;
-                              _somenteAssinados = false;
-                              _minTotalCtrl.clear();
-                              _maxTotalCtrl.clear();
-                              if (widget.vendedorCodigo == null ||
-                                  widget.vendedorCodigo!.isEmpty) {
-                                _vendedorFiltro = null;
-                              }
-                            });
-                            Navigator.pop(ctx);
-                          },
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('Limpar tudo'),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _range = null;
+                                _cidadeFiltro = null;
+                                _somenteAssinados = false;
+                                _minTotalCtrl.clear();
+                                _maxTotalCtrl.clear();
+                                if (widget.vendedorCodigo == null ||
+                                    widget.vendedorCodigo!.isEmpty) {
+                                  _vendedorFiltro = null;
+                                }
+                              });
+                              Navigator.pop(ctx);
+                            },
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Limpar tudo'),
+                          ),
                         ),
-                        const Spacer(),
-                        FilledButton.icon(
-                          onPressed: () {
-                            setState(() {
-                              _range = range;
-                              _cidadeFiltro = cidadeSel;
-                              _somenteAssinados = assinados;
-                              _minTotalCtrl.text = minCtrl.text.trim();
-                              _maxTotalCtrl.text = maxCtrl.text.trim();
-                              if (widget.vendedorCodigo == null ||
-                                  widget.vendedorCodigo!.isEmpty) {
-                                _vendedorFiltro = vendSel;
-                              }
-                              _ordenacao = ordem;
-                            });
-                            Navigator.pop(ctx);
-                          },
-                          icon: const Icon(Icons.check),
-                          label: const Text('Aplicar'),
-                          style: FilledButton.styleFrom(
-                              backgroundColor: milkdimDarkOrange),
+                        const SizedBox(width: MdSpace.md),
+                        Expanded(
+                          child: FilledButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _range = range;
+                                _cidadeFiltro = cidadeSel;
+                                _somenteAssinados = assinados;
+                                _minTotalCtrl.text = minCtrl.text.trim();
+                                _maxTotalCtrl.text = maxCtrl.text.trim();
+                                if (widget.vendedorCodigo == null ||
+                                    widget.vendedorCodigo!.isEmpty) {
+                                  _vendedorFiltro = vendSel;
+                                }
+                                _ordenacao = ordem;
+                              });
+                              Navigator.pop(ctx);
+                            },
+                            icon: const Icon(Icons.check),
+                            label: const Text('Aplicar'),
+                          ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: MdSpace.sm),
                   ],
                 ),
               );
@@ -1208,34 +1112,22 @@ class _PedidosPageState extends State<PedidosPage>
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        backgroundColor: milkdimWhite,
         appBar: AppBar(
-          backgroundColor: milkdimWhite,
-          elevation: 1,
-          iconTheme: const IconThemeData(color: milkdimOrange),
-          title: Text(
-            temFiltro ? 'Meus Pedidos' : 'Pedidos',
-            style: const TextStyle(
-              color: milkdimOrange,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+          title: Text(temFiltro ? 'Meus Pedidos' : 'Pedidos'),
           actions: [
             IconButton(
               onPressed: _abrirFiltros,
-              icon: const Icon(Icons.filter_list, color: milkdimDarkOrange),
+              icon: const Icon(Icons.tune),
               tooltip: 'Filtros',
             ),
             IconButton(
               onPressed: _carregar,
-              icon: const Icon(Icons.refresh, color: milkdimDarkOrange),
+              icon: const Icon(Icons.refresh),
               tooltip: 'Recarregar',
             ),
+            const SizedBox(width: MdSpace.xs),
           ],
           bottom: TabBar(
-            indicatorColor: milkdimOrange,
-            labelColor: milkdimOrange,
-            unselectedLabelColor: milkdimDarkOrange,
             tabs: [
               Tab(text: 'Finalizados ($finalizadosCount)'),
               Tab(text: 'Salvos ($salvosCount)'),
@@ -1246,40 +1138,17 @@ class _PedidosPageState extends State<PedidosPage>
           children: [
             // Busca
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-              child: TextField(
+              padding: const EdgeInsets.fromLTRB(MdSpace.lg, MdSpace.md, MdSpace.lg, MdSpace.sm),
+              child: MdSearchField(
                 controller: _buscaCtrl,
+                hint: 'Buscar cliente, nº, cidade, CPF/CNPJ…',
                 onChanged: (_) => setState(() {}),
-                decoration: InputDecoration(
-                  hintText:
-                  'Buscar por cliente, nº, cidade, CPF/CNPJ, vendedor...',
-                  prefixIcon:
-                  const Icon(Icons.search, color: milkdimDarkOrange),
-                  suffixIcon: _buscaCtrl.text.isEmpty
-                      ? null
-                      : IconButton(
-                    icon: const Icon(Icons.clear,
-                        color: milkdimDarkOrange),
-                    onPressed: () {
-                      _buscaCtrl.clear();
-                      setState(() {});
-                    },
-                  ),
-                  filled: true,
-                  fillColor: milkdimYellow.withOpacity(0.10),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 0),
-                ),
               ),
             ),
 
             // Chips de filtros ativos
             _chipsAtivos(),
-            const SizedBox(height: 6),
+            const SizedBox(height: MdSpace.sm),
 
             Expanded(
               child: TabBarView(

@@ -4,16 +4,23 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:intl/intl.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/pedido.dart';
+import '../widgets/lista_adaptavel.dart';
 
 final supabase = Supabase.instance.client;
 
 /// Lista de pedidos; ao tocar, abre detalhes formatados (usando `Pedido`)
 /// e também mostra um bloco com **todas as colunas** (JSON bruto).
 class PedidosTab extends StatefulWidget {
-  const PedidosTab({super.key});
+  /// Só para captura visual: fonte dos pedidos no lugar do Supabase.
+  /// Nulo (padrão) busca na tabela `pedidos`.
+  @visibleForTesting
+  final Future<List<Pedido>> Function()? carregar;
+
+  const PedidosTab({super.key, this.carregar});
 
   @override
   State<PedidosTab> createState() => _PedidosTabState();
@@ -46,20 +53,25 @@ class _PedidosTabState extends State<PedidosTab> {
   Future<void> _fetchPedidos() async {
     setState(() => _loading = true);
     try {
-      // Colunas reais (sem aliases); o modelo `Pedido` espera snake_case.
-      final rows = await supabase
-          .from('pedidos')
-          .select(
-        'id, cliente_id, cliente_nome, cliente_nome_fantasia, '
-            'cliente_cidade, cliente_telefone, cliente_whatsapp, cliente_email, cliente_cpf_cnpj, '
-            'status, datahora, total, vendedor_codigo, vendedor_nome, '
-            'numero, produtos',
-      )
-          .order('datahora', ascending: false);
+      final List<Pedido> list;
+      if (widget.carregar != null) {
+        list = await widget.carregar!();
+      } else {
+        // Colunas reais (sem aliases); o modelo `Pedido` espera snake_case.
+        final rows = await supabase
+            .from('pedidos')
+            .select(
+          'id, cliente_id, cliente_nome, cliente_nome_fantasia, '
+              'cliente_cidade, cliente_telefone, cliente_whatsapp, cliente_email, cliente_cpf_cnpj, '
+              'status, datahora, total, vendedor_codigo, vendedor_nome, '
+              'numero, produtos',
+        )
+            .order('datahora', ascending: false);
 
-      final list = (rows as List)
-          .map((m) => Pedido.fromMap(m as Map<String, dynamic>))
-          .toList();
+        list = (rows as List)
+            .map((m) => Pedido.fromMap(m as Map<String, dynamic>))
+            .toList();
+      }
 
       if (!mounted) return;
       setState(() {
@@ -68,12 +80,7 @@ class _PedidosTabState extends State<PedidosTab> {
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Erro ao carregar pedidos: $e'),
-          backgroundColor: Colors.red[700],
-        ),
-      );
+      showMdSnack(context, 'Erro ao carregar pedidos: $e', tipo: MdTipo.erro);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -87,7 +94,11 @@ class _PedidosTabState extends State<PedidosTab> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Apagar pedido #${p.id}?'),
+        title: TituloDialogo(
+          icone: Icons.delete_forever,
+          texto: 'Apagar pedido #${p.id}?',
+          destrutivo: true,
+        ),
         content: const Text(
           'Esta ação não pode ser desfeita. Deseja realmente apagar este pedido?',
         ),
@@ -96,10 +107,9 @@ class _PedidosTabState extends State<PedidosTab> {
             onPressed: () => Navigator.of(ctx).pop(false),
             child: const Text('Cancelar'),
           ),
-          FilledButton.tonal(
-            style: FilledButton.styleFrom(foregroundColor: Colors.red),
+          BotaoDestrutivo(
+            texto: 'Apagar',
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Apagar'),
           ),
         ],
       ),
@@ -119,18 +129,11 @@ class _PedidosTabState extends State<PedidosTab> {
         _filtered.removeWhere((x) => x.id == id);
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Pedido #$id apagado com sucesso.')),
-      );
+      showMdSnack(context, 'Pedido #$id apagado com sucesso.', tipo: MdTipo.sucesso);
       return true;
     } catch (e) {
       if (!mounted) return false;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Erro ao apagar pedido #$id: $e'),
-          backgroundColor: Colors.red[700],
-        ),
-      );
+      showMdSnack(context, 'Erro ao apagar pedido #$id: $e', tipo: MdTipo.erro);
       return false;
     }
   }
@@ -147,12 +150,7 @@ class _PedidosTabState extends State<PedidosTab> {
       return (raw: map, parsed: parsed);
     } catch (e) {
       if (!mounted) return null;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Erro ao carregar detalhes do pedido #$id: $e'),
-          backgroundColor: Colors.red[700],
-        ),
-      );
+      showMdSnack(context, 'Erro ao carregar detalhes do pedido #$id: $e', tipo: MdTipo.erro);
       return null;
     }
   }
@@ -200,24 +198,19 @@ class _PedidosTabState extends State<PedidosTab> {
     return 'R\$ $s';
   }
 
-  Color _statusColor(String status) {
+  /// Finalizado = sucesso, cancelado = erro, pendente/aguardando = atenção, demais = info.
+  MdTipo _statusTipo(String status) {
     final s = status.toLowerCase();
-    if (s.contains('final')) return const Color(0xFF2E7D32); // verde
-    if (s.contains('cancel')) return const Color(0xFFC62828); // vermelho
-    if (s.contains('pend') || s.contains('aguard')) return const Color(0xFFF9A825); // amarelo
-    return const Color(0xFF546E7A); // cinza azulado (default)
+    if (s.contains('final')) return MdTipo.sucesso;
+    if (s.contains('cancel')) return MdTipo.erro;
+    if (s.contains('pend') || s.contains('aguard')) return MdTipo.atencao;
+    return MdTipo.info;
   }
 
-  Chip _statusChip(String status) => Chip(
-    label: Text(status),
-    labelStyle: const TextStyle(color: Colors.white),
-    backgroundColor: _statusColor(status),
-    visualDensity: VisualDensity.compact,
-    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-  );
+  Widget _statusChip(String status) => MdStatusChip(tipo: _statusTipo(status), texto: status);
 
   String _maybeJoin(List<String?> parts) {
-    final filt = parts.where((e) => e != null && e!.trim().isNotEmpty).cast<String>().toList();
+    final filt = parts.where((e) => e != null && e.trim().isNotEmpty).cast<String>().toList();
     return filt.isEmpty ? '—' : filt.join(' · ');
   }
 
@@ -232,18 +225,43 @@ class _PedidosTabState extends State<PedidosTab> {
     return '${nomes.take(maxNames).join(', ')} +$rest';
   }
 
+  String _vendedorTexto(Pedido p) =>
+      (p.vendedorCodigo ?? '') +
+      ((p.vendedorNome ?? '').isNotEmpty ? ' (${p.vendedorNome})' : '');
+
+  bool _temVendedor(Pedido p) =>
+      (p.vendedorCodigo ?? '').isNotEmpty || (p.vendedorNome ?? '').isNotEmpty;
+
   Future<void> _copy(String label, String? value) async {
     final v = (value ?? '').trim();
     if (v.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: v));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$label copiado'),
-        duration: const Duration(seconds: 1),
-      ),
-    );
+    showMdSnack(context, '$label copiado');
   }
+
+  Widget _rotulo(String label) => SizedBox(
+        width: 140,
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.bodyMedium!.copyWith(color: MdColors.textMuted),
+        ),
+      );
+
+  /// Bloco monoespaçado (JSON) selecionável.
+  Widget _blocoCodigo(String texto) => Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(MdRadius.field),
+          color: MdColors.background,
+          border: Border.all(color: MdColors.border),
+        ),
+        padding: const EdgeInsets.all(MdSpace.md),
+        child: SelectableText(
+          texto,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.3),
+        ),
+      );
 
   // Mostra um rótulo + valor, aceitando qualquer tipo.
   // Se for Map/List, mostra um bloco JSON identado e selecionável.
@@ -268,36 +286,15 @@ class _PedidosTabState extends State<PedidosTab> {
       v = value.toString();
     }
 
-    Widget valueWidget;
-    if (isJsonBlock) {
-      valueWidget = Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
-          color: Colors.black.withOpacity(0.04),
-        ),
-        padding: const EdgeInsets.all(10),
-        child: SelectableText(
-          v,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5, height: 1.25),
-        ),
-      );
-    } else {
-      valueWidget = Text(v);
-    }
+    final Widget valueWidget = isJsonBlock ? _blocoCodigo(v) : Text(v);
 
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: dense ? 2 : 6),
+      padding: EdgeInsets.symmetric(vertical: dense ? 4 : 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 140,
-            child: Text(
-              label,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ),
-          const SizedBox(width: 8),
+          _rotulo(label),
+          const SizedBox(width: MdSpace.sm),
           Expanded(child: valueWidget),
         ],
       ),
@@ -307,15 +304,12 @@ class _PedidosTabState extends State<PedidosTab> {
   // (Opcional) quando quiser renderizar um widget no valor:
   Widget infoRowWidget(String label, Widget value, {bool dense = false}) {
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: dense ? 2 : 6),
+      padding: EdgeInsets.symmetric(vertical: dense ? 4 : 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 140,
-            child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
-          ),
-          const SizedBox(width: 8),
+          _rotulo(label),
+          const SizedBox(width: MdSpace.sm),
           Expanded(child: value),
         ],
       ),
@@ -329,13 +323,10 @@ class _PedidosTabState extends State<PedidosTab> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
       builder: (_) {
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            padding: const EdgeInsets.fromLTRB(MdSpace.xl, 0, MdSpace.xl, MdSpace.lg),
             child: FutureBuilder<({Map<String, dynamic> raw, Pedido parsed})?>(
               future: _fetchPedidoDetalhe(pFromList.id),
               builder: (context, snap) {
@@ -356,6 +347,7 @@ class _PedidosTabState extends State<PedidosTab> {
                 final raw = data.raw;
                 final ped = data.parsed;
                 final jsonStr = const JsonEncoder.withIndent('  ').convert(raw);
+                final tt = Theme.of(context).textTheme;
 
                 return DraggableScrollableSheet(
                   expand: false,
@@ -372,21 +364,11 @@ class _PedidosTabState extends State<PedidosTab> {
                         Row(
                           children: [
                             Expanded(
-                              child: Text(
-                                clienteTitulo,
-                                style: const TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
+                              child: Text(clienteTitulo, style: tt.titleLarge),
                             ),
-                            if ((ped.numero ?? '').isNotEmpty)
-                              Chip(label: Text('Nº ${ped.numero}')),
-                            const SizedBox(width: 8),
-                            Chip(label: Text('ID ${ped.id}')),
-                            const SizedBox(width: 8),
                             IconButton(
                               tooltip: 'Apagar pedido',
+                              color: MdColors.danger,
                               icon: const Icon(Icons.delete_outline),
                               onPressed: () async {
                                 final deleted = await _confirmDelete(ped);
@@ -397,87 +379,78 @@ class _PedidosTabState extends State<PedidosTab> {
                             ),
                           ],
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: MdSpace.sm),
                         Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
+                          spacing: MdSpace.sm,
+                          runSpacing: MdSpace.sm,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             _statusChip(ped.status),
+                            if ((ped.numero ?? '').isNotEmpty)
+                              Chip(label: Text('Nº ${ped.numero}')),
+                            Chip(label: Text('ID ${ped.id}')),
                             Chip(label: Text('Total: ${_fmtMoeda(ped.total)}')),
                             Chip(label: Text('Itens: ${ped.totalItens}')),
-                            if ((ped.vendedorCodigo ?? '').isNotEmpty ||
-                                (ped.vendedorNome ?? '').isNotEmpty)
+                            if (_temVendedor(ped))
                               Chip(
                                 avatar: const Icon(Icons.badge_outlined, size: 18),
-                                label: Text(
-                                  (ped.vendedorCodigo ?? '') +
-                                      ((ped.vendedorNome ?? '').isNotEmpty
-                                          ? ' (${ped.vendedorNome})'
-                                          : ''),
-                                ),
+                                label: Text(_vendedorTexto(ped)),
                               ),
                             Chip(label: Text('Quando: ${_fmtData(ped.datahora)}')),
                           ],
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: MdSpace.lg),
                         const Divider(),
 
                         // ITENS
-                        const SizedBox(height: 12),
-                        const Text('Itens do pedido',
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 8),
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: DataTable(
-                            columns: const [
-                              DataColumn(
-                                label: Text('Produto',
-                                    style: TextStyle(fontWeight: FontWeight.bold)),
-                              ),
-                              DataColumn(label: Text('Preço')),
-                              DataColumn(label: Text('Qtd')),
-                              DataColumn(label: Text('Subtotal')),
-                            ],
-                            rows: ped.itens
-                                .map(
-                                  (it) => DataRow(
-                                cells: [
-                                  DataCell(Text(it.nome)),
-                                  DataCell(Text(_fmtMoeda(it.preco))),
-                                  DataCell(Text(it.quantidade.toString())),
-                                  DataCell(Text(_fmtMoeda(it.subtotal))),
-                                ],
-                              ),
-                            )
-                                .toList(),
+                        const SizedBox(height: MdSpace.md),
+                        const MdSectionHeader(titulo: 'Itens do pedido'),
+                        MdCard(
+                          padding: EdgeInsets.zero,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: DataTable(
+                              headingTextStyle: tt.labelLarge!.copyWith(color: MdColors.textMuted),
+                              columns: const [
+                                DataColumn(label: Text('Produto')),
+                                DataColumn(label: Text('Preço'), numeric: true),
+                                DataColumn(label: Text('Qtd'), numeric: true),
+                                DataColumn(label: Text('Subtotal'), numeric: true),
+                              ],
+                              rows: ped.itens
+                                  .map(
+                                    (it) => DataRow(
+                                  cells: [
+                                    DataCell(Text(it.nome)),
+                                    DataCell(Text(_fmtMoeda(it.preco))),
+                                    DataCell(Text(it.quantidade.toString())),
+                                    DataCell(Text(_fmtMoeda(it.subtotal))),
+                                  ],
+                                ),
+                              )
+                                  .toList(),
+                            ),
                           ),
                         ),
                         Align(
                           alignment: Alignment.centerRight,
                           child: Padding(
-                            padding: const EdgeInsets.only(top: 8, right: 4),
-                            child: Text(
-                              'Total: ${_fmtMoeda(ped.total)}',
-                              style:
-                              const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-                            ),
+                            padding: const EdgeInsets.only(top: MdSpace.md, right: MdSpace.xs),
+                            child: Text('Total: ${_fmtMoeda(ped.total)}', style: tt.titleMedium),
                           ),
                         ),
 
                         // CLIENTE
-                        const SizedBox(height: 16),
+                        const SizedBox(height: MdSpace.lg),
                         const Divider(),
-                        const SizedBox(height: 8),
-                        const Text('Dados do cliente',
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: MdSpace.md),
+                        const MdSectionHeader(titulo: 'Dados do cliente'),
                         _infoRow('Código (ID)', ped.clienteId, dense: true),
                         _infoRow('Nome', ped.clienteNome, dense: true),
                         _infoRow('Nome fantasia', ped.clienteNomeFantasia, dense: true),
                         infoRowWidget(
                           'Telefone/WhatsApp',
-                          Wrap(spacing: 8, runSpacing: 8, children: [
+                          Wrap(spacing: MdSpace.sm, runSpacing: MdSpace.sm, children: [
                             if ((ped.clienteTelefone ?? '').trim().isNotEmpty)
                               ActionChip(
                                 avatar: const Icon(Icons.call_outlined, size: 18),
@@ -502,54 +475,32 @@ class _PedidosTabState extends State<PedidosTab> {
                         _infoRow('Anotação', ped.clienteAnotacao),
 
                         // VENDEDOR
-                        const SizedBox(height: 16),
+                        const SizedBox(height: MdSpace.lg),
                         const Divider(),
-                        const SizedBox(height: 8),
-                        const Text('Vendedor',
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: MdSpace.md),
+                        const MdSectionHeader(titulo: 'Vendedor'),
                         _infoRow('Código', ped.vendedorCodigo),
                         _infoRow('Nome', ped.vendedorNome),
 
                         // DADOS BRUTOS / TODAS AS COLUNAS
-                        const SizedBox(height: 16),
+                        const SizedBox(height: MdSpace.lg),
                         const Divider(),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: Text('Dados brutos (todas as colunas)',
-                                  style: TextStyle(
-                                      fontSize: 16, fontWeight: FontWeight.w700)),
-                            ),
-                            IconButton(
-                              tooltip: 'Copiar JSON',
-                              onPressed: () async {
-                                await Clipboard.setData(ClipboardData(text: jsonStr));
-                                if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text(
-                                          'JSON copiado para a área de transferência.')),
-                                );
-                              },
-                              icon: const Icon(Icons.copy_rounded),
-                            ),
-                          ],
-                        ),
-                        Container(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            color: Colors.black.withOpacity(0.04),
-                          ),
-                          padding: const EdgeInsets.all(12),
-                          child: SelectableText(
-                            jsonStr,
-                            style: const TextStyle(
-                                fontFamily: 'monospace', fontSize: 12.5),
+                        const SizedBox(height: MdSpace.md),
+                        MdSectionHeader(
+                          titulo: 'Dados brutos (todas as colunas)',
+                          trailing: IconButton(
+                            tooltip: 'Copiar JSON',
+                            onPressed: () async {
+                              await Clipboard.setData(ClipboardData(text: jsonStr));
+                              if (!mounted) return;
+                              showMdSnack(
+                                  context, 'JSON copiado para a área de transferência.');
+                            },
+                            icon: const Icon(Icons.copy_rounded),
                           ),
                         ),
-                        const SizedBox(height: 16),
+                        _blocoCodigo(jsonStr),
+                        const SizedBox(height: MdSpace.lg),
                       ],
                     );
                   },
@@ -564,207 +515,194 @@ class _PedidosTabState extends State<PedidosTab> {
 
   // -------------------- UI (lista com pré-visualização rica) --------------------
 
+  Widget _cartao(Pedido p, {required bool largo}) {
+    final tt = Theme.of(context).textTheme;
+    final cliente = (p.clienteNome ?? p.clienteNomeFantasia ?? '—').toString();
+    final status = p.status;
+    final numero = (p.numero ?? '').toString();
+    final cidade = p.clienteCidade;
+    final contatos = _maybeJoin([p.clienteTelefone, p.clienteWhatsapp, p.clienteEmail]);
+    final cpfcnpj = (p.clienteCpfCnpj ?? '').trim().isEmpty ? null : p.clienteCpfCnpj;
+    final resumo = _produtosResumo(p.itens);
+    final localContato = (cidade ?? '').isNotEmpty || contatos != '—'
+        ? _maybeJoin([
+            cidade?.trim().isNotEmpty == true ? 'Cidade: $cidade' : null,
+            contatos != '—' ? 'Contato: $contatos' : null,
+            if (cpfcnpj != null) 'CPF/CNPJ: $cpfcnpj',
+          ])
+        : null;
+
+    final menu = PopupMenuButton<String>(
+      tooltip: 'Mais ações',
+      onSelected: (v) async {
+        if (v == 'del') {
+          await _confirmDelete(p);
+        }
+      },
+      itemBuilder: (ctx) => [
+        itemMenu('del', Icons.delete_outline, 'Apagar pedido', destrutivo: true),
+      ],
+    );
+
+    // Linha 2: status + metadados
+    final metas = Wrap(
+      spacing: MdSpace.lg,
+      runSpacing: MdSpace.sm,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _statusChip(status),
+        if (numero.isNotEmpty) LinhaInfo(icone: Icons.tag, texto: 'Nº $numero'),
+        LinhaInfo(icone: Icons.shopping_basket_outlined, texto: 'Itens: ${p.totalItens}'),
+        LinhaInfo(icone: Icons.schedule, texto: _fmtData(p.datahora)),
+        if (_temVendedor(p)) LinhaInfo(icone: Icons.badge_outlined, texto: _vendedorTexto(p)),
+      ],
+    );
+
+    return MdCard(
+      onTap: () => _openDetalhesPedido(p),
+      padding: const EdgeInsets.fromLTRB(MdSpace.lg, MdSpace.md, MdSpace.xs, MdSpace.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AvatarLista(letra: (cliente.isNotEmpty ? cliente[0] : '?').toUpperCase()),
+          const SizedBox(width: MdSpace.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Linha 1: nome do cliente (+ total, no celular)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        cliente,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: tt.bodyLarge!.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    if (!largo) ...[
+                      const SizedBox(width: MdSpace.sm),
+                      Text(_fmtMoeda(p.total), style: tt.titleMedium),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: MdSpace.sm),
+                metas,
+                const SizedBox(height: MdSpace.sm),
+                // Linha 3: resumo dos produtos
+                Text(
+                  resumo,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: tt.bodyMedium,
+                ),
+                // Linha 4: localização/contato
+                if (localContato != null) ...[
+                  const SizedBox(height: MdSpace.xs),
+                  Text(
+                    localContato,
+                    maxLines: largo ? 1 : 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: tt.bodySmall,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (largo) ...[
+            const SizedBox(width: MdSpace.lg),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(_fmtMoeda(p.total), style: tt.titleLarge),
+            ),
+            const SizedBox(width: MdSpace.xs),
+          ],
+          menu,
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final small =
-    Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.black54, height: 1.15);
+    final isWide = MediaQuery.of(context).size.width >= 640;
+    final Widget iconeAtualizar = _loading
+        ? const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : const Icon(Icons.refresh);
+
+    final Widget lista;
+    if (_loading) {
+      lista = const Center(child: CircularProgressIndicator());
+    } else if (_filtered.isEmpty) {
+      // Lista rolável para manter o "puxar para atualizar" com a lista vazia.
+      lista = RefreshIndicator(
+        onRefresh: _fetchPedidos,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            MdEmptyState(
+              icone: Icons.receipt_long_outlined,
+              titulo: 'Nenhum pedido encontrado.',
+              texto: _searchCtrl.text.trim().isEmpty ? null : 'Tente outro termo de busca.',
+            ),
+          ],
+        ),
+      );
+    } else {
+      lista = LayoutBuilder(
+        builder: (context, c) {
+          final largo = c.maxWidth >= larguraDuasColunas;
+          return ListaAdaptavel(
+            onRefresh: _fetchPedidos,
+            itemCount: _filtered.length,
+            permitirDuasColunas: false,
+            itemBuilder: (_, i) => _cartao(_filtered[i], largo: largo),
+          );
+        },
+      );
+    }
 
     return Column(
       children: [
-        // 🔎 busca
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-          child: TextField(
+        // 🔎 busca + 🔄 atualizar
+        BarraDaAba(
+          busca: MdSearchField(
             controller: _searchCtrl,
-            decoration: InputDecoration(
-              hintText:
-              'Buscar por cliente, status, número, ID, cidade, contato, CPF/CNPJ, produto…',
-              prefixIcon: const Icon(Icons.search),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              isDense: true,
-            ),
+            hint: 'Buscar por cliente, status, número, ID, cidade, contato, CPF/CNPJ, produto…',
           ),
-        ),
-
-        // 🔄 atualizar
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: Row(
-            children: [
-              ElevatedButton.icon(
+          acoes: [
+            if (isWide)
+              OutlinedButton.icon(
                 onPressed: _loading ? null : _fetchPedidos,
-                icon: const Icon(Icons.refresh),
+                icon: iconeAtualizar,
                 label: const Text('Atualizar'),
-              ),
-              const SizedBox(width: 12),
-              if (_loading)
-                const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              // Celular: só o ícone, para a busca ter espaço.
+              IconButton.outlined(
+                tooltip: 'Atualizar',
+                onPressed: _loading ? null : _fetchPedidos,
+                style: IconButton.styleFrom(
+                  minimumSize: const Size(48, 48),
+                  foregroundColor: MdColors.primaryStrong,
+                  side: const BorderSide(color: MdColors.border),
+                  backgroundColor: MdColors.surface,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(MdRadius.field)),
                 ),
-            ],
-          ),
+                icon: iconeAtualizar,
+              ),
+          ],
         ),
 
         // 📋 lista
-        Expanded(
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : RefreshIndicator(
-            onRefresh: _fetchPedidos,
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              itemCount: _filtered.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (_, i) {
-                final p = _filtered[i];
-                final cliente =
-                (p.clienteNome ?? p.clienteNomeFantasia ?? '—').toString();
-                final status = p.status;
-                final numero = (p.numero ?? '').toString();
-                final cidade = p.clienteCidade;
-                final contatos =
-                _maybeJoin([p.clienteTelefone, p.clienteWhatsapp, p.clienteEmail]);
-                final cpfcnpj =
-                (p.clienteCpfCnpj ?? '').trim().isEmpty ? null : p.clienteCpfCnpj;
-                final resumo = _produtosResumo(p.itens);
-
-                return Card(
-                  elevation: 1,
-                  shape:
-                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => _openDetalhesPedido(p),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border(
-                          left: BorderSide(color: _statusColor(status), width: 4),
-                        ),
-                      ),
-                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          CircleAvatar(
-                            radius: 20,
-                            backgroundColor: _statusColor(status).withOpacity(.12),
-                            child: Text(
-                                (cliente.isNotEmpty ? cliente[0] : '?').toUpperCase()),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                // Linha 1: nome do cliente
-                                Text(
-                                  cliente,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                // Linha 2: chips principais
-                                Wrap(
-                                  spacing: 6,
-                                  runSpacing: 6,
-                                  children: [
-                                    _statusChip(status),
-                                    if (numero.isNotEmpty)
-                                      Chip(label: Text('Nº $numero')),
-                                    Chip(label: Text('Itens: ${p.totalItens}')),
-                                    Chip(label: Text(_fmtData(p.datahora))),
-                                    if ((p.vendedorCodigo ?? '').isNotEmpty ||
-                                        (p.vendedorNome ?? '').isNotEmpty)
-                                      Chip(
-                                        avatar: const Icon(Icons.badge_outlined, size: 18),
-                                        label: Text(
-                                          (p.vendedorCodigo ?? '') +
-                                              ((p.vendedorNome ?? '').isNotEmpty
-                                                  ? ' (${p.vendedorNome})'
-                                                  : ''),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                                const SizedBox(height: 6),
-                                // Linha 3: resumo dos produtos
-                                Text(
-                                  resumo,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontSize: 12.5, color: Colors.black87),
-                                ),
-                                const SizedBox(height: 6),
-                                // Linha 4: localização/contato
-                                if ((cidade ?? '').isNotEmpty || contatos != '—')
-                                  Text(
-                                    _maybeJoin([
-                                      cidade?.trim().isNotEmpty == true
-                                          ? 'Cidade: $cidade'
-                                          : null,
-                                      contatos != '—' ? 'Contato: $contatos' : null,
-                                      if (cpfcnpj != null) 'CPF/CNPJ: $cpfcnpj',
-                                    ]),
-                                    style: small,
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          // Total + menu + seta
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              PopupMenuButton<String>(
-                                tooltip: 'Mais ações',
-                                onSelected: (v) async {
-                                  if (v == 'del') {
-                                    await _confirmDelete(p);
-                                  }
-                                },
-                                itemBuilder: (ctx) => const [
-                                  PopupMenuItem(
-                                    value: 'del',
-                                    child: Row(
-                                      children: [
-                                        Icon(Icons.delete_outline, size: 20),
-                                        SizedBox(width: 8),
-                                        Text('Apagar pedido'),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _fmtMoeda(p.total),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              const Icon(Icons.chevron_right_rounded,
-                                  size: 20, color: Colors.black45),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
+        Expanded(child: lista),
       ],
     );
   }

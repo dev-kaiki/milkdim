@@ -45,6 +45,10 @@ dependencies:
   # Preferências locais (login: última sincronização)
   shared_preferences: ^2.2.3
 
+  # Visual compartilhado (tokens, tema e componentes) com o app de controle
+  milkdim_ui:
+    path: ../packages/milkdim_ui
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

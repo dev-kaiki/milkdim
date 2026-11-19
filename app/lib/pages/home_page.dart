@@ -6,13 +6,13 @@
 // • Mostra "N pedidos aguardando envio" com o botão "Enviar agora".
 // • "Sair" fica bloqueado enquanto houver pedido aguardando envio. A volta para
 //   o login é feita pelo listener de sessão do main.dart.
-// • "Visualizar Pedidos" passa o vendedorCodigo para filtrar.
+// • "Meus pedidos" passa o vendedorCodigo para filtrar.
 
 import 'package:flutter/material.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../utils/auth.dart';
-import '../utils/colors.dart';
 import '../utils/db.dart';
 import '../utils/supabase_helper.dart';
 import 'pedido_page.dart';
@@ -22,7 +22,11 @@ import 'configuracoes_page.dart';
 class HomePage extends StatefulWidget {
   final Map<String, dynamic> vendedor;
 
-  const HomePage({super.key, required this.vendedor});
+  /// Só para a captura visual: quando informado, mostra este número de
+  /// pendentes e não roda a rotina de abertura (SQLite, rede e sync).
+  final int? pendentesParaCaptura;
+
+  const HomePage({super.key, required this.vendedor, this.pendentesParaCaptura});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -33,11 +37,21 @@ class _HomePageState extends State<HomePage> {
   bool _sincronizando = false;
   bool _enviando = false;
 
+  /// Só para o selo do cartão: null enquanto não se sabe, true se a última
+  /// sync completa tem menos de 7 dias.
+  bool? _syncEmDia;
+
   String get _codigo => widget.vendedor['codigo']?.toString() ?? '';
 
   @override
   void initState() {
     super.initState();
+    final captura = widget.pendentesParaCaptura;
+    if (captura != null) {
+      _pendentes = captura;
+      _syncEmDia = true;
+      return;
+    }
     _aoAbrir();
   }
 
@@ -47,6 +61,7 @@ class _HomePageState extends State<HomePage> {
     final online = await temInternet();
     final vencida = await syncVencida();
     if (!mounted) return;
+    setState(() => _syncEmDia = !vencida);
     if (vencida) {
       if (online) {
         await _sincronizar();
@@ -78,7 +93,10 @@ class _HomePageState extends State<HomePage> {
       debugPrint('Erro na sincronização: $e');
     }
     if (!mounted) return;
-    setState(() => _sincronizando = false);
+    setState(() {
+      _sincronizando = false;
+      if (ok) _syncEmDia = true;
+    });
     _showSnack(
       ok ? 'Sincronização realizada!' : 'Erro ao sincronizar dados.',
       sucesso: ok,
@@ -90,17 +108,17 @@ class _HomePageState extends State<HomePage> {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: milkdimWhite,
-        title: const Text('Sincronização atrasada', style: TextStyle(color: milkdimOrange)),
+        icon: const Icon(Icons.cloud_off_outlined, color: MdColors.warning, size: 32),
+        title: const Text('Sincronização atrasada'),
         content: const Text(
           'Faz 7 dias ou mais sem sincronizar.\n\n'
           'Você pode continuar trabalhando, mas conecte à internet assim que puder '
           'para atualizar clientes, produtos e pedidos.',
         ),
         actions: [
-          TextButton(
+          FilledButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('OK', style: TextStyle(color: milkdimDarkOrange)),
+            child: const Text('OK'),
           ),
         ],
       ),
@@ -132,19 +150,14 @@ class _HomePageState extends State<HomePage> {
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: milkdimWhite,
-        title: const Text('Sair', style: TextStyle(color: milkdimOrange)),
+        title: const Text('Sair'),
         content: const Text('Para entrar de novo será preciso internet. Deseja sair?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancelar', style: TextStyle(color: milkdimDarkOrange)),
+            child: const Text('Cancelar'),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: milkdimOrange,
-              foregroundColor: milkdimWhite,
-            ),
+          FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Sair'),
           ),
@@ -174,13 +187,50 @@ class _HomePageState extends State<HomePage> {
 
   void _showSnack(String msg, {bool sucesso = true}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: sucesso ? milkdimOrange : milkdimDarkOrange,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        duration: Duration(seconds: sucesso ? 2 : 4),
+    showMdSnack(context, msg, tipo: sucesso ? MdTipo.sucesso : MdTipo.erro);
+  }
+
+  Widget? _seloSync() {
+    if (_sincronizando) {
+      return const MdStatusChip(tipo: MdTipo.info, texto: 'Sincronizando', icone: Icons.sync);
+    }
+    return switch (_syncEmDia) {
+      true => const MdStatusChip(
+          tipo: MdTipo.sucesso, texto: 'Em dia', icone: Icons.cloud_done_outlined),
+      false => const MdStatusChip(
+          tipo: MdTipo.atencao, texto: 'Desatualizado', icone: Icons.cloud_off_outlined),
+      null => null,
+    };
+  }
+
+  Widget _saudacao(TextTheme tt) {
+    final nome = widget.vendedor['nome']?.toString().trim() ?? '';
+    final selo = _seloSync();
+    return MdCard(
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  nome.isEmpty ? 'Olá!' : 'Olá, $nome',
+                  style: tt.titleLarge,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (_codigo.isNotEmpty) ...[
+                  const SizedBox(height: MdSpace.xs),
+                  Text(
+                    'Vendedor $_codigo',
+                    style: tt.bodyMedium!.copyWith(color: MdColors.textMuted),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (selo != null) ...[const SizedBox(width: MdSpace.sm), selo],
+        ],
       ),
     );
   }
@@ -189,140 +239,120 @@ class _HomePageState extends State<HomePage> {
     final texto = _pendentes == 1
         ? '1 pedido aguardando envio'
         : '$_pendentes pedidos aguardando envio';
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: milkdimYellow.withValues(alpha: 0.25),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: milkdimOrange, width: 1.2),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.cloud_upload, color: milkdimDarkOrange),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              texto,
-              style: const TextStyle(
-                color: milkdimDarkOrange,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
+    return MdBanner(
+      tipo: MdTipo.atencao,
+      icone: Icons.cloud_upload_outlined,
+      texto: texto,
+      acao: _enviando
+          ? const Padding(
+              padding: EdgeInsets.all(MdSpace.md),
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 3),
               ),
+            )
+          : TextButton(
+              onPressed: _sincronizando ? null : () => _enviarPendentes(),
+              child: const Text('Enviar agora'),
             ),
-          ),
-          _enviando
-              ? const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(color: milkdimOrange, strokeWidth: 3),
-                )
-              : OutlinedButton(
-                  onPressed: _sincronizando ? null : () => _enviarPendentes(),
-                  child: const Text('Enviar agora'),
-                ),
-        ],
-      ),
+    );
+  }
+
+  Widget _linhaSincronizando(TextTheme tt) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(MdSpace.xs),
+          child: const LinearProgressIndicator(minHeight: 6),
+        ),
+        const SizedBox(height: MdSpace.sm),
+        Text(
+          'Sincronizando dados…',
+          style: tt.bodyMedium!.copyWith(color: MdColors.textMuted),
+          textAlign: TextAlign.center,
+        ),
+      ],
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
     return Scaffold(
-      backgroundColor: milkdimWhite,
       appBar: AppBar(
-        backgroundColor: milkdimWhite,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: milkdimOrange),
-        title: Row(
-          children: [
-            Image.asset('assets/logo.jpg', height: 36),
-            const SizedBox(width: 12),
-            const Text(
-              'MilkDim',
-              style: TextStyle(
-                color: milkdimOrange,
-                fontWeight: FontWeight.bold,
-                fontSize: 25,
-                letterSpacing: 1,
-              ),
-            ),
-          ],
-        ),
+        title: const MdLogoTitle(),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings, color: milkdimDarkOrange),
+            icon: const Icon(Icons.settings_outlined),
             onPressed: () => _abrir(const ConfiguracoesPage()),
             tooltip: 'Configurações',
           ),
           IconButton(
-            icon: const Icon(Icons.logout, color: milkdimDarkOrange),
+            icon: const Icon(Icons.logout),
             onPressed: _sair,
             tooltip: 'Sair',
           ),
+          const SizedBox(width: MdSpace.xs),
         ],
       ),
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 10),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (_sincronizando) ...[
-                const LinearProgressIndicator(color: milkdimOrange),
-                const SizedBox(height: 8),
-                const Text(
-                  'Sincronizando dados…',
-                  style: TextStyle(color: milkdimDarkOrange),
-                ),
-                const SizedBox(height: 18),
-              ],
-              if (_pendentes > 0) ...[
-                _avisoPendentes(),
-                const SizedBox(height: 26),
-              ],
-              ElevatedButton.icon(
-                onPressed: () => _abrir(PedidoPage(vendedor: widget.vendedor)),
-                icon: const Icon(Icons.add_shopping_cart, color: milkdimWhite, size: 30),
-                label: const Text(
-                  'Novo Pedido',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: milkdimOrange,
-                  foregroundColor: milkdimWhite,
-                  minimumSize: const Size(double.infinity, 64),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-                  elevation: 4,
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  textStyle: const TextStyle(fontSize: 21),
-                ),
-              ),
-              const SizedBox(height: 26),
-              ElevatedButton.icon(
-                onPressed: () => _abrir(PedidosPage(vendedorCodigo: _codigo)),
-                icon: const Icon(Icons.list_alt, color: milkdimDarkOrange, size: 30),
-                label: const Text(
-                  'Visualizar Pedidos',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: milkdimYellow.withValues(alpha: 0.45),
-                  foregroundColor: milkdimDarkOrange,
-                  minimumSize: const Size(double.infinity, 64),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-                  elevation: 3,
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  textStyle: const TextStyle(fontSize: 21),
+      body: SafeArea(
+        child: CustomScrollView(
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(MdSpace.lg, MdSpace.lg, MdSpace.lg, 0),
+              sliver: SliverToBoxAdapter(
+                child: MdContentWidth(
+                  maxWidth: 640,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _saudacao(tt),
+                      if (_pendentes > 0) ...[
+                        const SizedBox(height: MdSpace.md),
+                        _avisoPendentes(),
+                      ],
+                      const SizedBox(height: MdSpace.xl),
+                      MdActionTile(
+                        icone: Icons.add_shopping_cart,
+                        titulo: 'Novo pedido',
+                        subtitulo: 'Escolher cliente e produtos',
+                        destaque: true,
+                        onTap: () => _abrir(PedidoPage(vendedor: widget.vendedor)),
+                      ),
+                      const SizedBox(height: MdSpace.md),
+                      MdActionTile(
+                        icone: Icons.receipt_long_outlined,
+                        titulo: 'Meus pedidos',
+                        subtitulo: 'Ver, editar e compartilhar',
+                        onTap: () => _abrir(PedidosPage(vendedorCodigo: _codigo)),
+                      ),
+                      if (_sincronizando) ...[
+                        const SizedBox(height: MdSpace.xl),
+                        _linhaSincronizando(tt),
+                      ],
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(height: 34),
-              const Text(
-                'Versão 1.0 • MilkDim Alimentos',
-                style: TextStyle(fontSize: 14, color: milkdimDarkOrange),
+            ),
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      MdSpace.lg, MdSpace.xl, MdSpace.lg, MdSpace.lg),
+                  child: Text(
+                    'Versão 1.0 • MilkDim Alimentos',
+                    style: tt.bodySmall,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

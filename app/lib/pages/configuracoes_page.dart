@@ -3,7 +3,7 @@
 // Sem PIN: só "Sincronizar" e "Cadastrar novo cliente". Cadastro de vendedor e
 // de produto ficam no app de controle.
 import 'package:flutter/material.dart';
-import '../utils/colors.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'novo_cliente_page.dart';
 import '../utils/supabase_helper.dart';
 import '../utils/auth.dart';
@@ -44,15 +44,7 @@ class _ConfiguracoesPageState extends State<ConfiguracoesPage> {
 
   void _showSnack(String msg, {bool sucesso = true}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg, style: const TextStyle(color: Colors.white)),
-        backgroundColor: sucesso ? milkdimOrange : milkdimDarkOrange,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    showMdSnack(context, msg, tipo: sucesso ? MdTipo.sucesso : MdTipo.erro);
   }
 
   Future<void> _adicionarCliente() async {
@@ -65,59 +57,68 @@ class _ConfiguracoesPageState extends State<ConfiguracoesPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: milkdimWhite,
-      appBar: AppBar(
-        title: const Text('Configurações', style: TextStyle(color: milkdimOrange)),
-        backgroundColor: milkdimWhite,
-        iconTheme: const IconThemeData(color: milkdimOrange),
-        elevation: 1,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          children: [
-            Card(
-              color: milkdimWhite,
-              elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              child: ListTile(
-                leading: const Icon(Icons.sync, color: milkdimOrange, size: 34),
-                title: const Text(
-                  'Sincronizar dados com servidor',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: milkdimDarkOrange),
-                ),
-                subtitle: const Text('Clientes, produtos e pedidos'),
-                onTap: _sincronizando ? null : _sincronizar,
-                trailing: _sincronizando
-                    ? const SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(
-                    color: milkdimOrange,
-                    strokeWidth: 3,
+      appBar: AppBar(title: const Text('Configurações')),
+      body: ListView(
+        padding: const EdgeInsets.all(MdSpace.lg),
+        children: [
+          MdContentWidth(
+            maxWidth: 640,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const MdSectionHeader(titulo: 'Dados'),
+                MdCard(
+                  padding: EdgeInsets.zero,
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: MdSpace.lg, vertical: MdSpace.sm),
+                    leading: const _IconeOpcao(Icons.sync),
+                    title: const Text('Sincronizar dados com servidor'),
+                    subtitle: const Text('Clientes, produtos e pedidos'),
+                    onTap: _sincronizando ? null : _sincronizar,
+                    trailing: _sincronizando
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 3),
+                          )
+                        : null,
                   ),
-                )
-                    : const Icon(Icons.cloud_sync, color: milkdimOrange),
-              ),
-            ),
-            const SizedBox(height: 24),
-            Card(
-              color: milkdimWhite,
-              elevation: 2,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-              child: ListTile(
-                leading: const Icon(Icons.person_add, color: milkdimDarkOrange, size: 34),
-                title: const Text(
-                  'Cadastrar novo cliente',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: milkdimOrange),
                 ),
-                onTap: _adicionarCliente,
-                trailing: const Icon(Icons.arrow_forward_ios, color: milkdimOrange, size: 20),
-              ),
+                const SizedBox(height: MdSpace.lg),
+                const MdSectionHeader(titulo: 'Clientes'),
+                MdCard(
+                  padding: EdgeInsets.zero,
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: MdSpace.lg, vertical: MdSpace.sm),
+                    leading: const _IconeOpcao(Icons.person_add_alt_1_outlined),
+                    title: const Text('Cadastrar novo cliente'),
+                    onTap: _adicionarCliente,
+                    trailing: const Icon(Icons.chevron_right),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+  }
+}
+
+/// Ícone da opção num círculo laranja-claro (mesmo desenho do MdActionTile).
+class _IconeOpcao extends StatelessWidget {
+  final IconData icone;
+  const _IconeOpcao(this.icone);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: const BoxDecoration(color: MdColors.primarySoft, shape: BoxShape.circle),
+      child: Icon(icone, color: MdColors.primaryStrong, size: 24),
     );
   }
 }

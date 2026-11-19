@@ -6,19 +6,24 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 
-import '../utils/colors.dart';
 import '../utils/produto.dart';
 import '../utils/produto_service.dart';
 import '../utils/db.dart';
 import '../utils/supabase_helper.dart';
 import '../utils/convert.dart'; // assinaturaToBytes / signatureToImageBytes / imageTypeFromBytes
-import 'assinatura_page.dart' hide milkdimOrange, milkdimYellow;
+import '../widgets/pedido_ui.dart';
+import 'assinatura_page.dart';
 
 class PedidoPageEdit extends StatefulWidget {
   final Map<String, dynamic> pedido;
-  const PedidoPageEdit({super.key, required this.pedido});
+
+  /// Só para a captura visual: quando informado, usa estes produtos e não
+  /// consulta SQLite nem rede.
+  final List<Produto>? produtosParaCaptura;
+
+  const PedidoPageEdit({super.key, required this.pedido, this.produtosParaCaptura});
 
   @override
   State<PedidoPageEdit> createState() => _PedidoPageEditState();
@@ -80,6 +85,14 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
 
     // Carrega assinatura existente (prioriza arquivo local) e normaliza para imagem
     _initAssinatura();
+
+    final captura = widget.produtosParaCaptura;
+    if (captura != null) {
+      _inicializarCarrinhoEControllers(captura);
+      produtos = captura;
+      carregandoProdutos = false;
+      return;
+    }
 
     _carregarClientes();
     _carregarProdutos();
@@ -418,47 +431,14 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
             }
 
             return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
               title: const Text('Buscar cliente por nome'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: buscaCtrl,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Nome',
-                      prefixIcon: Icon(Icons.search),
-                    ),
-                    onChanged: (_) => buscar(),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    height: 180,
-                    width: 340,
-                    child: resultados.isEmpty
-                        ? const Center(child: Text('Nenhum cliente encontrado'))
-                        : ListView.builder(
-                      itemCount: resultados.length,
-                      itemBuilder: (ctx, i) {
-                        final cli = resultados[i];
-                        return ListTile(
-                          leading: const Icon(Icons.person),
-                          title: Text(cli['nome'] ?? ''),
-                          subtitle: Text(
-                            (cli['cpf_cnpj'] ?? '') +
-                                (cli['telefone'] != null
-                                    ? " • ${cli['telefone']}"
-                                    : ""),
-                          ),
-                          onTap: () {
-                            Navigator.pop(context, cli);
-                          },
-                        );
-                      },
-                    ),
-                  )
-                ],
+              content: ConteudoBuscaCliente(
+                controller: buscaCtrl,
+                resultados: resultados,
+                onBuscar: buscar,
+                onEscolher: (cli) {
+                  Navigator.pop(context, cli);
+                },
               ),
             );
           },
@@ -494,276 +474,58 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      backgroundColor: milkdimWhite,
+      showDragHandle: true,
       builder: (_) {
-        final recencyText = _ultimoPedido == null
-            ? 'Nunca'
-            : DateFormat('dd/MM/yyyy HH:mm').format(_ultimoPedido!.toLocal());
-        final recencyColor = _fgColor(_classify(_ultimoPedido));
-
         return SafeArea(
           top: false,
           child: SingleChildScrollView(
             padding: EdgeInsets.only(
-              left: 24,
-              right: 24,
-              top: 24,
-              bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+              left: MdSpace.xl,
+              right: MdSpace.xl,
+              bottom: MediaQuery.of(context).viewInsets.bottom + MdSpace.xl,
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'Resumo do Pedido',
-                  style: TextStyle(
-                      fontSize: 22, color: milkdimOrange, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 12),
-                _campoInfo('Nº Pedido:', numeroPedidoCtrl.text),
-                _campoInfo('Cliente:', nomeCtrl.text),
-                Row(
-                  children: [
-                    const Text('Último pedido:',
-                        style: TextStyle(color: milkdimDarkOrange, fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 6),
-                    Text(recencyText,
-                        style: TextStyle(color: recencyColor, fontWeight: FontWeight.w700)),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                _campoInfo('Nome Fantasia:', nomeFantasiaCtrl.text),
-                _campoInfo('Telefone:', telefoneCtrl.text),
-                _campoInfo('WhatsApp:', whatsappCtrl.text),
-                _campoInfo('Email:', emailCtrl.text),
-                _campoInfo('Endereço:', enderecoCtrl.text),
-                _campoInfo('Cidade:', cidadeCtrl.text),
-                _campoInfo('CPF/CNPJ:', cpfCnpjCtrl.text),
-                _campoInfo('Insc. Estadual:', inscEstadualCtrl.text),
-                _campoInfo('CEP:', cepCtrl.text),
-                _campoInfo('Anotação:', anotacaoCtrl.text),
-                const SizedBox(height: 8),
-                _campoInfo('Vendedor:', widget.pedido['vendedor_nome'] ?? '-'),
-                const SizedBox(height: 10),
-
-                // Lista de itens
-                ...carrinho.entries.where((e) => e.value > 0).map(
-                      (e) => ListTile(
-                    dense: true,
-                    title: Text(
-                      e.key.nome,
-                      style: const TextStyle(
-                          color: milkdimDarkOrange, fontWeight: FontWeight.bold),
-                    ),
-                    trailing: Text(
-                      'x${e.value}',
-                      style: const TextStyle(
-                          color: milkdimOrange, fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text(
-                      'R\$ ${(e.key.preco * e.value).toStringAsFixed(2)}',
-                      style: const TextStyle(color: Colors.black87),
-                    ),
-                  ),
-                ),
-
-                const Divider(height: 24, thickness: 1.5),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Total:',
-                        style: TextStyle(
-                            fontSize: 18, color: milkdimOrange, fontWeight: FontWeight.bold)),
-                    Text('R\$ ${total.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                            fontSize: 18, color: milkdimDarkOrange, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                const SizedBox(height: 14),
-
-                // ======== ASSINATURA (sem overflow): Wrap + preview controlado ========
-                Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  alignment: WrapAlignment.spaceBetween,
-                  spacing: 12,
-                  runSpacing: 8,
-                  children: [
-                    const Text('Assinatura:',
-                        style: TextStyle(color: milkdimOrange, fontWeight: FontWeight.w600)),
-                    _assinatura == null
-                        ? Container(
-                      width: 200,
-                      height: 70,
-                      decoration: BoxDecoration(
-                        border: Border.all(color: milkdimDarkOrange, width: 1.2),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Center(
-                        child: Text('Não assinada',
-                            style: TextStyle(
-                                color: milkdimDarkOrange.withOpacity(0.7),
-                                fontStyle: FontStyle.italic)),
-                      ),
-                    )
-                        : ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.memory(_assinatura!,
-                          width: 200, height: 70, fit: BoxFit.contain),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: processando ? null : _irParaAssinatura,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: milkdimOrange,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                      ),
-                      icon: const Icon(Icons.edit, color: milkdimWhite),
-                      label: const Text('Assinar', style: TextStyle(color: milkdimWhite)),
-                    ),
-                  ],
-                ),
-                // =====================================================================
-
-                const SizedBox(height: 22),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: processando
-                            ? null
-                            : () {
-                          Navigator.of(context).pop();
-                          _atualizarPedido(status: 'salvo');
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: milkdimDarkOrange,
-                          shape:
-                          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        ),
-                        icon: const Icon(Icons.save, color: milkdimWhite),
-                        label: const Text('Salvar', style: TextStyle(color: milkdimWhite)),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: processando
-                            ? null
-                            : () {
-                          Navigator.of(context).pop();
-                          _atualizarPedido(status: 'finalizado');
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          shape:
-                          RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        ),
-                        icon: processando
-                            ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            color: Colors.white,
-                            strokeWidth: 2.2,
-                          ),
-                        )
-                            : const Icon(Icons.check, color: Colors.white),
-                        label: const Text('Finalizar', style: TextStyle(color: Colors.white)),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-              ],
+            child: MdContentWidth(
+              maxWidth: 640,
+              child: ResumoPedido(
+                numero: numeroPedidoCtrl.text,
+                cliente: nomeCtrl.text,
+                ultimoPedido: _ultimoPedido,
+                campos: [
+                  ('Nome Fantasia', nomeFantasiaCtrl.text),
+                  ('Telefone', telefoneCtrl.text),
+                  ('WhatsApp', whatsappCtrl.text),
+                  ('Email', emailCtrl.text),
+                  ('Endereço', enderecoCtrl.text),
+                  ('Cidade', cidadeCtrl.text),
+                  ('CPF/CNPJ', cpfCnpjCtrl.text),
+                  ('Insc. Estadual', inscEstadualCtrl.text),
+                  ('CEP', cepCtrl.text),
+                  ('Anotação', anotacaoCtrl.text),
+                ],
+                vendedor: (widget.pedido['vendedor_nome'] ?? '-').toString(),
+                itens: [
+                  for (final e in carrinho.entries.where((e) => e.value > 0))
+                    (nome: e.key.nome, quantidade: e.value, subtotal: e.key.preco * e.value),
+                ],
+                total: total,
+                assinatura: _assinatura,
+                ocupado: processando,
+                onAssinar: _irParaAssinatura,
+                onSalvar: () {
+                  Navigator.of(context).pop();
+                  _atualizarPedido(status: 'salvo');
+                },
+                onFinalizar: () {
+                  Navigator.of(context).pop();
+                  _atualizarPedido(status: 'finalizado');
+                },
+              ),
             ),
           ),
         );
       },
     );
   }
-
-  // =========================
-  // Badge de recência
-  // =========================
-  Widget _badgeUltimoPedido() {
-    final level = _classify(_ultimoPedido);
-    final fg = _fgColor(level);
-    final bg = _bgColor(level);
-    final label = _ultimoPedido == null
-        ? 'Nunca'
-        : DateFormat('dd/MM/yyyy').format(_ultimoPedido!.toLocal());
-
-    IconData icon;
-    switch (level) {
-      case _RecencyLevel.green:
-        icon = Icons.check_circle;
-        break;
-      case _RecencyLevel.orange:
-        icon = Icons.schedule;
-        break;
-      case _RecencyLevel.red:
-        icon = Icons.warning_amber_rounded;
-        break;
-      case _RecencyLevel.none:
-        icon = Icons.do_not_disturb_on;
-        break;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: fg.withOpacity(0.6)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: fg),
-          const SizedBox(width: 6),
-          Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.w600)),
-        ],
-      ),
-    );
-  }
-
-  _RecencyLevel _classify(DateTime? last) {
-    if (last == null) return _RecencyLevel.none;
-    final now = DateTime.now().toUtc();
-    int days = now.difference(last.toUtc()).inDays;
-    if (days < 0) days = 0;
-    if (days < 15) return _RecencyLevel.green;
-    if (days <= 30) return _RecencyLevel.orange;
-    return _RecencyLevel.red;
-  }
-
-  Color _bgColor(_RecencyLevel l) {
-    switch (l) {
-      case _RecencyLevel.green:
-        return Colors.green.shade600.withOpacity(0.12);
-      case _RecencyLevel.orange:
-        return Colors.amber.shade700.withOpacity(0.14);
-      case _RecencyLevel.red:
-        return Colors.red.shade700.withOpacity(0.14);
-      case _RecencyLevel.none:
-        return Colors.grey.shade600.withOpacity(0.15);
-    }
-  }
-
-  Color _fgColor(_RecencyLevel l) {
-    switch (l) {
-      case _RecencyLevel.green:
-        return Colors.green.shade700;
-      case _RecencyLevel.orange:
-        return Colors.amber.shade800;
-      case _RecencyLevel.red:
-        return Colors.red.shade700;
-      case _RecencyLevel.none:
-        return Colors.grey.shade600;
-    }
-  }
-  // =========================
 
   Widget _campoCliente({
     required IconData icon,
@@ -774,7 +536,7 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     VoidCallback? suffixIconTap,
   }) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: MdSpace.md),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -783,29 +545,25 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
             keyboardType: keyboardType,
             maxLines: maxLines,
             decoration: InputDecoration(
-              prefixIcon: Icon(icon, color: milkdimOrange),
+              prefixIcon: Icon(icon),
               suffixIcon: suffixIconTap != null
                   ? IconButton(
-                  icon: const Icon(Icons.search),
-                  color: milkdimDarkOrange,
-                  onPressed: suffixIconTap)
+                      icon: const Icon(Icons.person_search_outlined),
+                      tooltip: 'Buscar cliente',
+                      color: MdColors.primaryStrong,
+                      onPressed: suffixIconTap)
                   : null,
               labelText: label,
-              fillColor: milkdimYellow.withOpacity(0.10),
-              filled: true,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
-              labelStyle: const TextStyle(color: milkdimDarkOrange),
             ),
           ),
           if (label == 'Nome')
             Padding(
-              padding: const EdgeInsets.only(top: 6, left: 4),
+              padding: const EdgeInsets.only(top: MdSpace.sm, left: MdSpace.xs),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Último pedido',
-                      style: TextStyle(fontSize: 12, color: milkdimDarkOrange)),
-                  _badgeUltimoPedido(),
+                  Text('Último pedido', style: Theme.of(context).textTheme.bodySmall),
+                  const Spacer(),
+                  SeloUltimoPedido(ultimoPedido: _ultimoPedido),
                 ],
               ),
             ),
@@ -814,41 +572,18 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     );
   }
 
-  static Widget _campoInfo(String label, String valor) => Row(
-    children: [
-      Text(label,
-          style:
-          const TextStyle(color: milkdimDarkOrange, fontWeight: FontWeight.w600)),
-      const SizedBox(width: 6),
-      Expanded(
-        child: Text(
-          valor,
-          style: const TextStyle(color: milkdimOrange, fontWeight: FontWeight.bold),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ),
-    ],
-  );
-
   void _showSnack(String msg, {bool sucesso = false}) {
-    final snack = SnackBar(
-      content: Text(msg),
-      backgroundColor: sucesso ? milkdimOrange : milkdimDarkOrange,
-      behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      duration: Duration(seconds: sucesso ? 3 : 4),
-    );
-    ScaffoldMessenger.of(context).showSnackBar(snack);
+    showMdSnack(context, msg, tipo: sucesso ? MdTipo.sucesso : MdTipo.erro);
   }
 
   // ---------- Helpers de layout responsivo ----------
   Widget _twoUp(bool horizontal, Widget left, Widget right) {
     if (horizontal) {
       return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(child: left),
-          const SizedBox(width: 12),
+          const SizedBox(width: MdSpace.md),
           Expanded(child: right),
         ],
       );
@@ -867,252 +602,153 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     final width = MediaQuery.of(context).size.width;
     final twoCols = width >= 700;
     final gridCols = _gridColumns(width);
+    final mostrarForm = !carregandoProdutos && produtos.isNotEmpty;
 
     return Scaffold(
-      backgroundColor: milkdimWhite,
       appBar: AppBar(
-        backgroundColor: milkdimWhite,
-        elevation: 1,
-        iconTheme: const IconThemeData(color: milkdimOrange),
-        title: const Text(
-          'Editar Pedido',
-          style: TextStyle(
-            color: milkdimOrange,
-            fontWeight: FontWeight.bold,
-            fontSize: 24,
-            letterSpacing: 1,
-          ),
-        ),
+        title: const Text('Editar Pedido'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh, color: milkdimDarkOrange),
+            icon: const Icon(Icons.refresh),
             tooltip: 'Recarregar produtos',
             onPressed: _carregarProdutos,
           ),
+          const SizedBox(width: MdSpace.xs),
         ],
       ),
+      bottomNavigationBar: mostrarForm && total > 0
+          ? BarraResumo(total: total, onPressed: processando ? null : _abrirPopupResumo)
+          : null,
       body: carregandoProdutos
-          ? const Center(child: CircularProgressIndicator(color: milkdimOrange))
+          ? const Center(child: CircularProgressIndicator())
           : produtos.isEmpty
-          ? Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('Nenhum produto cadastrado.',
-                style: TextStyle(color: milkdimDarkOrange)),
-            const SizedBox(height: 12),
-            ElevatedButton.icon(
-              onPressed: _carregarProdutos,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Tentar novamente'),
-              style: ElevatedButton.styleFrom(backgroundColor: milkdimOrange),
-            ),
-          ],
-        ),
-      )
-          : SingleChildScrollView(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Card(
-              elevation: 2,
-              color: milkdimWhite,
-              margin: const EdgeInsets.only(bottom: 18),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Dados do Cliente',
-                        style: TextStyle(
-                            color: milkdimDarkOrange,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16)),
-                    const SizedBox(height: 6),
-
-                    _twoUp(
-                      twoCols,
-                      _campoCliente(
-                        icon: Icons.numbers,
-                        label: 'Nº Pedido',
-                        controller: numeroPedidoCtrl,
-                        keyboardType: TextInputType.number,
-                      ),
-                      _campoCliente(
-                        icon: Icons.person,
-                        label: 'Nome',
-                        controller: nomeCtrl,
-                        suffixIconTap: _autoPreencherClientePorNome,
-                      ),
-                    ),
-
-                    _campoCliente(
-                        icon: Icons.store,
-                        label: 'Nome Fantasia',
-                        controller: nomeFantasiaCtrl),
-
-                    _twoUp(
-                      twoCols,
-                      _campoCliente(
-                          icon: Icons.phone,
-                          label: 'Telefone',
-                          controller: telefoneCtrl,
-                          keyboardType: TextInputType.phone),
-                      _campoCliente(
-                        icon: Icons.sms,
-                        label: 'WhatsApp',
-                        controller: whatsappCtrl,
-                        keyboardType: TextInputType.phone,
-                      ),
-                    ),
-
-                    _campoCliente(
-                        icon: Icons.email,
-                        label: 'Email',
-                        controller: emailCtrl,
-                        keyboardType: TextInputType.emailAddress),
-
-                    _campoCliente(
-                        icon: Icons.home,
-                        label: 'Endereço',
-                        controller: enderecoCtrl),
-
-                    _twoUp(
-                      twoCols,
-                      _campoCliente(
-                          icon: Icons.location_city,
-                          label: 'Cidade',
-                          controller: cidadeCtrl),
-                      _campoCliente(
-                          icon: Icons.map,
-                          label: 'CEP',
-                          controller: cepCtrl,
-                          keyboardType: TextInputType.number),
-                    ),
-
-                    _twoUp(
-                      twoCols,
-                      _campoCliente(
-                          icon: Icons.credit_card,
-                          label: 'CPF/CNPJ',
-                          controller: cpfCnpjCtrl,
-                          keyboardType: TextInputType.number),
-                      _campoCliente(
-                          icon: Icons.assignment,
-                          label: 'Insc. Estadual',
-                          controller: inscEstadualCtrl),
-                    ),
-
-                    _campoCliente(
-                        icon: Icons.edit,
-                        label: 'Anotação',
-                        controller: anotacaoCtrl,
-                        maxLines: 2),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 6),
-            const Text('Produtos',
-                style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: milkdimDarkOrange,
-                    fontSize: 17)),
-            const SizedBox(height: 4),
-
-            // Grade responsiva de produtos
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: produtos.length,
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: gridCols,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: gridCols == 1 ? 3.8 : 3.4,
-              ),
-              itemBuilder: (ctx, i) {
-                final p = produtos[i];
-                final controller = _qtdControllers[p]!;
-                return Container(
-                  decoration: BoxDecoration(
-                    color: milkdimWhite,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: milkdimYellow.withOpacity(0.07),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      )
-                    ],
+              ? MdEmptyState(
+                  icone: Icons.inventory_2_outlined,
+                  titulo: 'Nenhum produto cadastrado.',
+                  acao: FilledButton.icon(
+                    onPressed: _carregarProdutos,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Tentar novamente'),
                   ),
-                  child: ListTile(
-                    contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    title: Text(
-                      p.nome,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: milkdimOrange,
-                          fontSize: 17),
-                    ),
-                    subtitle: Text(
-                      'R\$ ${p.preco.toStringAsFixed(2)}',
-                      style:
-                      const TextStyle(color: milkdimDarkOrange, fontSize: 15),
-                    ),
-                    trailing: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 90),
-                      child: TextField(
-                        controller: controller,
-                        enabled: !processando,
-                        keyboardType: TextInputType.number,
-                        textAlign: TextAlign.center,
-                        decoration: InputDecoration(
-                          labelText: 'Qtd',
-                          labelStyle: const TextStyle(
-                              fontSize: 12, color: milkdimDarkOrange),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
+                )
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(MdSpace.lg),
+                  child: MdContentWidth(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const MdSectionHeader(titulo: 'Dados do Cliente'),
+                        MdCard(
+                          padding: const EdgeInsets.fromLTRB(
+                              MdSpace.lg, MdSpace.lg, MdSpace.lg, MdSpace.xs),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _twoUp(
+                                twoCols,
+                                _campoCliente(
+                                  icon: Icons.numbers,
+                                  label: 'Nº Pedido',
+                                  controller: numeroPedidoCtrl,
+                                  keyboardType: TextInputType.number,
+                                ),
+                                _campoCliente(
+                                  icon: Icons.person_outline,
+                                  label: 'Nome',
+                                  controller: nomeCtrl,
+                                  suffixIconTap: _autoPreencherClientePorNome,
+                                ),
+                              ),
+                              _campoCliente(
+                                  icon: Icons.storefront_outlined,
+                                  label: 'Nome Fantasia',
+                                  controller: nomeFantasiaCtrl),
+                              _twoUp(
+                                twoCols,
+                                _campoCliente(
+                                    icon: Icons.phone_outlined,
+                                    label: 'Telefone',
+                                    controller: telefoneCtrl,
+                                    keyboardType: TextInputType.phone),
+                                _campoCliente(
+                                  icon: Icons.sms_outlined,
+                                  label: 'WhatsApp',
+                                  controller: whatsappCtrl,
+                                  keyboardType: TextInputType.phone,
+                                ),
+                              ),
+                              _campoCliente(
+                                  icon: Icons.email_outlined,
+                                  label: 'Email',
+                                  controller: emailCtrl,
+                                  keyboardType: TextInputType.emailAddress),
+                              _campoCliente(
+                                  icon: Icons.home_outlined,
+                                  label: 'Endereço',
+                                  controller: enderecoCtrl),
+                              _twoUp(
+                                twoCols,
+                                _campoCliente(
+                                    icon: Icons.location_city_outlined,
+                                    label: 'Cidade',
+                                    controller: cidadeCtrl),
+                                _campoCliente(
+                                    icon: Icons.map_outlined,
+                                    label: 'CEP',
+                                    controller: cepCtrl,
+                                    keyboardType: TextInputType.number),
+                              ),
+                              _twoUp(
+                                twoCols,
+                                _campoCliente(
+                                    icon: Icons.credit_card,
+                                    label: 'CPF/CNPJ',
+                                    controller: cpfCnpjCtrl,
+                                    keyboardType: TextInputType.number),
+                                _campoCliente(
+                                    icon: Icons.assignment_outlined,
+                                    label: 'Insc. Estadual',
+                                    controller: inscEstadualCtrl),
+                              ),
+                              _campoCliente(
+                                  icon: Icons.notes,
+                                  label: 'Anotação',
+                                  controller: anotacaoCtrl,
+                                  maxLines: 2),
+                            ],
                           ),
-                          contentPadding:
-                          const EdgeInsets.symmetric(vertical: 3),
                         ),
-                      ),
+                        const SizedBox(height: MdSpace.xl),
+                        const MdSectionHeader(titulo: 'Produtos'),
+
+                        // Grade responsiva de produtos
+                        GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: produtos.length,
+                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: gridCols,
+                            crossAxisSpacing: MdSpace.md,
+                            mainAxisSpacing: MdSpace.md,
+                            mainAxisExtent: 92,
+                          ),
+                          itemBuilder: (ctx, i) {
+                            final p = produtos[i];
+                            final controller = _qtdControllers[p]!;
+                            return ProdutoQtdTile(
+                              nome: p.nome,
+                              preco: p.preco,
+                              quantidade: carrinho[p] ?? 0,
+                              controller: controller,
+                              habilitado: !processando,
+                            );
+                          },
+                        ),
+                        const SizedBox(height: MdSpace.lg),
+                      ],
                     ),
                   ),
-                );
-              },
-            ),
-
-            const SizedBox(height: 24),
-            if (total > 0)
-              SizedBox(
-                width: double.infinity,
-                child: FloatingActionButton.extended(
-                  elevation: 1,
-                  backgroundColor: milkdimOrange,
-                  icon: const Icon(Icons.shopping_cart, color: milkdimWhite),
-                  label: Text(
-                    'Resumo R\$ ${total.toStringAsFixed(2)}',
-                    style: const TextStyle(
-                        color: milkdimWhite, fontWeight: FontWeight.bold),
-                  ),
-                  onPressed: processando ? null : _abrirPopupResumo,
                 ),
-              ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
     );
   }
 }
-
-enum _RecencyLevel { none, green, orange, red }

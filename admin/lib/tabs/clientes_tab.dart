@@ -2,24 +2,26 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/cliente.dart';
 import '../services/supabase_service.dart';
-
-const Color milkdimYellow = Color(0xFFFFE066);
-const Color milkdimOrange = Color(0xFFE38A1D);
-const Color milkdimWhite  = Color(0xFFFFFFFF);
-const Color milkdimGrey   = Color(0xFFF7F7F7);
+import '../widgets/lista_adaptavel.dart';
 
 class ClientesTab extends StatefulWidget {
-  const ClientesTab({super.key});
+  /// Só para captura visual: fonte dos clientes no lugar do Supabase.
+  /// Nulo (padrão) usa [SupabaseService.buscarClientes] (ativos e inativos).
+  @visibleForTesting
+  final Future<List<Cliente>> Function()? carregar;
+
+  const ClientesTab({super.key, this.carregar});
   @override
   State<ClientesTab> createState() => _ClientesTabState();
 }
 
 class _ClientesTabState extends State<ClientesTab> {
-  final _service = SupabaseService();
+  late final _service = SupabaseService();
   final _searchCtrl = TextEditingController();
   final _dateFmt = DateFormat('dd/MM/yyyy');
 
@@ -52,7 +54,7 @@ class _ClientesTabState extends State<ClientesTab> {
       _error = null;
     });
     try {
-      final data = await _service.buscarClientes(somenteAtivos: null);
+      final data = await (widget.carregar?.call() ?? _service.buscarClientes(somenteAtivos: null));
       if (!mounted) return;
       data.sort((a, b) => (a.nome ?? '').toLowerCase().compareTo((b.nome ?? '').toLowerCase()));
       setState(() {
@@ -110,18 +112,12 @@ class _ClientesTabState extends State<ClientesTab> {
     return d < 0 ? 0 : d;
   }
 
-  Color _badgeColor(int? dias) {
-    if (dias == null) return Colors.grey.shade500;
-    if (dias < 15) return Colors.green.shade700;
-    if (dias < 30) return Colors.amber.shade800;
-    return Colors.red.shade700;
-  }
-
-  Color _badgeBg(int? dias) {
-    if (dias == null) return Colors.grey.shade600.withOpacity(0.15);
-    if (dias < 15) return Colors.green.shade700.withOpacity(0.12);
-    if (dias < 30) return Colors.amber.shade800.withOpacity(0.14);
-    return Colors.red.shade700.withOpacity(0.14);
+  /// Recência do último pedido: < 15 dias sucesso, < 30 atenção, depois erro; nunca = neutro.
+  MdTipo _badgeTipo(int? dias) {
+    if (dias == null) return MdTipo.neutro;
+    if (dias < 15) return MdTipo.sucesso;
+    if (dias < 30) return MdTipo.atencao;
+    return MdTipo.erro;
   }
 
   String _badgeText(int? dias) {
@@ -133,15 +129,7 @@ class _ClientesTabState extends State<ClientesTab> {
 
   void _toast(String msg, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: error ? Colors.red[700] : milkdimOrange,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    showMdSnack(context, msg, tipo: error ? MdTipo.erro : MdTipo.sucesso);
   }
 
   String? _nullIfEmpty(String? v) {
@@ -207,27 +195,13 @@ class _ClientesTabState extends State<ClientesTab> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        backgroundColor: milkdimWhite,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-        title: Row(
-          children: [
-            const Icon(Icons.delete_forever, color: Colors.red),
-            const SizedBox(width: 8),
-            Text(
-              'Remover Cliente',
-              style: TextStyle(color: Colors.red[800], fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
+        title: const TituloDialogo(
+            icone: Icons.delete_forever, texto: 'Remover Cliente', destrutivo: true),
         content: Text('Tem certeza que deseja remover "${c.nome ?? '-'}"?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[700], foregroundColor: milkdimWhite),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remover'),
-          ),
+          BotaoDestrutivo(texto: 'Remover', onPressed: () => Navigator.pop(context, true)),
         ],
       ),
     );
@@ -269,18 +243,10 @@ class _ClientesTabState extends State<ClientesTab> {
 
         return StatefulBuilder(
           builder: (context, setStateSB) => AlertDialog(
-            backgroundColor: milkdimWhite,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-            title: Row(
-              children: [
-                Icon(cliente == null ? Icons.person_add_alt_1 : Icons.edit, color: milkdimOrange),
-                const SizedBox(width: 6),
-                Text(
-                  cliente == null ? 'Novo Cliente' : 'Editar Cliente',
-                  style: const TextStyle(color: milkdimOrange, fontWeight: FontWeight.bold),
-                ),
-              ],
+            title: TituloDialogo(
+              icone: cliente == null ? Icons.person_add_alt_1 : Icons.edit,
+              texto: cliente == null ? 'Novo Cliente' : 'Editar Cliente',
             ),
             content: Form(
               key: formKey,
@@ -296,32 +262,29 @@ class _ClientesTabState extends State<ClientesTab> {
                         decoration: const InputDecoration(
                           labelText: 'Nome *',
                           prefixIcon: Icon(Icons.account_circle),
-                          filled: true,
                         ),
                         validator: (v) => (v == null || v.trim().isEmpty) ? 'Informe o nome' : null,
                         textInputAction: TextInputAction.next,
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: MdSpace.md),
                       TextFormField(
                         controller: nomeFantasiaCtrl,
                         decoration: const InputDecoration(
                           labelText: 'Nome Fantasia',
                           prefixIcon: Icon(Icons.business),
-                          filled: true,
                         ),
                         textInputAction: TextInputAction.next,
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: MdSpace.md),
                       TextFormField(
                         controller: enderecoCtrl,
                         decoration: const InputDecoration(
                           labelText: 'Endereço',
                           prefixIcon: Icon(Icons.location_on_outlined),
-                          filled: true,
                         ),
                         textInputAction: TextInputAction.next,
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: MdSpace.md),
 
                       // Cidade + CEP
                       isNarrow
@@ -332,14 +295,13 @@ class _ClientesTabState extends State<ClientesTab> {
                             decoration: const InputDecoration(
                               labelText: 'Cidade',
                               prefixIcon: Icon(Icons.location_city),
-                              filled: true,
                             ),
                             textInputAction: TextInputAction.next,
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: MdSpace.md),
                           TextFormField(
                             controller: cepCtrl,
-                            decoration: const InputDecoration(labelText: 'CEP', filled: true),
+                            decoration: const InputDecoration(labelText: 'CEP'),
                             keyboardType: TextInputType.number,
                             textInputAction: TextInputAction.next,
                           ),
@@ -353,17 +315,16 @@ class _ClientesTabState extends State<ClientesTab> {
                               decoration: const InputDecoration(
                                 labelText: 'Cidade',
                                 prefixIcon: Icon(Icons.location_city),
-                                filled: true,
                               ),
                               textInputAction: TextInputAction.next,
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: MdSpace.md),
                           SizedBox(
                             width: 140,
                             child: TextFormField(
                               controller: cepCtrl,
-                              decoration: const InputDecoration(labelText: 'CEP', filled: true),
+                              decoration: const InputDecoration(labelText: 'CEP'),
                               keyboardType: TextInputType.number,
                               textInputAction: TextInputAction.next,
                             ),
@@ -371,7 +332,7 @@ class _ClientesTabState extends State<ClientesTab> {
                         ],
                       ),
 
-                      const SizedBox(height: 10),
+                      const SizedBox(height: MdSpace.md),
 
                       // CPF/CNPJ + Insc. Estadual
                       isNarrow
@@ -382,17 +343,15 @@ class _ClientesTabState extends State<ClientesTab> {
                             decoration: const InputDecoration(
                               labelText: 'CPF/CNPJ',
                               prefixIcon: Icon(Icons.assignment_ind),
-                              filled: true,
                             ),
                             textInputAction: TextInputAction.next,
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: MdSpace.md),
                           TextFormField(
                             controller: inscEstadualCtrl,
                             decoration: const InputDecoration(
                               labelText: 'Insc. Estadual',
                               prefixIcon: Icon(Icons.confirmation_number),
-                              filled: true,
                             ),
                             textInputAction: TextInputAction.next,
                           ),
@@ -406,19 +365,17 @@ class _ClientesTabState extends State<ClientesTab> {
                               decoration: const InputDecoration(
                                 labelText: 'CPF/CNPJ',
                                 prefixIcon: Icon(Icons.assignment_ind),
-                                filled: true,
                               ),
                               textInputAction: TextInputAction.next,
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: MdSpace.md),
                           Expanded(
                             child: TextFormField(
                               controller: inscEstadualCtrl,
                               decoration: const InputDecoration(
                                 labelText: 'Insc. Estadual',
                                 prefixIcon: Icon(Icons.confirmation_number),
-                                filled: true,
                               ),
                               textInputAction: TextInputAction.next,
                             ),
@@ -426,7 +383,7 @@ class _ClientesTabState extends State<ClientesTab> {
                         ],
                       ),
 
-                      const SizedBox(height: 10),
+                      const SizedBox(height: MdSpace.md),
 
                       // Telefone + WhatsApp
                       isNarrow
@@ -437,18 +394,16 @@ class _ClientesTabState extends State<ClientesTab> {
                             decoration: const InputDecoration(
                               labelText: 'Telefone',
                               prefixIcon: Icon(Icons.phone),
-                              filled: true,
                             ),
                             keyboardType: TextInputType.phone,
                             textInputAction: TextInputAction.next,
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: MdSpace.md),
                           TextFormField(
                             controller: whatsappCtrl,
                             decoration: const InputDecoration(
                               labelText: 'WhatsApp',
                               prefixIcon: Icon(Icons.sms),
-                              filled: true,
                             ),
                             keyboardType: TextInputType.phone,
                             textInputAction: TextInputAction.next,
@@ -463,20 +418,18 @@ class _ClientesTabState extends State<ClientesTab> {
                               decoration: const InputDecoration(
                                 labelText: 'Telefone',
                                 prefixIcon: Icon(Icons.phone),
-                                filled: true,
                               ),
                               keyboardType: TextInputType.phone,
                               textInputAction: TextInputAction.next,
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: MdSpace.md),
                           Expanded(
                             child: TextFormField(
                               controller: whatsappCtrl,
                               decoration: const InputDecoration(
                                 labelText: 'WhatsApp',
                                 prefixIcon: Icon(Icons.sms),
-                                filled: true,
                               ),
                               keyboardType: TextInputType.phone,
                               textInputAction: TextInputAction.next,
@@ -485,25 +438,23 @@ class _ClientesTabState extends State<ClientesTab> {
                         ],
                       ),
 
-                      const SizedBox(height: 10),
+                      const SizedBox(height: MdSpace.md),
                       TextFormField(
                         controller: emailCtrl,
                         decoration: const InputDecoration(
                           labelText: 'E-mail',
                           prefixIcon: Icon(Icons.email),
-                          filled: true,
                         ),
                         keyboardType: TextInputType.emailAddress,
                         validator: _validateEmail,
                         textInputAction: TextInputAction.next,
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: MdSpace.md),
                       TextFormField(
                         controller: anotacaoCtrl,
                         decoration: const InputDecoration(
                           labelText: 'Anotação',
                           prefixIcon: Icon(Icons.notes),
-                          filled: true,
                         ),
                         maxLines: 2,
                         textInputAction: TextInputAction.done,
@@ -511,11 +462,10 @@ class _ClientesTabState extends State<ClientesTab> {
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          const Text('Ativo', style: TextStyle(fontWeight: FontWeight.w600)),
+                          Text('Ativo', style: Theme.of(context).textTheme.titleSmall),
                           const Spacer(),
                           Switch(
                             value: ativo,
-                            activeColor: milkdimOrange,
                             onChanged: (v) => setStateSB(() => ativo = v),
                           ),
                         ],
@@ -557,17 +507,12 @@ class _ClientesTabState extends State<ClientesTab> {
                     if (context.mounted) Navigator.pop(context, true);
                   } on PostgrestException catch (e) {
                     if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Erro ao salvar: ${e.message}'), backgroundColor: Colors.red[700]),
-                    );
+                    showMdSnack(context, 'Erro ao salvar: ${e.message}', tipo: MdTipo.erro);
                   } catch (e) {
                     if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Erro ao salvar: $e'), backgroundColor: Colors.red[700]),
-                    );
+                    showMdSnack(context, 'Erro ao salvar: $e', tipo: MdTipo.erro);
                   }
                 },
-                style: FilledButton.styleFrom(backgroundColor: milkdimOrange, foregroundColor: milkdimWhite),
               ),
             ],
           ),
@@ -583,198 +528,170 @@ class _ClientesTabState extends State<ClientesTab> {
 
   // --------------------- UI ---------------------
 
-  @override
-  Widget build(BuildContext context) {
-    final isWide = MediaQuery.of(context).size.width >= 640;
+  Widget _cartao(Cliente c) {
+    final tt = Theme.of(context).textTheme;
+    final lastDt = _asDate(c.ultimoPedido);
+    final dias   = _diasDesde(lastDt);
+    final ultimoTxt = lastDt == null ? 'Nunca' : _dateFmt.format(lastDt);
 
-    final searchBar = Padding(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
-      child: Row(
+    return MdCard(
+      // Tocar no item abre edição (pop-up)
+      onTap: () => _showAddOrEditDialog(cliente: c),
+      padding: const EdgeInsets.fromLTRB(MdSpace.lg, MdSpace.md, MdSpace.xs, MdSpace.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        // Em duas colunas o cartão estica até o vizinho: o rodapé fica embaixo.
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(
-            child: TextField(
-              controller: _searchCtrl,
-              decoration: InputDecoration(
-                filled: true,
-                fillColor: milkdimWhite,
-                hintText: 'Buscar por nome, cidade, CPF/CNPJ, telefone, WhatsApp, e-mail...',
-                prefixIcon: const Icon(Icons.search, color: milkdimOrange),
-                suffixIcon: (_searchCtrl.text.isEmpty)
-                    ? null
-                    : IconButton(
-                  icon: const Icon(Icons.clear),
-                  onPressed: () {
-                    _searchCtrl.clear();
-                    _onSearchChanged();
-                  },
-                ),
-                contentPadding: const EdgeInsets.symmetric(vertical: 2),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: const BorderSide(color: milkdimYellow, width: 2),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  borderSide: const BorderSide(color: milkdimOrange, width: 2.2),
-                ),
-              ),
-            ),
-          ),
-          if (isWide) const SizedBox(width: 12),
-          if (isWide)
-            FilledButton.icon(
-              onPressed: () => _showAddOrEditDialog(),
-              icon: const Icon(Icons.person_add_alt_1),
-              label: const Text('Adicionar'),
-              style: FilledButton.styleFrom(backgroundColor: milkdimOrange, foregroundColor: milkdimWhite),
-            ),
-        ],
-      ),
-    );
-
-    final listWidget = _loading
-        ? const Center(child: CircularProgressIndicator(color: milkdimOrange))
-        : _error != null
-        ? Center(
-      child: Text(
-        _error!,
-        style: const TextStyle(color: Colors.red, fontSize: 14),
-        textAlign: TextAlign.center,
-      ),
-    )
-        : _filtered.isEmpty
-        ? const Center(
-      child: Text('Nenhum cliente encontrado.',
-          style: TextStyle(color: milkdimOrange, fontSize: 18)),
-    )
-        : RefreshIndicator(
-      onRefresh: _fetchClientes,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        itemCount: _filtered.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 4),
-        itemBuilder: (context, i) {
-          final c = _filtered[i];
-          final lastDt = _asDate(c.ultimoPedido);
-          final dias   = _diasDesde(lastDt);
-
-          final badge = Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: _badgeBg(dias),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: _badgeColor(dias).withOpacity(0.6)),
-            ),
-            child: Text(
-              _badgeText(dias),
-              style: TextStyle(color: _badgeColor(dias), fontWeight: FontWeight.w700),
-            ),
-          );
-
-          final ultimoTxt = lastDt == null ? 'Nunca' : _dateFmt.format(lastDt);
-
-          return Card(
-            color: milkdimWhite,
-            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-            elevation: 2.6,
-            child: ListTile(
-              leading: const CircleAvatar(
-                backgroundColor: milkdimYellow,
-                child: Icon(Icons.person_outline, color: milkdimOrange),
-              ),
-              title: Text(
-                c.nome ?? '',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: milkdimOrange, fontWeight: FontWeight.w600),
-              ),
-              subtitle: Column(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if ((c.nomeFantasia ?? '').isNotEmpty) Text('Fantasia: ${c.nomeFantasia}'),
-                  if ((c.telefone ?? '').isNotEmpty) Text('Telefone: ${c.telefone}'),
-                  if ((c.whatsapp ?? '').isNotEmpty) Text('WhatsApp: ${c.whatsapp}'),
-                  if ((c.email ?? '').isNotEmpty) Text('E-mail: ${c.email}'),
-                  Text('Cidade: ${c.cidade ?? '-'}'),
-                  Text('CPF/CNPJ: ${c.cpfCnpj ?? '-'}'),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      badge,
-                      const SizedBox(width: 10),
-                      Text('Último: $ultimoTxt', style: const TextStyle(fontWeight: FontWeight.bold)),
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: c.ativo ? Colors.green.shade50 : Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(999),
-                          border: Border.all(
-                            color: c.ativo ? Colors.green.shade300 : Colors.red.shade300,
-                          ),
+                  AvatarLista(icone: Icons.person_outline, ativo: c.ativo),
+                  const SizedBox(width: MdSpace.md),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          c.nome ?? '',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: tt.bodyLarge!.copyWith(fontWeight: FontWeight.w600),
                         ),
-                        child: Text(
-                          c.ativo ? 'Ativo' : 'Inativo',
-                          style: TextStyle(
-                            color: c.ativo ? Colors.green.shade800 : Colors.red.shade800,
-                            fontWeight: FontWeight.w600,
+                        if ((c.nomeFantasia ?? '').isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'Fantasia: ${c.nomeFantasia}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: tt.bodyMedium!.copyWith(color: MdColors.textMuted),
                           ),
-                        ),
+                        ],
+                        const SizedBox(height: MdSpace.sm),
+                        SeloAtivo(ativo: c.ativo),
+                      ],
+                    ),
+                  ),
+                  PopupMenuButton<String>(
+                    tooltip: 'Mais ações',
+                    onSelected: (value) {
+                      switch (value) {
+                        case 'editar':
+                          _showAddOrEditDialog(cliente: c);
+                          break;
+                        case 'ativar':
+                          _toggleAtivo(c, !c.ativo);
+                          break;
+                        case 'remover':
+                          _deleteCliente(c);
+                          break;
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      itemMenu('editar', Icons.edit, 'Editar'),
+                      itemMenu(
+                        'ativar',
+                        c.ativo ? Icons.visibility_off : Icons.visibility,
+                        c.ativo ? 'Marcar como Inativo' : 'Marcar como Ativo',
                       ),
+                      const PopupMenuDivider(),
+                      itemMenu('remover', Icons.delete, 'Remover', destrutivo: true),
                     ],
                   ),
                 ],
               ),
-              isThreeLine: true,
-
-              // 👉 Tocar no item abre edição (pop-up)
-              onTap: () => _showAddOrEditDialog(cliente: c),
-
-              trailing: PopupMenuButton<String>(
-                onSelected: (value) {
-                  switch (value) {
-                    case 'editar':
-                      _showAddOrEditDialog(cliente: c);
-                      break;
-                    case 'ativar':
-                      _toggleAtivo(c, !c.ativo);
-                      break;
-                    case 'remover':
-                      _deleteCliente(c);
-                      break;
-                  }
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(
-                    value: 'editar',
-                    child: ListTile(
-                      leading: Icon(Icons.edit),
-                      title: Text('Editar'),
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'ativar',
-                    child: ListTile(
-                      leading: Icon(c.ativo ? Icons.visibility_off : Icons.visibility),
-                      title: Text(c.ativo ? 'Marcar como Inativo' : 'Marcar como Ativo'),
-                    ),
-                  ),
-                  const PopupMenuDivider(),
-                  const PopupMenuItem(
-                    value: 'remover',
-                    child: ListTile(
-                      leading: Icon(Icons.delete, color: Colors.red),
-                      title: Text('Remover', style: TextStyle(color: Colors.red)),
-                    ),
-                  ),
-                ],
+              const SizedBox(height: MdSpace.md),
+              Padding(
+                padding: const EdgeInsets.only(right: MdSpace.md),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if ((c.telefone ?? '').isNotEmpty)
+                      LinhaInfo(icone: Icons.phone_outlined, texto: 'Telefone: ${c.telefone}'),
+                    if ((c.whatsapp ?? '').isNotEmpty)
+                      LinhaInfo(icone: Icons.sms_outlined, texto: 'WhatsApp: ${c.whatsapp}'),
+                    if ((c.email ?? '').isNotEmpty)
+                      LinhaInfo(icone: Icons.email_outlined, texto: 'E-mail: ${c.email}'),
+                    LinhaInfo(icone: Icons.location_city_outlined, texto: 'Cidade: ${c.cidade ?? '-'}'),
+                    LinhaInfo(icone: Icons.badge_outlined, texto: 'CPF/CNPJ: ${c.cpfCnpj ?? '-'}'),
+                  ],
+                ),
               ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: MdSpace.md, right: MdSpace.md),
+            child: Column(
+              children: [
+                const Divider(),
+                const SizedBox(height: MdSpace.md),
+                Row(
+                  children: [
+                    MdStatusChip(
+                      tipo: _badgeTipo(dias),
+                      texto: _badgeText(dias),
+                      icone: Icons.schedule,
+                    ),
+                    const SizedBox(width: MdSpace.md),
+                    Expanded(
+                      child: Text(
+                        'Último: $ultimoTxt',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: tt.bodyMedium!.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          );
-        },
+          ),
+        ],
       ),
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isWide = MediaQuery.of(context).size.width >= 640;
+
+    final searchBar = BarraDaAba(
+      busca: MdSearchField(
+        controller: _searchCtrl,
+        hint: 'Buscar por nome, cidade, CPF/CNPJ, telefone, WhatsApp, e-mail...',
+      ),
+      acoes: [
+        if (isWide)
+          FilledButton.icon(
+            onPressed: () => _showAddOrEditDialog(),
+            icon: const Icon(Icons.person_add_alt_1),
+            label: const Text('Adicionar'),
+          ),
+      ],
+    );
+
+    final Widget listWidget;
+    if (_loading) {
+      listWidget = const Center(child: CircularProgressIndicator());
+    } else if (_error != null) {
+      listWidget = ErroDaLista(texto: _error!);
+    } else if (_filtered.isEmpty) {
+      listWidget = MdEmptyState(
+        icone: Icons.groups_outlined,
+        titulo: 'Nenhum cliente encontrado.',
+        texto: _searchCtrl.text.trim().isEmpty ? null : 'Tente outro termo de busca.',
+      );
+    } else {
+      listWidget = ListaAdaptavel(
+        onRefresh: _fetchClientes,
+        itemCount: _filtered.length,
+        espacoFinal: isWide ? 0 : 72,
+        itemBuilder: (context, i) => _cartao(_filtered[i]),
+      );
+    }
 
     // Usamos Stack para garantir FAB flutuante em telas estreitas,
     // mesmo estando dentro do conteúdo do Tab.
@@ -788,15 +705,12 @@ class _ClientesTabState extends State<ClientesTab> {
         ),
         if (!isWide)
           Positioned(
-            right: 16,
-            bottom: 16,
+            right: MdSpace.lg,
+            bottom: MdSpace.lg,
             child: FloatingActionButton.extended(
               onPressed: () => _showAddOrEditDialog(),
-              backgroundColor: milkdimOrange,
-              foregroundColor: milkdimWhite,
               icon: const Icon(Icons.person_add_alt_1),
               label: const Text('Adicionar Cliente'),
-              elevation: 3,
             ),
           ),
       ],
