@@ -187,7 +187,7 @@ class MdActionTile extends StatelessWidget {
     final ativo = onTap != null;
 
     final tile = Material(
-      color: destaque ? MdColors.primary : MdColors.surface,
+      color: destaque ? MdColors.primaryFill : MdColors.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(MdRadius.card),
         side: destaque ? BorderSide.none : const BorderSide(color: MdColors.border),

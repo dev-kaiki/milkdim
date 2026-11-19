@@ -58,7 +58,7 @@ ThemeData buildMilkdimTheme() {
   const botaoPadding = EdgeInsets.symmetric(horizontal: MdSpace.xl, vertical: MdSpace.md);
 
   final botaoPrincipal = FilledButton.styleFrom(
-    backgroundColor: MdColors.primary,
+    backgroundColor: MdColors.primaryFill,
     foregroundColor: Colors.white,
     disabledBackgroundColor: MdColors.border,
     disabledForegroundColor: MdColors.textMuted,
@@ -135,7 +135,7 @@ ThemeData buildMilkdimTheme() {
       style: IconButton.styleFrom(minimumSize: const Size(44, 44)),
     ),
     floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: MdColors.primary,
+      backgroundColor: MdColors.primaryFill,
       foregroundColor: Colors.white,
       elevation: 2,
       focusElevation: 2,

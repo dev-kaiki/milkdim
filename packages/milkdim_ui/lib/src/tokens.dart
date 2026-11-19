@@ -8,6 +8,10 @@ abstract final class MdColors {
   /// Laranja da marca (fundos de botão, indicadores).
   static const Color primary = Color(0xFFE38A1D);
 
+  /// Laranja de fundo para botões e áreas com texto branco (contraste ~3,6:1,
+  /// o laranja da marca dá só 2,7:1 com branco).
+  static const Color primaryFill = Color(0xFFC9700F);
+
   /// Laranja escuro para texto e ícone sobre fundo claro (contraste).
   static const Color primaryStrong = Color(0xFFA85C0C);
 
