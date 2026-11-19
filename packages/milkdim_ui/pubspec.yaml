@@ -1,0 +1,30 @@
+name: milkdim_ui
+description: Visual compartilhado dos apps MilkDim (tokens, tema e componentes).
+publish_to: 'none'
+version: 1.0.0
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Só para lib/testing/md_visual.dart (harness de captura); não entra no app final.
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/logo.jpg
+  # Só Regular e Bold. O NotoSans-Italic.ttf (variável ou estático), registrado na mesma
+  # família, fez todo o texto sair em itálico no motor do Windows (teste de captura).
+  # Itálico pedido em TextStyle é sintetizado pelo motor.
+  fonts:
+    - family: NotoSans
+      fonts:
+        - asset: fonts/NotoSans-Regular.ttf
+          weight: 400
+        - asset: fonts/NotoSans-Bold.ttf
+          weight: 700
