@@ -39,7 +39,7 @@ Both refuse to start without them rather than falling back to a default.
 
 ## Platforms
 
-Android, iOS, macOS and web, for both apps. The iOS and macOS targets did not
+Android, iOS, macOS and web, for both apps, plus Windows for the admin panel (binary `milkdim_admin.exe`). The iOS and macOS targets did not
 exist — this was an Android-and-web prototype — and were generated with proper
 bundle identifiers rather than the `com.example.*` prefix `flutter create`
 leaves behind, which Apple refuses to provision at all.
