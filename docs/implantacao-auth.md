@@ -21,16 +21,16 @@ Essas mudanças não chegam às contas novas, e a fase 3 se recusa a rodar se en
 
 Num celular Android de teste, com internet:
 
-- [ ] Instalar `MilkDim_Funcionario_2026-11-19.apk`.
-- [ ] Entrar com código `0001` e a senha de sempre. Deve abrir a tela inicial.
-- [ ] Fazer um pedido de teste e finalizar com internet. Conferir no Controle novo que ele aparece.
-- [ ] Ligar o modo avião. Fazer outro pedido e finalizar. Deve aparecer
+- [x] Instalar `MilkDim_Funcionario_2026-11-19.apk`.
+- [x] Entrar com código `0001` e a senha de sempre. Deve abrir a tela inicial.
+- [x] Fazer um pedido de teste e finalizar com internet. Conferir no Controle novo que ele aparece.
+- [x] Ligar o modo avião. Fazer outro pedido e finalizar. Deve aparecer
       "Pedido salvo. Será enviado quando houver internet." e, na tela inicial,
       "1 pedido aguardando envio".
-- [ ] Tentar "Sair": deve ser recusado enquanto houver pedido aguardando.
-- [ ] Fechar e abrir o app ainda em modo avião: deve abrir direto na tela inicial.
-- [ ] Desligar o modo avião e tocar "Enviar agora". O aviso some e o pedido aparece no Controle.
-- [ ] Apagar os dois pedidos de teste pelo Controle novo.
+- [x] Tentar "Sair": deve ser recusado enquanto houver pedido aguardando.
+- [x] Fechar e abrir o app ainda em modo avião: deve abrir direto na tela inicial.
+- [x] Desligar o modo avião e tocar "Enviar agora". O aviso some e o pedido aparece no Controle.
+- [x] Apagar os dois pedidos de teste pelo Controle novo.
 
 No computador:
 
@@ -41,25 +41,25 @@ No computador:
 
 Para cada vendedor (0002 e 0003), **com o celular na internet**:
 
-- [ ] Abrir o app antigo uma última vez e anotar se ele mostra pedidos que não chegaram ao Controle.
-- [ ] Instalar o APK novo **por cima** (não desinstalar — os pedidos guardados no celular ficam).
-- [ ] Entrar com o código e a senha de sempre.
-- [ ] Esperar a tela inicial mostrar **0 pedidos aguardando envio**. Se mostrar N > 0, tocar
+- [x] Abrir o app antigo uma última vez e anotar se ele mostra pedidos que não chegaram ao Controle.
+- [x] Instalar o APK novo **por cima** (não desinstalar — os pedidos guardados no celular ficam).
+- [x] Entrar com o código e a senha de sempre.
+- [x] Esperar a tela inicial mostrar **0 pedidos aguardando envio**. Se mostrar N > 0, tocar
       "Enviar agora" e esperar zerar.
 
 Para as duas pessoas do Controle:
 
-- [ ] Celular: instalar `MilkDim_Controle_2026-11-19.apk` por cima e entrar com o usuário
-      (`kaiki` ou `milkdim`).
-- [ ] Computador: substituir a pasta do Controle antigo pela pasta nova. O executável tem o
+- [x] Celular: instalar `MilkDim_Controle_2026-11-19.apk` por cima e entrar com o código de
+      admin (0001, 0002 ou 700122) e a senha de vendedor.
+- [x] Computador: substituir a pasta do Controle antigo pela pasta nova. O executável tem o
       mesmo nome (`milkdim_admin.exe`), então o atalho continua funcionando. Guardar a pasta
       antiga como backup.
 
-## 3. Fechar o banco (fase 3)
+## 3. Fechar o banco (fase 3) — APLICADA em 19/11/2026, 9:3x (Brasília)
 
 Só depois de tudo acima. Avisar o Claude, que confere antes de aplicar:
 
-- `auth.users.last_sign_in_at` depois da instalação para 0002, 0003, `kaiki` e `milkdim`;
+- `auth.users.last_sign_in_at` depois da instalação para 0002 e 0003;
 - os vendedores batem com as contas (a própria fase 3 aborta se não baterem);
 - o SQL é mostrado antes, e só aplicado com OK.
 
