@@ -1,0 +1,15 @@
+# Texto sempre com LF no repositorio; .bat continua CRLF.
+* text=auto eol=lf
+*.bat text eol=crlf
+
+# Binarios: nunca converter.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.ttf binary
+*.jks binary
+*.keystore binary
+*.jar binary

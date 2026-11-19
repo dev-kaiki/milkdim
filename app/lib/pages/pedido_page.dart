@@ -414,24 +414,23 @@ class _PedidoPageState extends State<PedidoPage> {
         'assinatura_path': caminhoAss,
       };
 
-      // Salva local
-      await salvarPedidoLocal(pedido);
-
-      // Se finalizado, envia ao Supabase (e PRESERVA assinatura_path no SQLite)
-      if (status == 'finalizado') {
-        // 👇 Envie o pedido COMPLETO — o helper remove `assinatura_path` do payload do servidor
-        // e depois regrava o mesmo valor no SQLite ao consolidar o retorno.
-        // ignore: avoid_print
-        print('[PEDIDO] enviando ao Supabase (preservando assinatura_path local) ...');
-        await salvarPedidoSupabase(pedido);
-      }
+      // Grava no aparelho na hora (fora da trava: um pedido novo não pode
+      // estar num envio em andamento) e, se finalizado, tenta enviar. O helper
+      // remove `assinatura_path` do payload e o preserva no SQLite.
+      final r = await gravarPedidoEEnviar(pedido, novo: true);
 
       if (!mounted) return;
+      if (r == ResultadoGravacao.pendente) {
+        _showMsg('Pedido salvo. Será enviado quando houver internet.', isError: false);
+      }
       // ignore: avoid_print
-      print('[PEDIDO] concluído com sucesso -> pop("$status")');
+      print('[PEDIDO] concluído ($r) -> pop("$status")');
       Navigator.pop(context, status);
     } catch (e) {
-      _showMsg('Erro ao salvar pedido: $e');
+      // Só chega aqui se a gravação no aparelho falhou.
+      // ignore: avoid_print
+      print('[PEDIDO] erro ao salvar pedido: $e');
+      _showMsg('Erro ao salvar pedido.');
       if (mounted) setState(() => carregando = false);
     }
   }
@@ -765,7 +764,7 @@ class _PedidoPageState extends State<PedidoPage> {
         backgroundColor: isError ? milkdimDarkOrange : milkdimOrange,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
+        duration: Duration(seconds: isError ? 4 : 3),
       ),
     );
   }

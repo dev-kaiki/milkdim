@@ -20,6 +20,8 @@ dependencies:
 
   # Supabase (API, sync online)
   supabase_flutter: ^2.3.3
+  # Cliente HTTP com prazo para o Supabase (utils/http_prazo.dart)
+  http: ^1.2.0
 
   # PDF e impressão
   pdf: ^3.11.3

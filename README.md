@@ -28,17 +28,18 @@ depending on whatever fonts the phone happens to have.
 Needs a Supabase project. Credentials are **not** in the source — pass them at build time:
 
 ```bash
+cp dart_defines.example.json dart_defines.json   # then fill in your URL and anon key
 cd app     # or: cd admin
-flutter run \
-  --dart-define=SUPABASE_URL=https://your-project.supabase.co \
-  --dart-define=SUPABASE_ANON_KEY=your-anon-key
+flutter run --dart-define-from-file=../dart_defines.json
 ```
+
+`dart_defines.json` is git-ignored.
 
 Both refuse to start without them rather than falling back to a default.
 
 ## Platforms
 
-Android, iOS, macOS and web, for both apps. The iOS and macOS targets did not
+Android, iOS, macOS and web, for both apps, plus Windows for the admin panel (binary `milkdim_admin.exe`). The iOS and macOS targets did not
 exist — this was an Android-and-web prototype — and were generated with proper
 bundle identifiers rather than the `com.example.*` prefix `flutter create`
 leaves behind, which Apple refuses to provision at all.

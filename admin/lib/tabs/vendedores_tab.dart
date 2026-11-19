@@ -63,6 +63,15 @@ class _VendedoresTabState extends State<VendedoresTab> {
     return t.isEmpty ? null : t;
   }
 
+  /// Texto legivel para o admin: mensagem do servidor, nunca stack.
+  String _msgErro(Object e) {
+    if (e is PostgrestException) {
+      if (e.code == '42501') return 'Sem permissao para esta operacao.';
+      if (e.message.isNotEmpty) return e.message;
+    }
+    return '$e';
+  }
+
   // -------------------- DATA --------------------
 
   Future<void> _fetchVendedores() async {
@@ -107,15 +116,10 @@ class _VendedoresTabState extends State<VendedoresTab> {
 
   Future<void> _toggleAtivo(Vendedor v, bool value) async {
     try {
-      await Supabase.instance.client
-          .from('vendedores')
-          .update({'ativo': value})
-          .eq('id', v.id);
+      await _service.definirAtivoVendedor(v.codigo, value);
       await _fetchVendedores();
-    } on PostgrestException catch (e) {
-      _toast('Erro ao atualizar status: ${e.message}', error: true);
     } catch (e) {
-      _toast('Erro ao atualizar status: $e', error: true);
+      _toast('Erro ao atualizar status: ${_msgErro(e)}', error: true);
     }
   }
 
@@ -149,21 +153,91 @@ class _VendedoresTabState extends State<VendedoresTab> {
     if (confirm != true) return;
 
     try {
-      await Supabase.instance.client.from('vendedores').delete().eq('id', v.id);
+      await _service.excluirVendedor(v.codigo);
       _toast('Vendedor removido');
       await _fetchVendedores();
-    } on PostgrestException catch (e) {
-      _toast('Erro ao remover: ${e.message}', error: true);
     } catch (e) {
-      _toast('Erro ao remover: $e', error: true);
+      _toast('Erro ao remover: ${_msgErro(e)}', error: true);
     }
+  }
+
+  Future<void> _trocarSenha(Vendedor v) async {
+    final formKey = GlobalKey<FormState>();
+    final senhaCtrl = TextEditingController();
+    bool hidePwd = true;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (context, setStateSB) => AlertDialog(
+          backgroundColor: milkdimWhite,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          title: const Row(
+            children: [
+              Icon(Icons.lock_reset, color: milkdimOrange),
+              SizedBox(width: 6),
+              Text('Trocar senha',
+                  style: TextStyle(color: milkdimOrange, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: Form(
+            key: formKey,
+            autovalidateMode: AutovalidateMode.onUserInteraction,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Vendedor: ${v.nome} (${v.codigo})'),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: senhaCtrl,
+                  obscureText: hidePwd,
+                  decoration: InputDecoration(
+                    labelText: 'Nova senha *',
+                    prefixIcon: const Icon(Icons.lock_outline),
+                    filled: true,
+                    suffixIcon: IconButton(
+                      icon: Icon(hidePwd ? Icons.visibility : Icons.visibility_off),
+                      onPressed: () => setStateSB(() => hidePwd = !hidePwd),
+                    ),
+                  ),
+                  validator: (x) =>
+                      (x == null || x.length < 6) ? 'A senha precisa ter ao menos 6 caracteres.' : null,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogCtx).pop(false), child: const Text('Cancelar')),
+            FilledButton.icon(
+              icon: const Icon(Icons.save),
+              label: const Text('Salvar'),
+              style: FilledButton.styleFrom(backgroundColor: milkdimOrange, foregroundColor: milkdimWhite),
+              onPressed: () async {
+                if (!formKey.currentState!.validate()) return;
+                try {
+                  await _service.alterarSenhaVendedor(v.codigo, senhaCtrl.text);
+                  if (dialogCtx.mounted) Navigator.of(dialogCtx).pop(true);
+                } catch (e) {
+                  _toast('Erro ao trocar senha: ${_msgErro(e)}', error: true);
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+    senhaCtrl.dispose();
+    if (saved == true) _toast('Senha alterada');
   }
 
   Future<void> _showAddOrEditDialog({Vendedor? vendedor}) async {
     final formKey = GlobalKey<FormState>();
     final codigoCtrl   = TextEditingController(text: vendedor?.codigo ?? '');
     final nomeCtrl     = TextEditingController(text: vendedor?.nome ?? '');
-    final senhaCtrl    = TextEditingController(); // opcional ao editar
+    final senhaCtrl    = TextEditingController(); // so ao criar
     final anotacaoCtrl = TextEditingController(text: vendedor?.anotacao ?? '');
     bool ativo         = vendedor?.ativo ?? true;
     bool hidePwd       = true;
@@ -206,6 +280,7 @@ class _VendedoresTabState extends State<VendedoresTab> {
                         children: [
                           TextFormField(
                             controller: codigoCtrl,
+                            readOnly: vendedor != null,
                             textCapitalization: TextCapitalization.characters,
                             decoration: const InputDecoration(
                               labelText: 'Código *',
@@ -231,6 +306,7 @@ class _VendedoresTabState extends State<VendedoresTab> {
                           Expanded(
                             child: TextFormField(
                               controller: codigoCtrl,
+                              readOnly: vendedor != null,
                               textCapitalization: TextCapitalization.characters,
                               decoration: const InputDecoration(
                                 labelText: 'Código *',
@@ -254,24 +330,25 @@ class _VendedoresTabState extends State<VendedoresTab> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 10),
-                      TextFormField(
-                        controller: senhaCtrl,
-                        obscureText: hidePwd,
-                        decoration: InputDecoration(
-                          labelText: vendedor == null ? 'Senha *' : 'Nova senha (opcional)',
-                          prefixIcon: const Icon(Icons.lock_outline),
-                          filled: true,
-                          suffixIcon: IconButton(
-                            icon: Icon(hidePwd ? Icons.visibility : Icons.visibility_off),
-                            onPressed: () => setStateSB(() => hidePwd = !hidePwd),
+                      if (vendedor == null) ...[
+                        const SizedBox(height: 10),
+                        TextFormField(
+                          controller: senhaCtrl,
+                          obscureText: hidePwd,
+                          decoration: InputDecoration(
+                            labelText: 'Senha *',
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            filled: true,
+                            suffixIcon: IconButton(
+                              icon: Icon(hidePwd ? Icons.visibility : Icons.visibility_off),
+                              onPressed: () => setStateSB(() => hidePwd = !hidePwd),
+                            ),
                           ),
+                          validator: (v) => (v == null || v.length < 6)
+                              ? 'A senha precisa ter ao menos 6 caracteres.'
+                              : null,
                         ),
-                        validator: (v) {
-                          if (vendedor == null && (v == null || v.isEmpty)) return 'Informe a senha';
-                          return null;
-                        },
-                      ),
+                      ],
                       const SizedBox(height: 10),
                       TextFormField(
                         controller: anotacaoCtrl,
@@ -282,18 +359,20 @@ class _VendedoresTabState extends State<VendedoresTab> {
                         ),
                         maxLines: 2,
                       ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          const Text('Ativo', style: TextStyle(fontWeight: FontWeight.w600)),
-                          const Spacer(),
-                          Switch(
-                            value: ativo,
-                            activeColor: milkdimOrange,
-                            onChanged: (v) => setStateSB(() => ativo = v),
-                          ),
-                        ],
-                      ),
+                      if (vendedor == null) ...[
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            const Text('Ativo', style: TextStyle(fontWeight: FontWeight.w600)),
+                            const Spacer(),
+                            Switch(
+                              value: ativo,
+                              activeColor: milkdimOrange,
+                              onChanged: (v) => setStateSB(() => ativo = v),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -307,34 +386,25 @@ class _VendedoresTabState extends State<VendedoresTab> {
                 onPressed: () async {
                   if (!formKey.currentState!.validate()) return;
 
-                  final data = <String, dynamic>{
-                    'codigo'  : codigoCtrl.text.trim(),
-                    'nome'    : nomeCtrl.text.trim(),
-                    'ativo'   : ativo,
-                    'anotacao': _nullIfEmpty(anotacaoCtrl.text),
-                  };
-                  if (vendedor == null) {
-                    data['senha'] = senhaCtrl.text; // obrigatório ao criar
-                  } else if (senhaCtrl.text.isNotEmpty) {
-                    data['senha'] = senhaCtrl.text;  // opcional no update
-                  }
-
                   try {
                     if (vendedor == null) {
-                      await Supabase.instance.client.from('vendedores').insert(data);
+                      await _service.criarVendedor(
+                        codigo: codigoCtrl.text.trim(),
+                        nome: nomeCtrl.text.trim(),
+                        senha: senhaCtrl.text,
+                        anotacao: _nullIfEmpty(anotacaoCtrl.text),
+                        ativo: ativo,
+                      );
                     } else {
-                      await Supabase.instance.client.from('vendedores').update(data).eq('id', vendedor.id);
+                      // so nome e anotacao: mudar o codigo moveria os pedidos do vendedor
+                      await Supabase.instance.client.from('vendedores').update({
+                        'nome': nomeCtrl.text.trim(),
+                        'anotacao': _nullIfEmpty(anotacaoCtrl.text),
+                      }).eq('id', vendedor.id);
                     }
                     if (mounted) Navigator.of(dialogCtx).pop(true);
-                  } on PostgrestException catch (e) {
-                    // 23505 = unique_violation
-                    if ((e.code ?? '') == '23505') {
-                      _toast('Código já utilizado por outro vendedor.', error: true);
-                    } else {
-                      _toast('Erro ao salvar: ${e.message}', error: true);
-                    }
                   } catch (e) {
-                    _toast('Erro ao salvar: $e', error: true);
+                    _toast('Erro ao salvar: ${_msgErro(e)}', error: true);
                   }
                 },
                 style: FilledButton.styleFrom(backgroundColor: milkdimOrange, foregroundColor: milkdimWhite),
@@ -484,6 +554,9 @@ class _VendedoresTabState extends State<VendedoresTab> {
                           case 'editar':
                             _showAddOrEditDialog(vendedor: v);
                             break;
+                          case 'senha':
+                            _trocarSenha(v);
+                            break;
                           case 'ativar':
                             _toggleAtivo(v, !v.ativo);
                             break;
@@ -498,6 +571,13 @@ class _VendedoresTabState extends State<VendedoresTab> {
                           child: ListTile(
                             leading: Icon(Icons.edit),
                             title: Text('Editar'),
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'senha',
+                          child: ListTile(
+                            leading: Icon(Icons.lock_reset),
+                            title: Text('Trocar senha'),
                           ),
                         ),
                         PopupMenuItem(
