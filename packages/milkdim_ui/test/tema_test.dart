@@ -79,7 +79,7 @@ void main() {
       final forma = estilo.shape!.resolve({})! as RoundedRectangleBorder;
       expect(forma.borderRadius, BorderRadius.circular(12));
     }
-    expect(tema.elevatedButtonTheme.style!.backgroundColor!.resolve({}), MdColors.primary);
+    expect(tema.elevatedButtonTheme.style!.backgroundColor!.resolve({}), MdColors.primaryFill);
     expect(tema.elevatedButtonTheme.style!.elevation!.resolve({}), 0);
     expect(tema.outlinedButtonTheme.style!.foregroundColor!.resolve({}), MdColors.primaryStrong);
   });
