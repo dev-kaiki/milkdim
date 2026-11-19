@@ -6,6 +6,7 @@ Roteiro da troca, na ordem. Marque cada caixa ao terminar.
 
 - [x] Fase 1 aplicada no banco (contas dos 4 vendedores com a senha atual).
 - [x] Contas do Controle criadas: usuário `milkdim` e usuário `kaiki`, cada um com a senha que já usava.
+- [x] Vendedores 0001, 0002 e 700122 marcados como admin: entram no Controle com o código e a senha de vendedor.
 - [x] Builds gerados em `Downloads\GitHub\milkdim-builds`:
   - `MilkDim_Funcionario_2026-11-19.apk` — app dos vendedores
   - `MilkDim_Controle_2026-11-19.apk` — Controle no celular
@@ -33,7 +34,7 @@ Num celular Android de teste, com internet:
 
 No computador:
 
-- [ ] Abrir `milkdim_admin.exe` da pasta nova, entrar com `kaiki` e a senha de sempre.
+- [ ] Abrir `milkdim_admin.exe` da pasta nova e entrar com o código de um admin (0001, 0002 ou 700122) e a senha dele.
 - [ ] Ver as quatro abas carregando. Em Vendedores, abrir o 0001 e confirmar que o código não é editável.
 
 ## 2. Instalação para valer
