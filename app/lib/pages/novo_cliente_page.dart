@@ -2,11 +2,11 @@
 //
 // Cria cliente localmente no SQLite usando apenas colunas do schema.
 // (Opcional) descomente a chamada para enviar ao Supabase.
-// UI padronizada com cores MilkDim e pequenos validates.
+// Visual do milkdim_ui (tema + componentes) e pequenos validates.
 
 import 'package:flutter/material.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:sqflite/sqflite.dart';
-import '../utils/colors.dart';
 import '../utils/db.dart';
 // import '../utils/supabase_helper.dart'; // <- descomente se for usar inserirClienteSupabase()
 
@@ -92,153 +92,151 @@ class _NovoClientePageState extends State<NovoClientePage> {
   }
 
   void _msg(String m, {bool ok = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(m),
-        backgroundColor: ok ? milkdimOrange : milkdimDarkOrange,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        duration: const Duration(seconds: 2),
+    showMdSnack(context, m, tipo: ok ? MdTipo.sucesso : MdTipo.erro);
+  }
+
+  InputDecoration _dec(String label, {IconData? icon}) => InputDecoration(
+        labelText: label,
+        prefixIcon: icon != null ? Icon(icon) : null,
+      );
+
+  /// Dois campos lado a lado em tela larga; um embaixo do outro no celular.
+  Widget _par(Widget a, Widget b, {double? larguraB}) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (c.maxWidth < 480) {
+          return Column(children: [a, const SizedBox(height: MdSpace.md), b]);
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: a),
+            const SizedBox(width: MdSpace.md),
+            larguraB == null ? Expanded(child: b) : SizedBox(width: larguraB, child: b),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _secao(String titulo, List<Widget> campos) {
+    final filhos = <Widget>[];
+    for (final c in campos) {
+      if (filhos.isNotEmpty) filhos.add(const SizedBox(height: MdSpace.md));
+      filhos.add(c);
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: MdSpace.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          MdSectionHeader(titulo: titulo),
+          MdCard(child: Column(children: filhos)),
+        ],
       ),
     );
   }
 
-  InputDecoration _dec(String label, {IconData? icon}) => InputDecoration(
-    labelText: label,
-    prefixIcon: icon != null ? Icon(icon, color: milkdimOrange) : null,
-    border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
-    filled: true,
-    fillColor: milkdimYellow.withValues(alpha: 0.10),
-    labelStyle: const TextStyle(color: milkdimDarkOrange),
-  );
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: milkdimWhite,
-      appBar: AppBar(
-        backgroundColor: milkdimWhite,
-        elevation: 1,
-        iconTheme: const IconThemeData(color: milkdimOrange),
-        title: const Text('Novo Cliente', style: TextStyle(color: milkdimOrange)),
-      ),
+      appBar: AppBar(title: const Text('Novo Cliente')),
       body: SafeArea(
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: [
-                TextFormField(
-                  controller: _nome,
-                  decoration: _dec('Nome', icon: Icons.person),
-                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Informe o nome' : null,
-                ),
-                const SizedBox(height: 10),
-                TextFormField(
-                  controller: _nomeFantasia,
-                  decoration: _dec('Nome Fantasia', icon: Icons.store),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
+            padding: const EdgeInsets.all(MdSpace.lg),
+            child: MdContentWidth(
+              maxWidth: 720,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _secao('Identificação', [
+                    TextFormField(
+                      controller: _nome,
+                      decoration: _dec('Nome', icon: Icons.person_outline),
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Informe o nome' : null,
+                    ),
+                    TextFormField(
+                      controller: _nomeFantasia,
+                      decoration: _dec('Nome Fantasia', icon: Icons.storefront_outlined),
+                    ),
+                    _par(
+                      TextFormField(
                         controller: _cpfCnpj,
                         keyboardType: TextInputType.number,
-                        decoration: _dec('CPF/CNPJ', icon: Icons.badge),
+                        decoration: _dec('CPF/CNPJ', icon: Icons.badge_outlined),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextFormField(
+                      TextFormField(
                         controller: _inscEstadual,
-                        decoration: _dec('Insc. Estadual', icon: Icons.confirmation_number),
+                        decoration: _dec('Insc. Estadual', icon: Icons.confirmation_number_outlined),
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
+                  ]),
+                  _secao('Contato', [
+                    _par(
+                      TextFormField(
                         controller: _telefone,
                         keyboardType: TextInputType.phone,
-                        decoration: _dec('Telefone', icon: Icons.phone),
+                        decoration: _dec('Telefone', icon: Icons.phone_outlined),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextFormField(
+                      TextFormField(
                         controller: _whatsapp,
                         keyboardType: TextInputType.phone,
-                        decoration: _dec('WhatsApp', icon: Icons.sms),
+                        decoration: _dec('WhatsApp', icon: Icons.sms_outlined),
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                TextFormField(
-                  controller: _email,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: _dec('E-mail', icon: Icons.email),
-                ),
-                const SizedBox(height: 10),
-                TextFormField(
-                  controller: _endereco,
-                  decoration: _dec('Endereço', icon: Icons.home),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
+                    TextFormField(
+                      controller: _email,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: _dec('E-mail', icon: Icons.email_outlined),
+                    ),
+                  ]),
+                  _secao('Endereço', [
+                    TextFormField(
+                      controller: _endereco,
+                      decoration: _dec('Endereço', icon: Icons.home_outlined),
+                    ),
+                    _par(
+                      TextFormField(
                         controller: _cidade,
-                        decoration: _dec('Cidade', icon: Icons.location_city),
+                        decoration: _dec('Cidade', icon: Icons.location_city_outlined),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    SizedBox(
-                      width: 130,
-                      child: TextFormField(
+                      TextFormField(
                         controller: _cep,
                         keyboardType: TextInputType.number,
-                        decoration: _dec('CEP', icon: Icons.map),
+                        decoration: _dec('CEP', icon: Icons.map_outlined),
                       ),
+                      larguraB: 180,
                     ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                TextFormField(
-                  controller: _anotacao,
-                  maxLines: 2,
-                  decoration: _dec('Anotação', icon: Icons.notes),
-                ),
-                const SizedBox(height: 22),
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: milkdimOrange,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ]),
+                  _secao('Observações', [
+                    TextFormField(
+                      controller: _anotacao,
+                      maxLines: 2,
+                      decoration: _dec('Anotação', icon: Icons.notes),
                     ),
-                    onPressed: _salvando ? null : _salvar,
-                    icon: _salvando
-                        ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      ),
-                    )
-                        : const Icon(Icons.save, color: Colors.white),
-                    label: const Text('Salvar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  ]),
+                  const SizedBox(height: MdSpace.sm),
+                  SizedBox(
+                    height: 56,
+                    child: FilledButton.icon(
+                      onPressed: _salvando ? null : _salvar,
+                      icon: _salvando
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                color: MdColors.textMuted,
+                                strokeWidth: 2.5,
+                              ),
+                            )
+                          : const Icon(Icons.save_outlined),
+                      label: const Text('Salvar'),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

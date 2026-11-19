@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 // SQLite (mobile & desktop)
@@ -11,7 +12,6 @@ import 'package:sqflite/sqflite.dart'; // expõe 'databaseFactory'
 import 'package:sqflite_common_ffi/sqflite_ffi.dart'; // sqfliteFfiInit + databaseFactoryFfi
 
 import 'utils/auth.dart';
-import 'utils/colors.dart';
 import 'utils/http_prazo.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
@@ -44,18 +44,16 @@ void main() async {
     runApp(const MilkDimApp());
   } catch (e) {
     debugPrint('❌ Erro ao inicializar Supabase: $e');
-    runApp(const MaterialApp(
-      home: Scaffold(
-        backgroundColor: Colors.white,
-        body: Center(
-          child: Text(
-            'Erro ao inicializar Supabase!\nVerifique conexão e credenciais.',
-            style: TextStyle(
-              color: Colors.red,
-              fontSize: 19,
-              fontWeight: FontWeight.bold,
+    runApp(MaterialApp(
+      theme: buildMilkdimTheme(),
+      home: const Scaffold(
+        body: Padding(
+          padding: EdgeInsets.all(MdSpace.xl),
+          child: Center(
+            child: MdBanner(
+              tipo: MdTipo.erro,
+              texto: 'Erro ao inicializar Supabase!\nVerifique conexão e credenciais.',
             ),
-            textAlign: TextAlign.center,
           ),
         ),
       ),
@@ -110,57 +108,7 @@ class _MilkDimAppState extends State<MilkDimApp> {
     return MaterialApp(
       navigatorKey: _navigatorKey,
       title: 'MilkDim Alimentos',
-      theme: ThemeData(
-        primaryColor: milkdimOrange,
-        scaffoldBackgroundColor: milkdimWhite,
-        colorScheme: ColorScheme.fromSwatch().copyWith(
-          primary: milkdimOrange,
-          secondary: milkdimDarkOrange,
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: milkdimWhite,
-          elevation: 1,
-          iconTheme: IconThemeData(color: milkdimOrange),
-          titleTextStyle: TextStyle(
-            color: milkdimOrange,
-            fontWeight: FontWeight.bold,
-            fontSize: 22,
-          ),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: milkdimOrange,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            textStyle: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 17,
-            ),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: milkdimDarkOrange,
-            side: const BorderSide(color: milkdimOrange, width: 1.2),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            textStyle: const TextStyle(
-              fontWeight: FontWeight.w600,
-              fontSize: 15,
-            ),
-          ),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: milkdimYellow.withOpacity(0.10),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-          labelStyle: const TextStyle(color: milkdimDarkOrange),
-        ),
-      ),
+      theme: buildMilkdimTheme(),
       debugShowCheckedModeBanner: false,
       home: _rota == RotaInicial.home ? const _AberturaComSessao() : const LoginPage(),
     );
@@ -211,8 +159,7 @@ class _AberturaComSessaoState extends State<_AberturaComSessao> {
   Widget build(BuildContext context) {
     if (!_carregado) {
       return const Scaffold(
-        backgroundColor: milkdimWhite,
-        body: Center(child: CircularProgressIndicator(color: milkdimOrange)),
+        body: Center(child: CircularProgressIndicator()),
       );
     }
     final v = _vendedor;
