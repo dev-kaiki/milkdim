@@ -23,8 +23,9 @@ void main() {
       home: Scaffold(
         body: PedidosTab(carregar: () async => [
               _p(1, 'salvo', 'Cliente Aberto'),
-              _p(2, 'finalizado', 'Cliente Pronto'),
+              _p(2, 'finalizado', 'Cliente Entregue'),
               _p(3, 'cancelado', 'Cliente Cancelado'),
+              _p(4, 'pronto', 'Cliente Pronto'),
             ]),
       ),
     ));
@@ -32,19 +33,51 @@ void main() {
     expect(find.text('Cliente Aberto'), findsOneWidget);
     expect(find.text('Cliente Pronto'), findsOneWidget);
 
-    await tester.tap(find.descendant(of: find.byType(SegmentedButton<String>), matching: find.text('Em aberto')));
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Em aberto'));
     await tester.pumpAndSettle();
     expect(find.text('Cliente Aberto'), findsOneWidget);
     expect(find.text('Cliente Pronto'), findsNothing);
 
-    await tester.tap(find.text('Cancelados'));
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Cancelados'));
     await tester.pumpAndSettle();
     expect(find.text('Cliente Cancelado'), findsOneWidget);
     expect(find.text('Cliente Aberto'), findsNothing);
 
-    await tester.tap(find.text('Todos'));
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Todos'));
     await tester.pumpAndSettle();
     expect(find.text('Cliente Pronto'), findsOneWidget);
+  });
+
+  testWidgets('filtro Prontos e Entregues', (tester) async {
+    tester.view.physicalSize = const Size(412, 892);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      theme: buildMilkdimTheme(),
+      home: Scaffold(
+        body: PedidosTab(carregar: () async => [
+              _p(1, 'salvo', 'Cliente Aberto'),
+              _p(2, 'finalizado', 'Cliente Entregue'),
+              _p(4, 'pronto', 'Cliente Pronto'),
+            ]),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    for (final r in ['Todos', 'Em aberto', 'Prontos', 'Entregues', 'Cancelados']) {
+      expect(find.widgetWithText(ChoiceChip, r), findsOneWidget);
+    }
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Prontos'));
+    await tester.pumpAndSettle();
+    expect(find.text('Cliente Pronto'), findsOneWidget);
+    expect(find.text('Cliente Entregue'), findsNothing);
+    expect(find.text('Cliente Aberto'), findsNothing);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Entregues'));
+    await tester.pumpAndSettle();
+    expect(find.text('Cliente Entregue'), findsOneWidget);
+    expect(find.text('Cliente Pronto'), findsNothing);
   });
 
   testWidgets('tocar no pedido abre o detalhe com Apagar', (tester) async {

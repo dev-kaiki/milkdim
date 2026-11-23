@@ -3,6 +3,7 @@
 // Detalhe do pedido (folha de baixo), usado pelas abas Pedidos e Produção:
 // dados formatados (`Pedido`) e um bloco com **todas as colunas** (JSON bruto).
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
@@ -40,11 +41,12 @@ String fmtMoedaPedido(num? v) {
   return 'R\$ $s';
 }
 
-/// Em aberto = info, finalizado = sucesso, cancelado = neutro, demais = atenção.
+/// Em aberto = info, pronto e entregue = sucesso, cancelado = neutro, demais = atenção.
 MdTipo tipoDaSituacao(String status) {
   switch (status) {
     case 'salvo':
       return MdTipo.info;
+    case 'pronto':
     case 'finalizado':
       return MdTipo.sucesso;
     case 'cancelado':
@@ -303,6 +305,16 @@ class _FolhaDetalhe extends StatelessWidget {
               ),
             ),
 
+            // ASSINATURAS
+            const SizedBox(height: MdSpace.lg),
+            const Divider(),
+            const SizedBox(height: MdSpace.md),
+            const MdSectionHeader(titulo: 'Assinaturas'),
+            _infoRowWidget(context, 'Assinatura do pedido',
+                _AssinaturaImagem(bytes: ped.assinaturaPedidoBytes, chave: 'pedido')),
+            _infoRowWidget(context, 'Assinatura da entrega',
+                _AssinaturaImagem(bytes: ped.assinaturaBytes, chave: 'entrega')),
+
             // CLIENTE
             const SizedBox(height: MdSpace.lg),
             const Divider(),
@@ -356,6 +368,12 @@ class _FolhaDetalhe extends StatelessWidget {
             _infoRow(context, 'Alterado em', ped.alteradoEm),
             _infoRow(
               context,
+              'Pronto em',
+              ped.prontoEm == null ? null : _dateFmt.format(ped.prontoEm!.toLocal()),
+            ),
+            _infoRow(context, 'Pronto por', ped.prontoPor),
+            _infoRow(
+              context,
               'Finalizado em',
               ped.finalizadoEm == null ? null : _dateFmt.format(ped.finalizadoEm!.toLocal()),
             ),
@@ -390,6 +408,36 @@ class _FolhaDetalhe extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// Assinatura como imagem; "—" quando falta (ou não decodifica).
+class _AssinaturaImagem extends StatelessWidget {
+  final Uint8List? bytes;
+  final String chave;
+
+  const _AssinaturaImagem({required this.bytes, required this.chave});
+
+  @override
+  Widget build(BuildContext context) {
+    final b = bytes;
+    if (b == null || b.isEmpty) return const Text('—');
+    return Container(
+      key: ValueKey('assinatura_$chave'),
+      constraints: const BoxConstraints(maxWidth: 260, maxHeight: 110),
+      decoration: BoxDecoration(
+        color: MdColors.surface,
+        borderRadius: BorderRadius.circular(MdRadius.field),
+        border: Border.all(color: MdColors.border),
+      ),
+      padding: const EdgeInsets.all(MdSpace.sm),
+      child: Image.memory(
+        b,
+        fit: BoxFit.contain,
+        alignment: Alignment.centerLeft,
+        errorBuilder: (_, __, ___) => const Text('—'),
+      ),
     );
   }
 }

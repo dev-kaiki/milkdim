@@ -27,6 +27,15 @@ class PedidosTab extends StatefulWidget {
   State<PedidosTab> createState() => _PedidosTabState();
 }
 
+/// Filtro de situação: (valor = status no servidor, rótulo).
+const _filtros = [
+  ('todos', 'Todos'),
+  ('salvo', 'Em aberto'),
+  ('pronto', 'Prontos'),
+  ('finalizado', 'Entregues'),
+  ('cancelado', 'Cancelados'),
+];
+
 class _PedidosTabState extends State<PedidosTab> {
   final _searchCtrl = TextEditingController();
 
@@ -68,7 +77,7 @@ class _PedidosTabState extends State<PedidosTab> {
               'cliente_cidade, cliente_telefone, cliente_whatsapp, cliente_email, cliente_cpf_cnpj, '
               'status, datahora, total, vendedor_codigo, vendedor_nome, '
               'numero, produtos, enviado_em, alterado_em, finalizado_em, finalizado_por, '
-              'finalizado_manual, cancelado_em, cancelado_por',
+              'finalizado_manual, cancelado_em, cancelado_por, pronto_em, pronto_por',
         )
             .order('datahora', ascending: false);
 
@@ -381,26 +390,20 @@ class _PedidosTabState extends State<PedidosTab> {
         // Situação
         Padding(
           padding: const EdgeInsets.fromLTRB(MdSpace.lg, 0, MdSpace.lg, MdSpace.sm),
-          child: SegmentedButton<String>(
-            showSelectedIcon: false,
-            style: SegmentedButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: MdSpace.sm),
-              textStyle: Theme.of(context).textTheme.labelLarge,
-            ),
-            segments: const [
-              ButtonSegment(value: 'todos', label: Text('Todos', maxLines: 1, softWrap: false)),
-              ButtonSegment(value: 'salvo', label: Text('Em aberto', maxLines: 1, softWrap: false)),
-              ButtonSegment(
-                  value: 'finalizado', label: Text('Finalizados', maxLines: 1, softWrap: false)),
-              ButtonSegment(
-                  value: 'cancelado', label: Text('Cancelados', maxLines: 1, softWrap: false)),
+          child: Wrap(
+            spacing: MdSpace.sm,
+            runSpacing: MdSpace.xs,
+            children: [
+              for (final (valor, rotulo) in _filtros)
+                ChoiceChip(
+                  label: Text(rotulo),
+                  selected: (_situacao ?? 'todos') == valor,
+                  onSelected: (_) {
+                    _situacao = valor == 'todos' ? null : valor;
+                    _aplicarFiltros();
+                  },
+                ),
             ],
-            selected: {_situacao ?? 'todos'},
-            onSelectionChanged: (v) {
-              _situacao = v.first == 'todos' ? null : v.first;
-              _aplicarFiltros();
-            },
           ),
         ),
 

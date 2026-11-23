@@ -25,12 +25,16 @@ String haTempo(DateTime? desde, DateTime agora) {
   return dias == 1 ? 'há 1 dia' : 'há $dias dias';
 }
 
-/// Produção: o que fabricar (total por produto) e os pedidos em aberto, com
-/// Finalizar (manual) e Cancelar. Atualiza sozinha a cada [intervalo].
+/// Produção: o que fabricar (total por produto), os pedidos em aberto (com
+/// "Produção concluída" e Cancelar) e os prontos para entrega (com "Marcar
+/// como entregue" e Cancelar). Atualiza sozinha a cada [intervalo].
 class ProducaoTab extends StatefulWidget {
   /// Pontos de teste; nulos (padrão) usam o [SupabaseService].
   @visibleForTesting
   final Future<List<Pedido>> Function()? carregar;
+  /// Recebe o id e o `alterado_em` bruto da linha (para o servidor conferir).
+  @visibleForTesting
+  final Future<void> Function(int id, String? alteradoEmBruto)? marcarPronto;
   @visibleForTesting
   final Future<void> Function(int id)? finalizar;
   @visibleForTesting
@@ -45,6 +49,7 @@ class ProducaoTab extends StatefulWidget {
   const ProducaoTab({
     super.key,
     this.carregar,
+    this.marcarPronto,
     this.finalizar,
     this.cancelar,
     this.buscarDetalhe,
@@ -126,7 +131,39 @@ class _ProducaoTabState extends State<ProducaoTab> {
 
   // -------------------- ações --------------------
 
-  Future<void> _confirmarFinalizar(Pedido p) async {
+  Future<void> _confirmarPronto(Pedido p) async {
+    if (_ocupados.contains(p.id)) return;
+    setState(() => _ocupados.add(p.id));
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const TituloDialogo(
+          icone: Icons.inventory_2_outlined,
+          texto: 'Marcar como pronto para entrega?',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Voltar')),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) {
+      if (mounted) setState(() => _ocupados.remove(p.id));
+      return;
+    }
+    await _executar(
+      p,
+      (id) => widget.marcarPronto != null
+          ? widget.marcarPronto!(id, p.alteradoEmBruto)
+          : _service.marcarPronto(id, alteradoEmBruto: p.alteradoEmBruto),
+      'Pedido pronto para entrega.',
+    );
+  }
+
+  Future<void> _confirmarEntregue(Pedido p) async {
     if (_ocupados.contains(p.id)) return;
     setState(() => _ocupados.add(p.id));
     final ok = await showDialog<bool>(
@@ -134,7 +171,7 @@ class _ProducaoTabState extends State<ProducaoTab> {
       builder: (ctx) => AlertDialog(
         title: TituloDialogo(
           icone: Icons.check_circle_outline,
-          texto: 'Finalizar pedido ${_rotuloNumero(p)}?',
+          texto: 'Marcar pedido ${_rotuloNumero(p)} como entregue?',
         ),
         content: const Text(
           'Use só se o pedido já foi entregue. Se o vendedor finalizar com assinatura depois, vale a dele.',
@@ -143,7 +180,7 @@ class _ProducaoTabState extends State<ProducaoTab> {
           TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Voltar')),
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Finalizar'),
+            child: const Text('Marcar como entregue'),
           ),
         ],
       ),
@@ -155,7 +192,7 @@ class _ProducaoTabState extends State<ProducaoTab> {
     await _executar(
       p,
       widget.finalizar ?? _service.finalizarManual,
-      'Pedido finalizado.',
+      'Pedido marcado como entregue.',
     );
   }
 
@@ -264,6 +301,7 @@ class _ProducaoTabState extends State<ProducaoTab> {
   }
 
   Widget _cartao(Pedido p) {
+    final pronto = p.status == 'pronto';
     final tt = Theme.of(context).textTheme;
     final agora = DateTime.now();
     final vendedor = (p.vendedorNome ?? '').trim().isNotEmpty
@@ -287,7 +325,7 @@ class _ProducaoTabState extends State<ProducaoTab> {
                     style: tt.titleMedium, maxLines: 1, overflow: TextOverflow.ellipsis),
               ),
               const SizedBox(width: MdSpace.sm),
-              Text(haTempo(p.enviadoEm, agora),
+              Text(pronto ? 'pronto ${haTempo(p.prontoEm, agora)}' : haTempo(p.enviadoEm, agora),
                   style: tt.bodyMedium!.copyWith(color: MdColors.textMuted)),
             ],
           ),
@@ -302,7 +340,14 @@ class _ProducaoTabState extends State<ProducaoTab> {
           ],
           const SizedBox(height: MdSpace.sm),
           Text(_itensResumo(p), style: tt.bodyMedium, maxLines: 3, overflow: TextOverflow.ellipsis),
-          if (p.alteradoDepoisDeEnviar) ...[
+          if (!pronto && p.alteradoDepoisDePronto) ...[
+            const SizedBox(height: MdSpace.sm),
+            const MdStatusChip(
+              tipo: MdTipo.atencao,
+              icone: Icons.edit_outlined,
+              texto: 'alterado depois de pronto',
+            ),
+          ] else if (!pronto && p.alteradoDepoisDeEnviar) ...[
             const SizedBox(height: MdSpace.sm),
             MdStatusChip(
               tipo: MdTipo.atencao,
@@ -316,9 +361,11 @@ class _ProducaoTabState extends State<ProducaoTab> {
             runSpacing: MdSpace.sm,
             children: [
               FilledButton.icon(
-                onPressed: ocupado ? null : () => _confirmarFinalizar(p),
-                icon: const Icon(Icons.check_rounded),
-                label: const Text('Finalizar'),
+                onPressed: ocupado
+                    ? null
+                    : () => pronto ? _confirmarEntregue(p) : _confirmarPronto(p),
+                icon: Icon(pronto ? Icons.local_shipping_outlined : Icons.check_rounded),
+                label: Text(pronto ? 'Marcar como entregue' : 'Produção concluída'),
               ),
               OutlinedButton(
                 style: OutlinedButton.styleFrom(
@@ -335,23 +382,39 @@ class _ProducaoTabState extends State<ProducaoTab> {
     );
   }
 
-  Widget _listaPedidos() {
-    if (_pedidos.isEmpty) {
-      return const MdEmptyState(
+  Widget _lista(List<Pedido> pedidos, {required String vazioTitulo, required String vazioTexto}) {
+    if (pedidos.isEmpty) {
+      return MdEmptyState(
         icone: Icons.inventory_2_outlined,
-        titulo: 'Nenhum pedido em aberto',
-        texto: 'Quando um vendedor enviar um pedido, ele aparece aqui.',
+        titulo: vazioTitulo,
+        texto: vazioTexto,
       );
     }
     return Column(
       children: [
-        for (var i = 0; i < _pedidos.length; i++) ...[
+        for (var i = 0; i < pedidos.length; i++) ...[
           if (i > 0) const SizedBox(height: MdSpace.md),
-          _cartao(_pedidos[i]),
+          _cartao(pedidos[i]),
         ],
       ],
     );
   }
+
+  List<Pedido> get _abertos => _pedidos.where((p) => p.status == 'salvo').toList();
+  List<Pedido> get _prontos => _pedidos.where((p) => p.status == 'pronto').toList();
+
+  /// As duas seções: pedidos em aberto e prontos para entrega.
+  List<Widget> _secoes() => [
+        _cabecalhoPedidos(),
+        _lista(_abertos,
+            vazioTitulo: 'Nenhum pedido em aberto',
+            vazioTexto: 'Quando um vendedor enviar um pedido, ele aparece aqui.'),
+        const SizedBox(height: MdSpace.lg),
+        const MdSectionHeader(titulo: 'Prontos para entrega'),
+        _lista(_prontos,
+            vazioTitulo: 'Nenhum pedido pronto',
+            vazioTexto: 'Quando a produção concluir um pedido, ele aparece aqui.'),
+      ];
 
   Widget _cabecalhoPedidos() => MdSectionHeader(
         titulo: 'Pedidos em aberto',
@@ -413,7 +476,7 @@ class _ProducaoTabState extends State<ProducaoTab> {
                     onRefresh: _carregar,
                     child: ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      children: [erro, _cabecalhoPedidos(), _listaPedidos()],
+                      children: [erro, ..._secoes()],
                     ),
                   ),
                 ),
@@ -430,8 +493,7 @@ class _ProducaoTabState extends State<ProducaoTab> {
               erro,
               _totais(),
               const SizedBox(height: MdSpace.lg),
-              _cabecalhoPedidos(),
-              _listaPedidos(),
+              ..._secoes(),
             ],
           ),
         );

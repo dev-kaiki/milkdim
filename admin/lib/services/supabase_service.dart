@@ -53,6 +53,8 @@ String mensagemErroRpcPedido(String? code) {
   switch (code) {
     case '42501':
       return 'Sem permissão para essa ação.';
+    case 'MD001':
+      return 'O pedido mudou depois que a tela foi atualizada. Atualize e confira.';
     case '55000':
       return 'Esse pedido não está mais em aberto.';
     case 'P0002':
@@ -142,6 +144,8 @@ class SupabaseService {
     'produtos'              : m['produtos'],
     'enviado_em'            : m['enviado_em'],
     'alterado_em'           : m['alterado_em'],
+    'pronto_em'             : m['pronto_em'],
+    'pronto_por'            : m['pronto_por'],
     'finalizado_em'         : m['finalizado_em'],
     'finalizado_por'        : m['finalizado_por'],
     'finalizado_manual'     : m['finalizado_manual'],
@@ -392,14 +396,14 @@ class SupabaseService {
     );
   }
 
-  /// Pedidos em aberto, do mais antigo enviado para o mais novo.
+  /// Pedidos em aberto ('salvo') e prontos para entrega ('pronto'), do mais antigo enviado para o mais novo.
   /// (`select()` traz todas as colunas, inclusive as de situacao/auditoria.)
   Future<List<Pedido>> buscarPedidosEmAberto() async {
     try {
       final List<dynamic> raw = await _sb
           .from('pedidos')
           .select()
-          .eq('status', 'salvo')
+          .inFilter('status', ['salvo', 'pronto'])
           .order('enviado_em', ascending: true);
       return raw
           .map((e) => Pedido.fromMap(_pedidoDbToModel(JsonMap.from(e as Map))))
@@ -409,13 +413,24 @@ class SupabaseService {
     }
   }
 
+  /// Parâmetros da RPC `pedido_marcar_pronto`. [alteradoEmBruto] é o texto de
+  /// `alterado_em` exatamente como veio na linha (null se a linha tinha null).
+  static Map<String, dynamic> paramsMarcarPronto(int id, String? alteradoEmBruto) =>
+      {'p_id': id, 'p_alterado_em': alteradoEmBruto};
+
+  Future<void> marcarPronto(int id, {String? alteradoEmBruto}) => _rpcPedido(
+        'pedido_marcar_pronto',
+        id,
+        params: paramsMarcarPronto(id, alteradoEmBruto),
+      );
+
   Future<void> finalizarManual(int id) => _rpcPedido('pedido_finalizar_manual', id);
 
   Future<void> cancelarPedido(int id) => _rpcPedido('pedido_cancelar', id);
 
-  Future<void> _rpcPedido(String fn, int id) async {
+  Future<void> _rpcPedido(String fn, int id, {Map<String, dynamic>? params}) async {
     try {
-      await _sb.rpc(fn, params: {'p_id': id});
+      await _sb.rpc(fn, params: params ?? {'p_id': id});
     } on PostgrestException catch (e) {
       throw RepoFailure(mensagemErroRpcPedido(e.code));
     } catch (e) {
