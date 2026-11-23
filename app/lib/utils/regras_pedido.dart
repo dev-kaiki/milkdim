@@ -1,4 +1,6 @@
 // Regras puras do fluxo do pedido (sem Flutter nem banco), usadas pelas telas.
+import 'dart:convert';
+
 import 'db.dart' show buscarUltimoNumeroPedido, jaChegouAoServidor, kErroNumeroEmUso, numeroUsadoNoAparelho;
 import 'supabase_helper.dart' show ResultadoGravacao, kPrazoConsultaNumero, numeroLivreNoServidor;
 
@@ -15,8 +17,20 @@ bool numeroEditavel(Map<String, dynamic> p) =>
 /// O que o botão de remover do pedido faz.
 enum AcaoRemover { cancelar, apagarDoAparelho, nenhuma }
 
+/// Pronto para entrega: a fábrica concluiu a produção (só o Controle grava).
+bool estaPronto(Map p) => _status(p) == 'pronto';
+
+/// Aba "Em aberto" de Meus pedidos: `salvo` e `pronto`.
+bool estaEmAberto(Map p) {
+  final st = _status(p);
+  return st == 'salvo' || st == 'pronto';
+}
+
+String _status(Map p) => (p['status'] ?? '').toString().trim().toLowerCase();
+
+/// `pronto` conta como `salvo` (em aberto): cancelar, nunca apagar.
 AcaoRemover acaoRemover(Map<String, dynamic> p) {
-  if ((p['status'] ?? '').toString().toLowerCase() != 'salvo') return AcaoRemover.nenhuma;
+  if (!estaEmAberto(p)) return AcaoRemover.nenhuma;
   if (_verdadeiro(p['so_local'])) return AcaoRemover.apagarDoAparelho;
   if (jaChegouAoServidor(p) || _verdadeiro(p['pendente_envio'])) {
     return AcaoRemover.cancelar;
@@ -91,3 +105,71 @@ Future<String?> proximoNumeroLivreDoVendedor(String vendedorCodigo,
     return numeroLivreNoServidor(n, vendedorCodigo, prazo: resta);
   });
 }
+
+// ---------------------- Assinatura do pedido ----------------------
+
+double _numero(Object? v) {
+  if (v is num) return v.toDouble();
+  return double.tryParse('${v ?? ''}'.trim().replaceAll(',', '.')) ?? 0.0;
+}
+
+int? _inteiro(Object? v) => v is num ? v.toInt() : int.tryParse('${v ?? ''}'.trim());
+
+/// Itens comparáveis: nome, quantidade e preço de cada um, em ordem fixa
+/// (a ordem da lista e o subtotal não contam). `produtos` pode ser a lista ou
+/// o texto JSON do SQLite. null se não der para ler.
+List<String>? _itensComparaveis(Object? produtos) {
+  Object? lista = produtos;
+  if (lista is String) {
+    try {
+      lista = jsonDecode(lista);
+    } catch (_) {
+      return null;
+    }
+  }
+  if (lista == null) return const [];
+  if (lista is! List) return null;
+  final out = <String>[];
+  for (final it in lista) {
+    if (it is! Map) return null;
+    out.add('${(it['nome'] ?? '').toString().trim()}'
+        '|${_numero(it['quantidade']).toStringAsFixed(3)}'
+        '|${_numero(it['preco']).toStringAsFixed(2)}');
+  }
+  out.sort();
+  return out;
+}
+
+/// Os itens das duas versões são os mesmos (nome, quantidade e preço)?
+/// Ilegível de qualquer lado: não.
+bool mesmosItens(Object? antes, Object? depois) {
+  final a = _itensComparaveis(antes);
+  final b = _itensComparaveis(depois);
+  if (a == null || b == null || a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// Mudaram os itens (nome, quantidade, preço), o `cliente_id` ou o
+/// `cliente_nome`? É o que tira um pedido de `pronto` no servidor.
+/// O nome é comparado exatamente como vai ao servidor (null e '' diferem):
+/// na dúvida conta como mudança, que só pede uma assinatura a mais.
+bool itensOuClienteMudaram(Map antes, Map depois) =>
+    !mesmosItens(antes['produtos'], depois['produtos']) ||
+    _inteiro(antes['cliente_id']) != _inteiro(depois['cliente_id']) ||
+    antes['cliente_nome']?.toString() != depois['cliente_nome']?.toString();
+
+bool _temAssinatura(Object? v) =>
+    v is List ? v.isNotEmpty : (v != null && '$v'.trim().isNotEmpty);
+
+/// Salvar [editado] pede a assinatura do pedido de novo?
+/// - [original] é rascunho só do aparelho (`so_local = 1`): o envio pede;
+/// - [original] não tem assinatura do pedido (nem bytes nem arquivo);
+/// - mudaram os itens ou o cliente ([itensOuClienteMudaram]).
+bool precisaAssinaturaDoPedido({required Map original, required Map editado}) =>
+    _verdadeiro(original['so_local']) ||
+    !(_temAssinatura(original['assinatura_pedido']) ||
+        _temAssinatura(original['assinatura_pedido_path'])) ||
+    itensOuClienteMudaram(original, editado);

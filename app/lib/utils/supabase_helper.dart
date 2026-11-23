@@ -253,7 +253,8 @@ Future<void> _sincronizarPedidos(String vendedorCodigo) async {
 }
 
 /// Colunas de auditoria que só o servidor preenche. O app guarda uma cópia em
-/// texto (vinda do eco/sync) e nunca as envia.
+/// texto (vinda do eco/sync) e nunca as envia. `pronto_em`/`pronto_por` só a
+/// RPC do Controle grava.
 const List<String> _colunasAuditoria = [
   'enviado_em',
   'alterado_em',
@@ -262,6 +263,8 @@ const List<String> _colunasAuditoria = [
   'finalizado_manual',
   'cancelado_em',
   'cancelado_por',
+  'pronto_em',
+  'pronto_por',
 ];
 
 /// `finalizado_manual` guardado como texto: 'true' / 'false' (ou null).
@@ -395,6 +398,7 @@ Future<void> aplicarPedidosRemotos(List<Map<String, dynamic>> remotos) async {
         'cliente_id': (ped['cliente_id'] is int) ? ped['cliente_id'] : null,
         'cliente_nome': ped['cliente_nome']?.toString(),
         'assinatura': assinaturaHex,
+        'assinatura_pedido': _toHex0x(ped['assinatura_pedido']),
         'cliente_telefone': ped['cliente_telefone']?.toString(),
         'cliente_endereco': ped['cliente_endereco']?.toString(),
         'cliente_cidade': ped['cliente_cidade']?.toString(),
@@ -410,7 +414,8 @@ Future<void> aplicarPedidosRemotos(List<Map<String, dynamic>> remotos) async {
         'pendente_envio': 0,
         // id_aparelho, so_local = 0, erro_envio = null e cópias de auditoria.
         ..._camposDoServidor(ped, idAparelhoLocal),
-        // `assinatura_path` não existe no servidor; ficará null ao sincronizar tudo.
+        // `assinatura_path` e `assinatura_pedido_path` não existem no servidor;
+        // ficarão null ao sincronizar tudo (os bytes vêm do servidor).
       };
 
       batch.insert('pedidos', map, conflictAlgorithm: ConflictAlgorithm.replace);
@@ -711,18 +716,26 @@ Future<Map<String, dynamic>> _garantirIdAparelho(Map<String, dynamic> pedido) as
 }
 
 /// Pedido gravado só com o caminho da assinatura (sem os bytes, ex.: salvo
-/// antes desta versão): lê o arquivo para o envio levar a assinatura. Sem
-/// arquivo (ou ilegível), segue sem assinatura.
+/// antes desta versão): lê o arquivo para o envio levar a assinatura. Vale
+/// para as duas: a da entrega (`assinatura`/`assinatura_path`) e a do pedido
+/// (`assinatura_pedido`/`assinatura_pedido_path`). Sem arquivo (ou ilegível),
+/// segue sem aquela assinatura.
 Future<Map<String, dynamic>> _comAssinaturaDoArquivo(Map<String, dynamic> pedido) async {
-  if (assinaturaToBytes(pedido['assinatura']) != null) return pedido;
-  final caminho = _texto(pedido['assinatura_path']);
+  final comEntrega = await _lerAssinaturaDoArquivo(pedido, 'assinatura', 'assinatura_path');
+  return _lerAssinaturaDoArquivo(comEntrega, 'assinatura_pedido', 'assinatura_pedido_path');
+}
+
+Future<Map<String, dynamic>> _lerAssinaturaDoArquivo(
+    Map<String, dynamic> pedido, String chaveBytes, String chaveCaminho) async {
+  if (assinaturaToBytes(pedido[chaveBytes]) != null) return pedido;
+  final caminho = _texto(pedido[chaveCaminho]);
   if (caminho == null) return pedido;
   try {
     final f = File(caminho);
     if (!await f.exists()) return pedido;
     final bytes = await f.readAsBytes();
     if (bytes.isEmpty) return pedido;
-    return {...pedido, 'assinatura': bytes};
+    return {...pedido, chaveBytes: bytes};
   } catch (e) {
     // ignore: avoid_print
     print('⚠️ Não deu para ler a assinatura em $caminho: $e');
@@ -739,7 +752,8 @@ const List<String> _camposForaDoPayload = [
   'cliente_nome_fantasia',
   'cliente_whatsapp',
   'cliente_email',
-  'assinatura_path', // caminho local da assinatura
+  'assinatura_path', // caminho local da assinatura da entrega
+  'assinatura_pedido_path', // caminho local da assinatura do pedido
   'pendente_envio',
   'so_local',
   'erro_envio',
@@ -747,8 +761,12 @@ const List<String> _camposForaDoPayload = [
 ];
 
 /// Monta o payload do pedido para o servidor a partir do mapa local (tela ou
-/// linha do SQLite). Leva `id_aparelho` e `status` como estão (salvo,
-/// cancelado ou finalizado). `cliente_id` é trocado pelo id remoto no envio.
+/// linha do SQLite). Leva `id_aparelho` e `status` como estão (salvo, pronto,
+/// cancelado ou finalizado; o servidor nunca aceita `pronto` do vendedor).
+/// `cliente_id` é trocado pelo id remoto no envio.
+/// `produtos` vai exatamente como está guardado (o texto JSON do SQLite é só
+/// decodificado: mesmas chaves, mesma ordem, mesmos números). O servidor
+/// compara o jsonb para decidir se o pedido sai de `pronto`.
 Map<String, dynamic> montarPayloadPedido(Map<String, dynamic> pedido) {
   final ped = <String, dynamic>{...pedido};
   for (final c in _camposForaDoPayload) {
@@ -770,11 +788,15 @@ Map<String, dynamic> montarPayloadPedido(Map<String, dynamic> pedido) {
 
   // assinatura → bytea em hex ('\x' + hex), o formato que o Postgres decodifica
   // do JSON do PostgREST (base64 puro seria gravado como texto).
-  final assinaturaBytea = assinaturaParaBytea(ped['assinatura']);
-  if (assinaturaBytea != null) {
-    ped['assinatura'] = assinaturaBytea;
-  } else {
-    ped.remove('assinatura');
+  // As duas assinaturas (entrega e pedido), cada uma na sua coluna. Sem
+  // bytes, a chave não vai (o servidor mantém a que tem).
+  for (final c in const ['assinatura', 'assinatura_pedido']) {
+    final bytea = assinaturaParaBytea(ped[c]);
+    if (bytea != null) {
+      ped[c] = bytea;
+    } else {
+      ped.remove(c);
+    }
   }
 
   // datahora ISO-8601 UTC
@@ -1002,6 +1024,9 @@ bool _mesmoConteudo(Map<String, dynamic> enviado, Map<String, dynamic> remoto) {
   return true;
 }
 
+/// Situações em que o servidor protege o pedido do vendedor. `pronto` não.
+const Set<String> _situacoesFechadas = {'finalizado', 'cancelado'};
+
 /// Decide o que fazer com o eco [remoto] do envio de [enviado], dada a cópia
 /// [local] que está no SQLite agora.
 /// - `edicaoLocalMaisNova`: [local] não é mais a versão enviada.
@@ -1009,7 +1034,9 @@ bool _mesmoConteudo(Map<String, dynamic> enviado, Map<String, dynamic> remoto) {
 ///   enviado: outra situação, total ou itens, ou outra `datahora` (o gatilho
 ///   devolveu a versão antiga; toda gravação das telas troca a datahora, então
 ///   isso pega também edição de cliente/anotação que o servidor recusou).
-/// - `aplicado`: o resto.
+/// - `aplicado`: o resto. O remoto `pronto` **não** é fechado: é um pedido em
+///   aberto como `salvo` (o gatilho mantém `pronto` quando o vendedor reenvia
+///   sem mudar itens nem cliente), e o eco é gravado como veio.
 ResultadoEco decidirEco(
   Map<String, dynamic> local,
   Map<String, dynamic> enviado,
@@ -1017,7 +1044,7 @@ ResultadoEco decidirEco(
 ) {
   if (!_mesmaVersao(local, enviado)) return ResultadoEco.edicaoLocalMaisNova;
   final st = '${remoto['status'] ?? ''}';
-  if ((st == 'finalizado' || st == 'cancelado') &&
+  if (_situacoesFechadas.contains(st) &&
       (!_mesmoConteudo(enviado, remoto) ||
           !_mesmoInstante(enviado['datahora'], remoto['datahora']))) {
     return ResultadoEco.servidorFechou;
@@ -1051,6 +1078,7 @@ Future<ResultadoEco> aplicarEcoDoServidor({
 }) async {
   final int? idLocalAntigo = _idDe(enviado);
   final String? assinaturaPathLocal = enviado['assinatura_path']?.toString();
+  final String? assinaturaPedidoPathLocal = enviado['assinatura_pedido_path']?.toString();
   final numero = enviado['numero']?.toString();
   final vend = enviado['vendedor_codigo']?.toString();
 
@@ -1070,6 +1098,7 @@ Future<ResultadoEco> aplicarEcoDoServidor({
     'cliente_id': (remoto['cliente_id'] is int) ? remoto['cliente_id'] : null,
     'cliente_nome': remoto['cliente_nome']?.toString(),
     'assinatura': _toHex0x(remoto['assinatura']),
+    'assinatura_pedido': _toHex0x(remoto['assinatura_pedido']),
     'cliente_telefone': remoto['cliente_telefone']?.toString(),
     'cliente_endereco': remoto['cliente_endereco']?.toString(),
     'cliente_cidade': remoto['cliente_cidade']?.toString(),
@@ -1084,6 +1113,7 @@ Future<ResultadoEco> aplicarEcoDoServidor({
 
     // 👇 PRESERVAR SEMPRE o caminho local da assinatura ao regravar no SQLite
     'assinatura_path': assinaturaPathLocal,
+    'assinatura_pedido_path': assinaturaPedidoPathLocal,
 
     // O servidor confirmou: não está mais aguardando envio.
     'pendente_envio': 0,

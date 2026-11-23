@@ -13,7 +13,7 @@ import 'id_aparelho.dart';
 sq.Database? _db;
 
 /// ⬆️ aumente quando mudar o schema
-const _dbVersion = 17;
+const _dbVersion = 18;
 
 /// Faixa reservada para IDs de pedidos criados SOMENTE localmente (rascunhos).
 ///
@@ -187,7 +187,11 @@ Future<sq.Database> getDb() async {
           finalizado_por TEXT,
           finalizado_manual TEXT,
           cancelado_em TEXT,
-          cancelado_por TEXT
+          cancelado_por TEXT,
+          assinatura_pedido TEXT,      -- hex "0x..." da assinatura do pedido
+          assinatura_pedido_path TEXT, -- arquivo local da assinatura do pedido
+          pronto_em TEXT,
+          pronto_por TEXT
         );
       ''');
       await _criarTabelaDescartados(db);
@@ -243,6 +247,11 @@ Future<sq.Database> getDb() async {
           "WHERE status = 'salvo' AND id >= $kLocalIdBase AND pendente_envio = 0",
         );
       }
+      if (oldV < 18) {
+        // v18: assinatura do pedido (separada da de entrega) e a situação
+        // `pronto`, gravada pelo Controle. Só colunas novas.
+        await _garantirSchemaV18(db);
+      }
     },
     onOpen: (db) async {
       await _ensureColumn(db, 'produtos', 'codigo', 'TEXT');
@@ -261,6 +270,7 @@ Future<sq.Database> getDb() async {
       await _ensureColumn(db, 'pedidos', 'assinatura_path', 'TEXT');
       await _ensureColumn(db, 'pedidos', 'pendente_envio', 'INTEGER NOT NULL DEFAULT 0');
       await _garantirSchemaV17(db);
+      await _garantirSchemaV18(db);
 
       // Segurança extra: garante que rascunhos antigos estejam na faixa de id
       // reservada (caso a relocação da v15 tenha falhado). Só mexe no que
@@ -301,6 +311,18 @@ Future<void> _garantirSchemaV17(sq.Database db) async {
     await _ensureColumn(db, 'pedidos', c, 'TEXT');
   }
   await _criarTabelaDescartados(db);
+}
+
+/// Colunas da v18 (idempotente).
+Future<void> _garantirSchemaV18(sq.Database db) async {
+  for (final c in const [
+    'assinatura_pedido',
+    'assinatura_pedido_path',
+    'pronto_em',
+    'pronto_por',
+  ]) {
+    await _ensureColumn(db, 'pedidos', c, 'TEXT');
+  }
 }
 
 Future<Set<String>> _getTableColumns(sq.Database db, String table) async {
@@ -480,16 +502,7 @@ Future<void> _aplicarCamposLocais(
 
   if (replace && antigo != null) {
     // INSERT OR REPLACE apagaria o que não está no mapa: preserva.
-    for (final c in const [
-      'erro_envio',
-      'enviado_em',
-      'alterado_em',
-      'finalizado_em',
-      'finalizado_por',
-      'finalizado_manual',
-      'cancelado_em',
-      'cancelado_por',
-    ]) {
+    for (final c in _colunasCopiaDoServidor) {
       if (pedido.containsKey(c)) {
         map[c] = pedido[c]?.toString();
       } else {
@@ -497,20 +510,45 @@ Future<void> _aplicarCamposLocais(
       }
     }
   } else {
-    for (final c in const [
-      'erro_envio',
-      'enviado_em',
-      'alterado_em',
-      'finalizado_em',
-      'finalizado_por',
-      'finalizado_manual',
-      'cancelado_em',
-      'cancelado_por',
-    ]) {
+    for (final c in _colunasCopiaDoServidor) {
       if (pedido.containsKey(c)) map[c] = pedido[c]?.toString();
     }
   }
+
+  // Assinatura do pedido: sem bytes, nunca apaga a guardada (como o servidor,
+  // que faz coalesce). O caminho só muda se veio a chave (null limpa: a tela
+  // manda null quando colheu bytes novos sem arquivo).
+  if (map['assinatura_pedido'] == null) {
+    if (replace && antigo != null) {
+      map['assinatura_pedido'] = antigo['assinatura_pedido'];
+    } else {
+      map.remove('assinatura_pedido');
+    }
+  }
+  if (!pedido.containsKey('assinatura_pedido_path')) {
+    if (replace && antigo != null) {
+      map['assinatura_pedido_path'] = antigo['assinatura_pedido_path'];
+    } else {
+      map.remove('assinatura_pedido_path');
+    }
+  }
 }
+
+/// Colunas que o app guarda como cópia (texto) do que o servidor preencheu,
+/// mais o `erro_envio` local. O INSERT OR REPLACE as preserva quando o mapa
+/// não as traz.
+const List<String> _colunasCopiaDoServidor = [
+  'erro_envio',
+  'enviado_em',
+  'alterado_em',
+  'finalizado_em',
+  'finalizado_por',
+  'finalizado_manual',
+  'cancelado_em',
+  'cancelado_por',
+  'pronto_em',
+  'pronto_por',
+];
 
 /// Valor de `erro_envio` quando o número já é de outro pedido no servidor.
 const String kErroNumeroEmUso = 'numero';
@@ -620,6 +658,8 @@ Future<int> salvarPedidoLocal(Map<String, dynamic> pedido) async {
     'cliente_nome': pedido['cliente_nome']?.toString(),
     'assinatura': _bytesToHex0x(pedido['assinatura']),       // legado (mantido)
     'assinatura_path': pedido['assinatura_path']?.toString(),// ✅ NOVO: caminho do arquivo
+    'assinatura_pedido': _bytesToHex0x(pedido['assinatura_pedido']),
+    'assinatura_pedido_path': pedido['assinatura_pedido_path']?.toString(),
     'cliente_telefone': pedido['cliente_telefone']?.toString(),
     'cliente_endereco': pedido['cliente_endereco']?.toString(),
     'cliente_cidade': pedido['cliente_cidade']?.toString(),
@@ -686,6 +726,8 @@ Future<int> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
     'cliente_nome': pedido['cliente_nome']?.toString(),
     'assinatura': _bytesToHex0x(pedido['assinatura']),       // legado
     'assinatura_path': pedido['assinatura_path']?.toString(),// ✅ NOVO
+    'assinatura_pedido': _bytesToHex0x(pedido['assinatura_pedido']),
+    'assinatura_pedido_path': pedido['assinatura_pedido_path']?.toString(),
     'cliente_telefone': pedido['cliente_telefone']?.toString(),
     'cliente_endereco': pedido['cliente_endereco']?.toString(),
     'cliente_cidade': pedido['cliente_cidade']?.toString(),
