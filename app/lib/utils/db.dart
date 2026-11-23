@@ -39,14 +39,32 @@ Future<int> proximoIdLocalSeguro(sq.DatabaseExecutor db) async {
   return base + 1;
 }
 
-/// Move rascunhos (status='salvo') com id "baixo" para a faixa reservada,
-/// evitando colisão com os ids do Supabase na próxima sincronização.
-/// Idempotente (só age sobre id < [kLocalIdBase]).
-Future<void> _relocarRascunhosParaFaixaSegura(sq.DatabaseExecutor db) async {
+/// Move rascunhos antigos (status='salvo', id "baixo", que NUNCA chegaram ao
+/// servidor) para a faixa reservada, evitando colisão com os ids do Supabase
+/// na próxima sincronização. Idempotente (só age sobre id < [kLocalIdBase]).
+///
+/// Desde a fase A um `salvo` de id baixo também pode ser um pedido em aberto
+/// que veio do servidor (sync ou eco): esse tem `enviado_em` (cópia do
+/// servidor, sempre preenchida lá) e NÃO é movido — movê-lo tiraria o pedido
+/// do estado "no servidor" (número destravado, sem "Cancelar pedido", e um
+/// reenvio duplicaria o pedido). Sem a coluna (upgrade antigo, antes da v17)
+/// todo `salvo` de id baixo é rascunho, como antes.
+///
+/// Com a coluna `so_local` (v17+), o rascunho movido que não está pendente de
+/// envio fica `so_local = 1` (a marcação da v17 só olha a faixa local e não o
+/// teria visto): senão ficaria nem enviável nem apagável.
+Future<void> _relocarRascunhosParaFaixaSegura(sq.Database db) async {
   try {
+    final cols = await _getTableColumns(db, 'pedidos');
+    final soNuncaEnviados = cols.contains('enviado_em')
+        ? " AND (enviado_em IS NULL OR enviado_em = '')"
+        : '';
+    final marcarSoLocal = cols.contains('so_local') && cols.contains('pendente_envio')
+        ? ', so_local = CASE WHEN pendente_envio = 1 THEN so_local ELSE 1 END'
+        : '';
     await db.execute(
-      "UPDATE pedidos SET id = id + $kLocalIdBase "
-      "WHERE status = 'salvo' AND id < $kLocalIdBase",
+      "UPDATE pedidos SET id = id + $kLocalIdBase$marcarSoLocal "
+      "WHERE status = 'salvo' AND id < $kLocalIdBase$soNuncaEnviados",
     );
   } catch (e) {
     debugPrint('Falha ao relocar rascunhos para faixa segura: $e');
@@ -245,7 +263,8 @@ Future<sq.Database> getDb() async {
       await _garantirSchemaV17(db);
 
       // Segurança extra: garante que rascunhos antigos estejam na faixa de id
-      // reservada (caso o app tenha pulado o onUpgrade por algum motivo).
+      // reservada (caso a relocação da v15 tenha falhado). Só mexe no que
+      // nunca chegou ao servidor: pedido em aberto do servidor fica onde está.
       await _relocarRascunhosParaFaixaSegura(db);
     },
   );
