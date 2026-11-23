@@ -23,7 +23,9 @@
 --   p4  finalizado com assinatura, que nao pode ser substituido
 --   p5  salvo do admin, finalizado manual e depois "reaberto" pelo celular
 --   p6  salvo cancelado pelo Controle e depois entregue com assinatura
+--   p7  (sem guardar id) primeiro envio ja cancelado, por INSERT
 --   p8  salvo finalizado pela conta do Controle sem codigo
+--   p9  (sem guardar id) salvo finalizado por UPDATE comum, autor falso
 
 -- 0. Preparacao, sem JWT (como o SQL Editor): contas Auth e vendedores.
 --    Ids negativos em vendedores, como no fase3_test: nao gasta a sequencia.
@@ -153,13 +155,8 @@ begin
   if v_r.alterado_em is distinct from now() then
     raise exception 'FALHA: mudar a quantidade nao preencheu alterado_em (%)', v_r.alterado_em;
   end if;
-
-  update public.pedidos set datahora = datahora + interval '1 hour'
-   where id = current_setting('teste.p1')::bigint;
-  select * into v_r from public.pedidos where id = current_setting('teste.p1')::bigint;
-  if v_r.alterado_em is distinct from now() then
-    raise exception 'FALHA: mudar so datahora mexeu em alterado_em (%)', v_r.alterado_em;
-  end if;
+  -- "so datahora nao re-carimba um alterado_em ja preenchido" fica nas
+  -- secoes 1j/1k: aqui now() e constante e nao distinguiria.
 
   -- 1e. Pedido em aberto: o cliente nao escolhe auditoria, enviado_em nem
   --     troca o id_aparelho ja gravado.
@@ -219,6 +216,51 @@ begin
   end if;
   if (v_r.produtos -> 0 ->> 'quantidade')::numeric is distinct from 1 then
     raise exception 'FALHA: pedido cancelado teve os produtos trocados';
+  end if;
+
+  -- 1f2. Primeiro envio ja cancelado (salvo cancelado sem internet): e
+  --      INSERT, e o servidor preenche cancelado_* mesmo assim.
+  insert into public.pedidos (numero, vendedor_codigo, cliente_nome, produtos, total,
+                              status, datahora, cancelado_por, cancelado_em,
+                              finalizado_por, finalizado_em)
+  values ('teste-fa-7', 'teste_fa_vend', 'Cliente teste',
+          '[{"nome":"Leite","preco":5,"quantidade":1,"subtotal":5}]'::jsonb, 5,
+          'cancelado', now(), 'X', timestamptz '2000-01-01',
+          'X', timestamptz '2000-01-01')
+  returning id into v_id;
+  select * into v_r from public.pedidos where id = v_id;
+  if v_r.status is distinct from 'cancelado'
+     or v_r.cancelado_em is distinct from now()
+     or v_r.cancelado_por is distinct from 'teste_fa_vend' then
+    raise exception 'FALHA: insert cancelado: status %, cancelado_em %, cancelado_por %',
+      v_r.status, v_r.cancelado_em, v_r.cancelado_por;
+  end if;
+  if v_r.finalizado_em is not null or v_r.finalizado_por is not null or v_r.finalizado_manual then
+    raise exception 'FALHA: insert cancelado preencheu finalizado_*';
+  end if;
+
+  -- 1f3. Salvo finalizado por UPDATE comum (sem passar pelo INSERT),
+  --      mandando autor e datas falsos: o gatilho de UPDATE grava os seus.
+  insert into public.pedidos (numero, vendedor_codigo, cliente_nome, produtos, total, status, datahora)
+  values ('teste-fa-9', 'teste_fa_vend', 'Cliente teste',
+          '[{"nome":"Leite","preco":5,"quantidade":1,"subtotal":5}]'::jsonb, 5, 'salvo', now())
+  returning id into v_id;
+  update public.pedidos
+     set status = 'finalizado', assinatura = decode('03', 'hex'),
+         finalizado_por = 'X', finalizado_em = timestamptz '2000-01-01',
+         finalizado_manual = true,
+         cancelado_por = 'X', cancelado_em = timestamptz '2000-01-01'
+   where id = v_id;
+  select * into v_r from public.pedidos where id = v_id;
+  if v_r.status is distinct from 'finalizado'
+     or v_r.finalizado_por is distinct from 'teste_fa_vend'
+     or v_r.finalizado_em is distinct from now()
+     or v_r.finalizado_manual then
+    raise exception 'FALHA: UPDATE salvo->finalizado aceitou auditoria do cliente (por %, em %, manual %)',
+      v_r.finalizado_por, v_r.finalizado_em, v_r.finalizado_manual;
+  end if;
+  if v_r.cancelado_em is not null or v_r.cancelado_por is not null then
+    raise exception 'FALHA: UPDATE salvo->finalizado aceitou cancelado_* do cliente';
   end if;
 
   -- 1g. Pedido ja finalizado com assinatura nao e substituido por outro
@@ -293,6 +335,51 @@ begin
       raise exception 'FALHA: rascunho caiu em % (esperado pedidos_status_check)', v_nome;
     end if;
   end;
+end $$;
+reset role;
+select set_config('request.jwt.claims', '', true);
+
+-- 1j. Sem JWT, com a marca das RPCs: poe em p1 (ainda salvo) um alterado_em
+--     do passado, diferente de now(), para a secao 1k conseguir ver se ele
+--     foi mantido ou re-carimbado.
+do $$
+declare
+  v_alt timestamptz;
+begin
+  perform set_config('milkdim.acao_controle', '1', true);
+  update public.pedidos set alterado_em = timestamptz '2000-01-01'
+   where id = current_setting('teste.p1')::bigint;
+  perform set_config('milkdim.acao_controle', '', true);
+
+  select alterado_em into v_alt from public.pedidos where id = current_setting('teste.p1')::bigint;
+  if v_alt is distinct from timestamptz '2000-01-01' then
+    raise exception 'FALHA: preparo de 1k nao gravou alterado_em (%)', v_alt;
+  end if;
+end $$;
+
+-- 1k. Vendedor: so datahora mantem o alterado_em que ja existia; mudar o
+--     cliente re-carimba.
+select set_config('request.jwt.claims',
+  json_build_object('sub', current_setting('teste.uid_vend'),
+                    'role', 'authenticated')::text, true);
+set local role authenticated;
+do $$
+declare
+  v_alt timestamptz;
+begin
+  update public.pedidos set datahora = datahora + interval '1 hour'
+   where id = current_setting('teste.p1')::bigint;
+  select alterado_em into v_alt from public.pedidos where id = current_setting('teste.p1')::bigint;
+  if v_alt is distinct from timestamptz '2000-01-01' then
+    raise exception 'FALHA: mudar so datahora re-carimbou alterado_em (%)', v_alt;
+  end if;
+
+  update public.pedidos set cliente_nome = 'Cliente teste 2'
+   where id = current_setting('teste.p1')::bigint;
+  select alterado_em into v_alt from public.pedidos where id = current_setting('teste.p1')::bigint;
+  if v_alt is distinct from now() then
+    raise exception 'FALHA: mudar cliente_nome nao preencheu alterado_em (%)', v_alt;
+  end if;
 end $$;
 reset role;
 select set_config('request.jwt.claims', '', true);
@@ -417,20 +504,21 @@ begin
       v_r.status, v_r.finalizado_manual, v_r.finalizado_por;
   end if;
 
-  -- 3b. Entrega assinada vence o finalizado manual: fica a quantidade
-  --     nova, manual volta a false, autor passa a ser o vendedor.
+  -- 3b. Entrega assinada vence o finalizado manual, pelo upsert do app: fica
+  --     a quantidade nova, manual volta a false, autor passa a ser o
+  --     vendedor (o gatilho de UPDATE troca o teste_fa_adm gravado pela RPC).
+  --     Autor escolhido pelo cliente no UPDATE: ver 1f3, 3c e 3d.
   insert into public.pedidos (numero, vendedor_codigo, cliente_nome, produtos, total,
-                              status, datahora, assinatura, finalizado_por)
+                              status, datahora, assinatura)
   values ('teste-fa-1', 'teste_fa_vend', 'Cliente teste',
           '[{"nome":"Leite","preco":5,"quantidade":7,"subtotal":35}]'::jsonb, 35,
-          'finalizado', now(), decode('0a', 'hex'), 'X')
+          'finalizado', now(), decode('0a', 'hex'))
   on conflict (numero, vendedor_codigo) do update
-     set produtos       = excluded.produtos,
-         total          = excluded.total,
-         status         = excluded.status,
-         datahora       = excluded.datahora,
-         assinatura     = excluded.assinatura,
-         finalizado_por = excluded.finalizado_por;
+     set produtos   = excluded.produtos,
+         total      = excluded.total,
+         status     = excluded.status,
+         datahora   = excluded.datahora,
+         assinatura = excluded.assinatura;
 
   select * into v_r from public.pedidos where id = current_setting('teste.p1')::bigint;
   if v_r.status is distinct from 'finalizado' then
@@ -453,19 +541,24 @@ begin
   end if;
 
   -- 3c. Entrega assinada vence o cancelado pelo Controle, e o cancelamento
-  --     continua registrado.
+  --     continua registrado. UPDATE comum (nao passa pelo INSERT) mandando
+  --     autor, datas e manual falsos: o ramo "entrega assinada vence" do
+  --     gatilho de UPDATE grava os do servidor.
   update public.pedidos
      set status = 'finalizado',
          assinatura = decode('0b', 'hex'),
          produtos = '[{"nome":"Leite","preco":5,"quantidade":2,"subtotal":10}]'::jsonb,
-         total = 10
+         total = 10,
+         finalizado_por = 'X', finalizado_em = timestamptz '2000-01-01',
+         finalizado_manual = true,
+         cancelado_por = 'X', cancelado_em = timestamptz '2000-01-01'
    where id = current_setting('teste.p6')::bigint;
   select * into v_r from public.pedidos where id = current_setting('teste.p6')::bigint;
   if v_r.status is distinct from 'finalizado' then
     raise exception 'FALHA: entrega assinada nao venceu o cancelado (status %)', v_r.status;
   end if;
-  if v_r.cancelado_em is null or v_r.cancelado_por is distinct from 'teste_fa_adm' then
-    raise exception 'FALHA: entrega assinada apagou o cancelamento (em %, por %)',
+  if v_r.cancelado_em is distinct from now() or v_r.cancelado_por is distinct from 'teste_fa_adm' then
+    raise exception 'FALHA: entrega assinada apagou ou trocou o cancelamento (em %, por %)',
       v_r.cancelado_em, v_r.cancelado_por;
   end if;
   if v_r.finalizado_por is distinct from 'teste_fa_vend' or v_r.finalizado_manual
@@ -475,6 +568,20 @@ begin
   end if;
   if (v_r.produtos -> 0 ->> 'quantidade')::numeric is distinct from 2 then
     raise exception 'FALHA: entrega assinada sobre cancelado nao ficou com a quantidade nova';
+  end if;
+
+  -- 3d. Pedido ja fechado pelo vendedor (p1, de 3b): UPDATE comum
+  --     escolhendo autor, data e manual e ignorado; fica como estava.
+  update public.pedidos
+     set finalizado_por = 'X', finalizado_em = timestamptz '2000-01-01',
+         finalizado_manual = true
+   where id = current_setting('teste.p1')::bigint;
+  select * into v_r from public.pedidos where id = current_setting('teste.p1')::bigint;
+  if v_r.finalizado_por is distinct from 'teste_fa_vend'
+     or v_r.finalizado_em is distinct from now()
+     or v_r.finalizado_manual then
+    raise exception 'FALHA: UPDATE em pedido fechado trocou auditoria (por %, em %, manual %)',
+      v_r.finalizado_por, v_r.finalizado_em, v_r.finalizado_manual;
   end if;
 end $$;
 reset role;

@@ -51,18 +51,14 @@ begin
     add column if not exists cancelado_em      timestamptz,
     add column if not exists cancelado_por     text;
 
+  -- So na primeira vez, quando os gatilhos desta fase ainda nao existem
+  -- (sao criados mais abaixo): o UPDATE nao passa por eles.
   if v_primeira_vez then
-    -- Na primeira vez os gatilhos desta fase ainda nao existem (sao criados
-    -- mais abaixo); a marca e so precaucao, e e desligada logo depois.
-    perform set_config('milkdim.acao_controle', '1', true);
-
     update public.pedidos
        set enviado_em     = coalesce(datahora, created_at::timestamptz, enviado_em),
            finalizado_em  = case when status = 'finalizado'
                                  then coalesce(datahora, created_at::timestamptz, enviado_em) end,
            finalizado_por = case when status = 'finalizado' then vendedor_codigo end;
-
-    perform set_config('milkdim.acao_controle', '', true);
   end if;
 end $$;
 
@@ -107,6 +103,8 @@ revoke execute on function public.app_autor_pedido() from public, anon, authenti
 -- ---------------------------------------------------------------------------
 -- Inclui o INSERT ... ON CONFLICT do app: a linha proposta passa por aqui
 -- antes do conflito, e o UPDATE que vem depois passa por pedidos_antes_alterar.
+-- Primeiro envio ja como cancelado (salvo cancelado sem internet, antes de
+-- chegar ao servidor) e INSERT: cancelado_* preenchidos aqui.
 
 create or replace function public.pedidos_antes_inserir()
 returns trigger
@@ -117,8 +115,6 @@ as $$
 begin
   new.enviado_em        := now();
   new.alterado_em       := null;
-  new.cancelado_em      := null;
-  new.cancelado_por     := null;
   new.finalizado_manual := false;
 
   if new.status = 'finalizado' then
@@ -127,6 +123,14 @@ begin
   else
     new.finalizado_em  := null;
     new.finalizado_por := null;
+  end if;
+
+  if new.status = 'cancelado' then
+    new.cancelado_em  := now();
+    new.cancelado_por := public.app_autor_pedido();
+  else
+    new.cancelado_em  := null;
+    new.cancelado_por := null;
   end if;
 
   return new;
