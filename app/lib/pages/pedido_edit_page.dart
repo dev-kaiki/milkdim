@@ -65,6 +65,27 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
   /// Assinatura do pedido colhida agora (vai ao salvar).
   Uint8List? _assinaturaPedidoNova;
 
+  /// Itens e cliente que a [_assinaturaPedidoNova] cobre (como estavam na
+  /// tela quando o cliente assinou).
+  Map<String, dynamic>? _assinadoSobre;
+
+  /// Itens e cliente da tela agora (o que a assinatura do pedido cobre).
+  Map<String, dynamic> _itensEClienteDaTela() => {
+        'produtos': _itensDaTela(),
+        'cliente_id': _clienteId,
+        'cliente_nome': nomeCtrl.text.trim(),
+      };
+
+  void _guardarAssinaturaPedido(Uint8List bytes) {
+    _assinaturaPedidoNova = bytes;
+    _assinadoSobre = _itensEClienteDaTela();
+  }
+
+  /// A assinatura colhida agora foi dada para outros itens ou outro cliente?
+  bool get _assinaturaNovaVencida =>
+      _assinaturaPedidoNova != null &&
+      (_assinadoSobre == null || itensOuClienteMudaram(_assinadoSobre!, _itensEClienteDaTela()));
+
   // cliente selecionado
   int? _clienteId;
   DateTime? _ultimoPedido; // para o badge
@@ -328,7 +349,8 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
 
   // ====== ASSINATURA DA ENTREGA: grava/atualiza arquivo e retorna caminho ======
   // O arquivo é só uma cópia no aparelho: os bytes vão no SQLite e ao
-  // servidor. Se gravar o arquivo falhar, segue sem ele (fica o caminho antigo).
+  // servidor. Se gravar o arquivo falhar, segue sem caminho (null): o PDF e a
+  // prévia leem os bytes novos, nunca a imagem antiga de outro arquivo.
   Future<String?> _persistirAssinaturaLocal(Uint8List? bytes,
       {required String numero}) async {
     try {
@@ -340,8 +362,7 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     } catch (e) {
       // ignore: avoid_print
       print('[EDIT] não gravou o arquivo da assinatura: $e');
-      final old = widget.pedido['assinatura_path'];
-      return (old is String && old.isNotEmpty) ? old : null;
+      return null;
     }
   }
 
@@ -442,7 +463,8 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
           assinatura: assinaturaEntrega,
           assinaturaPath: assinaturaEntregaPath,
           // assinatura do pedido colhida agora: só os bytes (sem arquivo)
-          assinaturaPedido: _assinaturaPedidoNova,
+          // (uma colhida antes de mudar itens/cliente não vai: não cobre a tela)
+          assinaturaPedido: _assinaturaNovaVencida ? null : _assinaturaPedidoNova,
         ),
         // trocou o número que o servidor recusou: o conflito antigo não vale mais
         if (widget.pedido['erro_envio'] != null &&
@@ -475,12 +497,23 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
           assinaturaEntregaPath: _caminhoAssinaturaEntregaGuardado,
         );
 
+    // Assinatura colhida antes e os itens ou o cliente mudaram depois: ela
+    // não vale para o que está na tela. Descarta e, se a guardada também não
+    // cobre, o cliente assina de novo.
+    final vencida = _assinaturaNovaVencida;
+    if (vencida) {
+      setState(() {
+        _assinaturaPedidoNova = null;
+        _assinadoSobre = null;
+      });
+    }
     if (_assinaturaPedidoNova == null) {
-      final aviso = avisoAssinaturaDoPedido(original: widget.pedido, editado: montar());
+      var aviso = avisoAssinaturaDoPedido(original: widget.pedido, editado: montar());
+      if (aviso != null && vencida) aviso = kAvisoAssinarPedidoDeNovo;
       if (aviso != null) {
         final bytes = await _pedirAssinatura(TipoAssinatura.pedido, aviso: aviso);
         if (!mounted || bytes == null) return;
-        setState(() => _assinaturaPedidoNova = bytes);
+        setState(() => _guardarAssinaturaPedido(bytes));
       }
     }
     await _gravar(() async => montar());
@@ -665,7 +698,7 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
                   if (processando) return;
                   final bytes = await _pedirAssinatura(TipoAssinatura.pedido);
                   if (!mounted || bytes == null) return;
-                  setState(() => _assinaturaPedidoNova = bytes);
+                  setState(() => _guardarAssinaturaPedido(bytes));
                   if (folha.mounted) setFolha(() {});
                 },
                 principal: (

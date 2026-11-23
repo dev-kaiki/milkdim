@@ -671,7 +671,7 @@ class _PedidosPageState extends State<PedidosPage>
 
   /// Selo de status do pedido: aberto, pronto ou finalizado ainda não enviado
   /// aparece como "Aguardando envio"; pronto para entrega, "Pronto";
-  /// finalizado enviado, "Finalizado"; em aberto, "Salvo".
+  /// finalizado enviado, "Entregue"; em aberto, "Em aberto".
   Widget _seloStatus(Map<String, dynamic> p) {
     final status = (p['status'] ?? '-').toString();
     final pendente = (p['pendente_envio'] ?? 0).toString() == '1';
@@ -701,11 +701,11 @@ class _PedidosPageState extends State<PedidosPage>
     }
     if (status == 'finalizado') {
       return const MdStatusChip(
-          tipo: MdTipo.sucesso, texto: 'Finalizado', icone: Icons.check_circle_outline);
+          tipo: MdTipo.sucesso, texto: 'Entregue', icone: Icons.check_circle_outline);
     }
     if (status == 'salvo') {
       return const MdStatusChip(
-          tipo: MdTipo.neutro, texto: 'Salvo', icone: Icons.edit_note);
+          tipo: MdTipo.neutro, texto: 'Em aberto', icone: Icons.edit_note);
     }
     return MdStatusChip(tipo: MdTipo.info, texto: status);
   }

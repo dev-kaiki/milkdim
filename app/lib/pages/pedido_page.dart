@@ -47,6 +47,33 @@ class _PedidoPageState extends State<PedidoPage> {
   /// registrar a entrega na edição.
   Uint8List? _assinaturaPedido;
 
+  /// Itens e cliente que a [_assinaturaPedido] cobre (como estavam na tela
+  /// quando o cliente assinou).
+  Map<String, dynamic>? _assinadoSobre;
+
+  /// Os itens como a tela grava (só os com quantidade).
+  List<Map<String, dynamic>> _itensDaTela() => carrinho.entries
+      .where((e) => e.value > 0)
+      .map((e) => <String, dynamic>{
+            'nome': e.key.nome,
+            'preco': e.key.preco,
+            'quantidade': e.value,
+            'subtotal': (e.key.preco * e.value),
+          })
+      .toList();
+
+  /// Itens e cliente da tela agora (o que a assinatura do pedido cobre).
+  Map<String, dynamic> _itensEClienteDaTela() => {
+        'produtos': _itensDaTela(),
+        'cliente_id': _clienteId,
+        'cliente_nome': nomeCtrl.text.trim(),
+      };
+
+  void _guardarAssinaturaPedido(Uint8List bytes) {
+    _assinaturaPedido = bytes;
+    _assinadoSobre = _itensEClienteDaTela();
+  }
+
   // CLIENTE
   int? _clienteId;
   DateTime? _ultimoPedido;
@@ -281,24 +308,31 @@ class _PedidoPageState extends State<PedidoPage> {
       return;
     }
 
-    final produtosList = carrinho.entries
-        .where((e) => e.value > 0)
-        .map((e) => {
-      'nome': e.key.nome,
-      'preco': e.key.preco,
-      'quantidade': e.value,
-      'subtotal': (e.key.preco * e.value),
-    })
-        .toList();
+    final produtosList = _itensDaTela();
 
     if (produtosList.isEmpty) {
       _showMsg('Adicione ao menos um produto ao pedido!');
       return;
     }
-    if (enviar && (_assinaturaPedido == null || _assinaturaPedido!.isEmpty)) {
-      final bytes = await _pedirAssinatura(aviso: kAvisoAssinarPedido);
-      if (!mounted || bytes == null) return;
-      setState(() => _assinaturaPedido = bytes);
+    if (enviar) {
+      String? aviso;
+      if (_assinaturaPedido == null || _assinaturaPedido!.isEmpty) {
+        aviso = kAvisoAssinarPedido;
+      } else if (_assinadoSobre == null ||
+          itensOuClienteMudaram(_assinadoSobre!, _itensEClienteDaTela())) {
+        // Assinou antes e os itens ou o cliente mudaram depois: a assinatura
+        // não cobre o que vai ser enviado.
+        aviso = kAvisoAssinarPedidoDeNovo;
+        setState(() {
+          _assinaturaPedido = null;
+          _assinadoSobre = null;
+        });
+      }
+      if (aviso != null) {
+        final bytes = await _pedirAssinatura(aviso: aviso);
+        if (!mounted || bytes == null) return;
+        setState(() => _guardarAssinaturaPedido(bytes));
+      }
     }
 
     setState(() => carregando = true);
@@ -438,7 +472,7 @@ class _PedidoPageState extends State<PedidoPage> {
                   onAssinar: () async {
                     final bytes = await _pedirAssinatura();
                     if (!mounted || bytes == null) return;
-                    setState(() => _assinaturaPedido = bytes);
+                    setState(() => _guardarAssinaturaPedido(bytes));
                     if (folha.mounted) setFolha(() {});
                   },
                   principal: (

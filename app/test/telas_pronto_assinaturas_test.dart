@@ -115,6 +115,20 @@ Future<void> _abrirResumoETocar(WidgetTester tester, String botao) async {
   await tester.pumpAndSettle();
 }
 
+/// Abre o resumo, toca "Assinar" (o espião responde) e fecha a folha.
+Future<void> _assinarNoResumoEFechar(WidgetTester tester) async {
+  await tester
+      .tap(find.descendant(of: find.byType(BarraResumo), matching: find.byType(FilledButton)));
+  await tester.pumpAndSettle();
+  await tester.ensureVisible(find.text('Assinar'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Assinar'));
+  await tester.pumpAndSettle();
+  await tester.tapAt(const Offset(400, 10)); // fora da folha
+  await tester.pumpAndSettle();
+  expect(find.text('Resumo do Pedido'), findsNothing);
+}
+
 Future<void> _preencherPedidoNovo(WidgetTester tester) async {
   await tester.enterText(find.widgetWithText(TextField, 'Nome'), 'Padaria Central');
   await tester.enterText(find.widgetWithText(TextField, 'Qtd').first, '2');
@@ -312,6 +326,133 @@ void main() {
     });
   });
 
+  group('assinatura colhida antes', () {
+    testWidgets('pedido novo: assinou e depois mudou a quantidade, pede de novo', (tester) async {
+      final espiao = _Espiao()..resposta = _png;
+      await _abrir(
+        tester,
+        PedidoPage(
+          vendedor: _vendedor,
+          dadosParaCaptura: (
+            clientes: const [
+              {'id': 7, 'nome': 'Padaria Central'}
+            ],
+            produtos: _catalogo
+          ),
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        ),
+      );
+      await _preencherPedidoNovo(tester);
+      await _assinarNoResumoEFechar(tester);
+      expect(espiao.pedidos, [(TipoAssinatura.pedido, null)]);
+
+      await tester.enterText(find.widgetWithText(TextField, 'Qtd').first, '5');
+      await tester.pumpAndSettle();
+      espiao.resposta = null; // o cliente não assina de novo
+      await _abrirResumoETocar(tester, 'Enviar pedido');
+
+      expect(espiao.pedidos.last, (TipoAssinatura.pedido, kAvisoAssinarPedidoDeNovo));
+      expect(espiao.gravados, isEmpty, reason: 'a assinatura antiga não cobre os itens novos');
+
+      espiao.resposta = _png;
+      await _abrirResumoETocar(tester, 'Enviar pedido');
+      expect(espiao.pedidos.length, 3);
+      final g = espiao.gravados.single;
+      expect((g['produtos'] as List).first['quantidade'], 5);
+      expect(g['assinatura_pedido'], _png);
+    });
+
+    testWidgets('pedido novo: assinou e nao mudou nada, nao pede de novo', (tester) async {
+      final espiao = _Espiao()..resposta = _png;
+      await _abrir(
+        tester,
+        PedidoPage(
+          vendedor: _vendedor,
+          dadosParaCaptura: (
+            clientes: const [
+              {'id': 7, 'nome': 'Padaria Central'}
+            ],
+            produtos: _catalogo
+          ),
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        ),
+      );
+      await _preencherPedidoNovo(tester);
+      await _assinarNoResumoEFechar(tester);
+      await _abrirResumoETocar(tester, 'Enviar pedido');
+      expect(espiao.pedidos.length, 1);
+      expect(espiao.gravados.single['assinatura_pedido'], _png);
+    });
+
+    testWidgets('edicao: assinou e depois mudou a quantidade, pede de novo', (tester) async {
+      final espiao = _Espiao()..resposta = _png;
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: _pedidoGuardado(),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        ),
+      );
+      await _assinarNoResumoEFechar(tester);
+      await tester.enterText(find.widgetWithText(TextField, 'Qtd').first, '4');
+      await tester.pumpAndSettle();
+      espiao.resposta = null;
+      await _abrirResumoETocar(tester, 'Salvar alterações');
+
+      expect(espiao.pedidos, [
+        (TipoAssinatura.pedido, null),
+        (TipoAssinatura.pedido, kAvisoAssinarPedidoDeNovo),
+      ]);
+      expect(espiao.gravados, isEmpty);
+      expect(find.text('Editar Pedido'), findsOneWidget);
+    });
+
+    testWidgets('edicao: assinou e depois mudou o cliente, pede de novo', (tester) async {
+      final espiao = _Espiao()..resposta = _png;
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: _pedidoGuardado(),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        ),
+      );
+      await _assinarNoResumoEFechar(tester);
+      await tester.enterText(find.widgetWithText(TextField, 'Nome'), 'Padaria Nova');
+      await tester.pumpAndSettle();
+      await _abrirResumoETocar(tester, 'Salvar alterações');
+
+      expect(espiao.pedidos.last, (TipoAssinatura.pedido, kAvisoAssinarPedidoDeNovo));
+      final g = espiao.gravados.single;
+      expect(g['cliente_nome'], 'Padaria Nova');
+      expect(g['assinatura_pedido'], _png);
+      expect(g['status'], 'salvo');
+    });
+
+    testWidgets('edicao: assinou e nao mudou nada, leva a assinatura nova sem pedir',
+        (tester) async {
+      final espiao = _Espiao()..resposta = _png;
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: _pedidoGuardado(assinado: false, status: 'salvo'),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        ),
+      );
+      await _assinarNoResumoEFechar(tester);
+      await _abrirResumoETocar(tester, 'Salvar alterações');
+      expect(espiao.pedidos.length, 1);
+      expect(espiao.gravados.single['assinatura_pedido'], _png);
+    });
+  });
+
   group('salvar alteracoes', () {
     testWidgets('Salvar alteracoes com itens mudados exige nova assinatura', (tester) async {
       final espiao = _Espiao();
@@ -404,6 +545,27 @@ void main() {
       expect(g.containsKey('assinatura_pedido'), isFalse);
     });
 
+    testWidgets('arquivo da entrega falhou: vai sem caminho, nunca o arquivo antigo',
+        (tester) async {
+      final espiao = _Espiao()..resposta = _png;
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: {..._pedidoGuardado(), 'assinatura_path': '/sig/entrega_antiga.png'},
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+          gravarArquivoAssinatura: (b, {required numero}) async =>
+              throw const FileSystemException('disco cheio'),
+        ),
+      );
+      await _abrirResumoETocar(tester, 'Registrar entrega');
+      final g = espiao.gravados.single;
+      expect(g['status'], 'finalizado');
+      expect(g['assinatura'], _png);
+      expect(g['assinatura_path'], isNull);
+    });
+
     testWidgets('Registrar entrega sem assinar nao grava', (tester) async {
       final espiao = _Espiao();
       await _abrir(
@@ -448,6 +610,33 @@ void main() {
       expect(find.text('Padaria Central'), findsOneWidget);
       expect(find.text('Editar'), findsOneWidget);
       expect(find.text('Cancelar pedido'), findsOneWidget);
+    });
+
+    testWidgets('selos seguem os nomes das abas: Em aberto e Entregue', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(412, 1600);
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(MaterialApp(
+        theme: buildMilkdimTheme(),
+        home: PedidosPage(vendedorCodigo: '0003', pedidosParaCaptura: [
+          {..._pedidoGuardado(status: 'salvo'), 'cliente_nome': 'Padaria Central'},
+          {
+            ..._pedidoGuardado(status: 'finalizado'),
+            'id': 43,
+            'numero': '71',
+            'cliente_nome': 'Mercearia Boa Vista',
+          },
+        ]),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Em aberto'), findsOneWidget, reason: 'selo do pedido salvo');
+      expect(find.text('Salvo'), findsNothing);
+
+      await tester.tap(find.text('Entregues (1)'));
+      await tester.pumpAndSettle();
+      expect(find.text('Entregue'), findsOneWidget);
+      expect(find.text('Finalizado'), findsNothing);
     });
   });
 
