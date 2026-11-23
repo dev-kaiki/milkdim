@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -91,9 +92,38 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Marcar como entregue'), findsOneWidget);
     expect(find.text('Nenhum pedido em aberto'), findsNothing);
     expect(find.text('Nenhum pedido pronto'), findsNothing);
-    // pronto nao conta no A fabricar: so o 'salvo' (3 un)
-    expect(find.text('3'), findsOneWidget);
-    expect(find.text('7'), findsNothing);
+    // pronto nao conta no A fabricar: na linha do total so entram as 3 un do 'salvo'
+    final linha = find.ancestor(of: find.text('Pudim tradicional'), matching: find.byType(Row)).first;
+    expect(find.descendant(of: linha, matching: find.text('3')), findsOneWidget);
+    expect(find.descendant(of: linha, matching: find.text('7')), findsNothing);
+    // cada cartão na sua seção: #318 antes do cabeçalho, #319 depois
+    final cabecalho = tester.getTopLeft(find.text('Prontos para entrega')).dy;
+    expect(tester.getTopLeft(find.text('Pedido #318')).dy, lessThan(cabecalho));
+    expect(tester.getTopLeft(find.text('Pedido #319')).dy, greaterThan(cabecalho));
+  });
+
+  testWidgets('detalhe mostra "—" na assinatura que falta', (tester) async {
+    tester.view.physicalSize = const Size(800, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final png = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==');
+    final p = _ped(7, '318', 3, status: 'pronto', prontoEm: DateTime.now())
+        .copyWith(assinaturaPedidoBytes: png);
+    await tester.pumpWidget(_app(ProducaoTab(
+      carregar: () async => [p],
+      buscarDetalhe: (id) async => (raw: <String, dynamic>{'id': id}, parsed: p),
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cliente 318'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('assinatura_pedido')), findsOneWidget);
+    expect(find.byKey(const ValueKey('assinatura_entrega')), findsNothing);
+    final linha = find
+        .ancestor(of: find.text('Assinatura da entrega'), matching: find.byType(Row))
+        .first;
+    expect(find.descendant(of: linha, matching: find.text('—')), findsOneWidget);
   });
 
   testWidgets('selo alterado depois de pronto tem prioridade sobre alterado as', (tester) async {

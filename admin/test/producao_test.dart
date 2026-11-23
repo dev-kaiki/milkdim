@@ -141,6 +141,15 @@ void main() {
     expect(Pedido.fromMap({'id': 3}).finalizadoManual, isFalse);
   });
 
+  test('colunasPedidoSemAssinatura tem o que a Produção usa e nenhuma assinatura', () {
+    final cols = colunasPedidoSemAssinatura.split(',').map((c) => c.trim()).toList();
+    for (final c in ['id', 'status', 'produtos', 'enviado_em', 'alterado_em', 'pronto_em', 'pronto_por']) {
+      expect(cols, contains(c));
+    }
+    expect(cols.where((c) => c.startsWith('assinatura')), isEmpty);
+    expect(colunasPedidoSemAssinatura.contains('assinatura'), isFalse);
+  });
+
   test('filtroSituacao', () {
     expect(filtroSituacao(null), '');
     expect(filtroSituacao('todos'), '');

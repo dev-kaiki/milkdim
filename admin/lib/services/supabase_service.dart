@@ -48,6 +48,17 @@ String filtroBuscaPedidos(String t) =>
 String filtroSituacao(String? s) =>
     (s == null || s.isEmpty || s == 'todos') ? '' : s;
 
+/// Colunas de `pedidos` que a Produção usa. Fica de fora `assinatura` e
+/// `assinatura_pedido` (bytea, pesadas): o detalhe busca a linha inteira.
+const String colunasPedidoSemAssinatura =
+    'id, numero, status, total, datahora, produtos, '
+    'vendedor_codigo, vendedor_nome, '
+    'cliente_id, cliente_nome, cliente_nome_fantasia, cliente_telefone, '
+    'cliente_whatsapp, cliente_email, cliente_endereco, cliente_cidade, '
+    'cliente_cpf_cnpj, cliente_insc_estadual, cliente_cep, cliente_anotacao, '
+    'enviado_em, alterado_em, pronto_em, pronto_por, '
+    'finalizado_em, finalizado_por, finalizado_manual, cancelado_em, cancelado_por';
+
 /// Mensagem em portugues para o erro de uma RPC de pedido.
 String mensagemErroRpcPedido(String? code) {
   switch (code) {
@@ -397,12 +408,12 @@ class SupabaseService {
   }
 
   /// Pedidos em aberto ('salvo') e prontos para entrega ('pronto'), do mais antigo enviado para o mais novo.
-  /// (`select()` traz todas as colunas, inclusive as de situacao/auditoria.)
+  /// (Sem as colunas de assinatura: ver [colunasPedidoSemAssinatura].)
   Future<List<Pedido>> buscarPedidosEmAberto() async {
     try {
       final List<dynamic> raw = await _sb
           .from('pedidos')
-          .select()
+          .select(colunasPedidoSemAssinatura)
           .inFilter('status', ['salvo', 'pronto'])
           .order('enviado_em', ascending: true);
       return raw
