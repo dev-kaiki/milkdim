@@ -27,7 +27,7 @@ class PedidosPage extends StatefulWidget {
   /// lê o SQLite ao abrir.
   final List<Map<String, dynamic>>? pedidosParaCaptura;
 
-  /// Só para a captura visual: aba aberta (0 Em aberto, 1 Finalizados, 2 Cancelados).
+  /// Só para a captura visual: aba aberta (0 Em aberto, 1 Entregues, 2 Cancelados).
   final int abaInicialParaCaptura;
 
   const PedidosPage({
@@ -116,6 +116,11 @@ class _PedidosPageState extends State<PedidosPage>
     final img = signatureToImageBytes(any);
     return (img != null && img.isNotEmpty) ? img : null;
   }
+
+  /// Assinatura do pedido para o PDF: o arquivo do aparelho, senão os bytes
+  /// (a sincronização limpa o caminho e traz os bytes do servidor).
+  Uint8List? _assinaturaPedidoAsBytes(Map<String, dynamic> pedido) => imagemDaAssinatura(pedido,
+      chaveBytes: 'assinatura_pedido', chaveCaminho: 'assinatura_pedido_path');
 
   // ---------------- Data ----------------
 
@@ -345,6 +350,7 @@ class _PedidosPageState extends State<PedidosPage>
       final bytes = await gerarPdfPedido(
         pedido: pedido,
         assinaturaBytes: assinatura,
+        assinaturaPedidoBytes: _assinaturaPedidoAsBytes(pedido),
       );
       await Printing.layoutPdf(onLayout: (format) async => bytes);
     } catch (e) {
@@ -361,6 +367,7 @@ class _PedidosPageState extends State<PedidosPage>
       final pdfBytes = await gerarPdfPedido(
         pedido: pedido,
         assinaturaBytes: assinatura,
+        assinaturaPedidoBytes: _assinaturaPedidoAsBytes(pedido),
       );
       final pdfFile = File('${dir.path}/pedido_${numero}_$id.pdf');
       await pdfFile.writeAsBytes(pdfBytes, flush: true);
@@ -577,9 +584,13 @@ class _PedidosPageState extends State<PedidosPage>
     return byKey.values.toList();
   }
 
+  /// Pedidos da aba: 'salvo' é "Em aberto" (salvo e pronto, [estaEmAberto]);
+  /// as outras abas filtram pela situação exata.
   List<Map<String, dynamic>> _filtrarPorStatus(String statusAlvo, String query) {
     final base = _pedidos.where(
-          (p) => (p['status'] ?? '').toString().toLowerCase() == statusAlvo,
+      (p) => statusAlvo == 'salvo'
+          ? estaEmAberto(p)
+          : (p['status'] ?? '').toString().toLowerCase() == statusAlvo,
     );
 
     final listBase = statusAlvo == 'finalizado'
@@ -658,8 +669,9 @@ class _PedidosPageState extends State<PedidosPage>
     return '${nomes.take(maxNames).join(', ')} +$rest';
   }
 
-  /// Selo de status do pedido: finalizado ainda não enviado aparece como
-  /// "Aguardando envio"; finalizado enviado, "Finalizado"; rascunho, "Salvo".
+  /// Selo de status do pedido: aberto, pronto ou finalizado ainda não enviado
+  /// aparece como "Aguardando envio"; pronto para entrega, "Pronto";
+  /// finalizado enviado, "Finalizado"; em aberto, "Salvo".
   Widget _seloStatus(Map<String, dynamic> p) {
     final status = (p['status'] ?? '-').toString();
     final pendente = (p['pendente_envio'] ?? 0).toString() == '1';
@@ -675,9 +687,13 @@ class _PedidosPageState extends State<PedidosPage>
       return const MdStatusChip(
           tipo: MdTipo.neutro, texto: 'Cancelado', icone: Icons.block);
     }
-    if (status == 'salvo' && pendente) {
+    if (estaEmAberto(p) && pendente) {
       return const MdStatusChip(
           tipo: MdTipo.atencao, texto: 'Aguardando envio', icone: Icons.cloud_upload_outlined);
+    }
+    if (estaPronto(p)) {
+      return const MdStatusChip(
+          tipo: MdTipo.sucesso, texto: 'Pronto', icone: Icons.local_shipping_outlined);
     }
     if (status == 'finalizado' && pendente) {
       return const MdStatusChip(
@@ -902,7 +918,8 @@ class _PedidosPageState extends State<PedidosPage>
   Widget _aba(String status) {
     final query = _buscaCtrl.text;
     final lista = _filtrarPorStatus(status, query);
-    final somenteLeitura = status != 'salvo';
+    // Em aberto (salvo e pronto) edita e cancela; entregues e cancelados só leitura.
+    bool somenteLeitura(Map<String, dynamic> p) => !estaEmAberto(p);
 
     return RefreshIndicator(
       onRefresh: _carregar,
@@ -919,7 +936,7 @@ class _PedidosPageState extends State<PedidosPage>
                 _ => Icons.edit_note,
               },
               titulo: switch (status) {
-                'finalizado' => 'Nenhum pedido finalizado.',
+                'finalizado' => 'Nenhum pedido entregue.',
                 'cancelado' => 'Nenhum pedido cancelado.',
                 _ => 'Nenhum pedido em aberto.',
               },
@@ -932,7 +949,7 @@ class _PedidosPageState extends State<PedidosPage>
               padding: pad,
               itemCount: lista.length,
               separatorBuilder: (_, __) => const SizedBox(height: MdSpace.md),
-              itemBuilder: (_, i) => _pedidoTile(lista[i], somenteLeitura: somenteLeitura),
+              itemBuilder: (_, i) => _pedidoTile(lista[i], somenteLeitura: somenteLeitura(lista[i])),
             );
           }
           final largura =
@@ -947,7 +964,7 @@ class _PedidosPageState extends State<PedidosPage>
                 for (final p in lista)
                   SizedBox(
                     width: largura,
-                    child: _pedidoTile(p, somenteLeitura: somenteLeitura),
+                    child: _pedidoTile(p, somenteLeitura: somenteLeitura(p)),
                   ),
               ],
             ),
@@ -1306,7 +1323,7 @@ class _PedidosPageState extends State<PedidosPage>
           bottom: TabBar(
             tabs: [
               Tab(text: 'Em aberto ($abertosCount)'),
-              Tab(text: 'Finalizados ($finalizadosCount)'),
+              Tab(text: 'Entregues ($finalizadosCount)'),
               Tab(text: 'Cancelados ($canceladosCount)'),
             ],
           ),

@@ -182,8 +182,13 @@ class ProdutoQtdTile extends StatelessWidget {
 /// Item do resumo: nome, quantidade e subtotal.
 typedef ItemResumo = ({String nome, int quantidade, double subtotal});
 
+/// Botão do resumo: texto, ícone e ação.
+typedef BotaoResumo = ({String rotulo, IconData icone, VoidCallback onPressed});
+
 /// Conteúdo da folha "Resumo do Pedido" (dados do cliente, itens, total,
-/// assinatura e os botões Salvar/Finalizar). Os callbacks vêm da página.
+/// a assinatura do pedido e os dois botões). Os textos e as ações dos botões
+/// vêm da página: "Enviar pedido"/"Salvar rascunho" no pedido novo,
+/// "Registrar entrega"/"Salvar alterações" no pedido aberto.
 class ResumoPedido extends StatelessWidget {
   final String numero;
   final String cliente;
@@ -194,11 +199,17 @@ class ResumoPedido extends StatelessWidget {
   final String vendedor;
   final List<ItemResumo> itens;
   final double total;
+
+  /// A assinatura do pedido (a da entrega é pedida em "Registrar entrega").
   final Uint8List? assinatura;
   final bool ocupado;
   final VoidCallback onAssinar;
-  final VoidCallback onSalvar;
-  final VoidCallback onFinalizar;
+
+  /// Botão de destaque (cheio), em cima.
+  final BotaoResumo principal;
+
+  /// Botão secundário (contorno), embaixo.
+  final BotaoResumo secundario;
 
   const ResumoPedido({
     super.key,
@@ -212,8 +223,8 @@ class ResumoPedido extends StatelessWidget {
     required this.assinatura,
     required this.ocupado,
     required this.onAssinar,
-    required this.onSalvar,
-    required this.onFinalizar,
+    required this.principal,
+    required this.secundario,
   });
 
   @override
@@ -291,7 +302,7 @@ class ResumoPedido extends StatelessWidget {
           ],
         ),
         const SizedBox(height: MdSpace.lg),
-        Text('Assinatura', style: tt.titleSmall),
+        Text('Assinatura do pedido', style: tt.titleSmall),
         const SizedBox(height: MdSpace.sm),
         Row(
           children: [
@@ -331,35 +342,29 @@ class ResumoPedido extends StatelessWidget {
           ],
         ),
         const SizedBox(height: MdSpace.xl),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: ocupado ? null : onSalvar,
-                icon: const Icon(Icons.save_outlined),
-                label: const Text('Salvar'),
-                style: OutlinedButton.styleFrom(minimumSize: const Size(0, 56)),
-              ),
-            ),
-            const SizedBox(width: MdSpace.md),
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: ocupado ? null : onFinalizar,
-                icon: ocupado
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          color: MdColors.textMuted,
-                          strokeWidth: 2.2,
-                        ),
-                      )
-                    : const Icon(Icons.check),
-                label: const Text('Finalizar'),
-                style: FilledButton.styleFrom(minimumSize: const Size(0, 56)),
-              ),
-            ),
-          ],
+        // Um embaixo do outro, na largura toda: os textos ("Salvar
+        // alterações", "Registrar entrega") não cabem lado a lado num celular.
+        FilledButton.icon(
+          onPressed: ocupado ? null : principal.onPressed,
+          icon: ocupado
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    color: MdColors.textMuted,
+                    strokeWidth: 2.2,
+                  ),
+                )
+              : Icon(principal.icone),
+          label: Text(principal.rotulo),
+          style: FilledButton.styleFrom(minimumSize: const Size(0, 56)),
+        ),
+        const SizedBox(height: MdSpace.md),
+        OutlinedButton.icon(
+          onPressed: ocupado ? null : secundario.onPressed,
+          icon: Icon(secundario.icone),
+          label: Text(secundario.rotulo),
+          style: OutlinedButton.styleFrom(minimumSize: const Size(0, 56)),
         ),
       ],
     );

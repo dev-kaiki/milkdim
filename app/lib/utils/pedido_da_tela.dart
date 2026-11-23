@@ -6,7 +6,33 @@
 
 import 'dart:typed_data';
 
-import 'regras_pedido.dart' show estaPronto, itensOuClienteMudaram, mesmosItens;
+import 'regras_pedido.dart'
+    show estaPronto, itensOuClienteMudaram, mesmosItens, nomeClienteComparavel;
+import 'supabase_helper.dart' show ResultadoGravacao;
+
+/// Qual assinatura a tela pede ao cliente.
+enum TipoAssinatura {
+  /// Confirma o pedido: sem ela o pedido não vai para a fábrica.
+  pedido,
+
+  /// Confirma a entrega (`assinatura`): finaliza o pedido.
+  entrega;
+
+  /// Título da tela de assinatura (o mesmo rótulo do PDF).
+  String get titulo => switch (this) {
+        TipoAssinatura.pedido => 'Assinatura do pedido',
+        TipoAssinatura.entrega => 'Assinatura da entrega',
+      };
+}
+
+/// Abre a tela de assinatura do [tipo] (com o [aviso], quando houver) e
+/// devolve a imagem assinada, ou null se o vendedor voltou sem assinar.
+/// As telas usam a `AssinaturaPage`; o teste injeta outra.
+typedef PedirAssinatura = Future<Uint8List?> Function(TipoAssinatura tipo, {String? aviso});
+
+/// Grava no aparelho e envia (padrão: `gravarPedidoEEnviar`).
+typedef GravarPedido = Future<ResultadoGravacao> Function(Map<String, dynamic> pedido,
+    {required bool novo});
 
 /// Mapa do pedido como a tela grava.
 /// - [base]: o que vem antes (vendedor no pedido novo; a linha do SQLite na
@@ -20,7 +46,9 @@ import 'regras_pedido.dart' show estaPronto, itensOuClienteMudaram, mesmosItens;
 ///   gravar: `pronto` só se a [base] já está `pronto` e não mudaram itens nem
 ///   cliente (`itensOuClienteMudaram`); senão `salvo` (o vendedor nunca grava
 ///   `pronto`). As outras situações passam como vieram.
-/// - [cliente]: os campos `cliente_*` de texto (nome, telefone, ...).
+/// - [cliente]: os campos `cliente_*` de texto (nome, telefone, ...). Se o
+///   `cliente_nome` só difere do da [base] por espaços nas pontas (ou null
+///   contra ''), vai o da [base] como está: o servidor compara o valor cru.
 /// - [assinatura]: os bytes da imagem da assinatura da **entrega**. Vão no
 ///   mapa para o SQLite guardar e para o envio (e os reenvios) levarem a
 ///   assinatura ao servidor. Sem bytes novos, fica a de [base].
@@ -45,8 +73,10 @@ Map<String, dynamic> pedidoDaTela({
   String? assinaturaPedidoPath,
 }) {
   final temAssinaturaPedido = assinaturaPedido != null && assinaturaPedido.isNotEmpty;
-  final mesmosDaBase =
-      base.containsKey('produtos') && mesmosItens(base['produtos'], produtos);
+  final mesmosDaBase = base.containsKey('produtos') && mesmosItens(base['produtos'], produtos);
+  final mesmoNome = base.containsKey('cliente_nome') &&
+      cliente.containsKey('cliente_nome') &&
+      nomeClienteComparavel(base['cliente_nome']) == nomeClienteComparavel(cliente['cliente_nome']);
   final pedido = <String, dynamic>{
     ...base,
     'numero': numero,
@@ -56,6 +86,7 @@ Map<String, dynamic> pedidoDaTela({
     'datahora': datahora,
     'cliente_id': clienteId,
     ...cliente,
+    if (mesmoNome) 'cliente_nome': base['cliente_nome'],
     if (assinatura != null && assinatura.isNotEmpty) 'assinatura': assinatura,
     // caminho local da assinatura
     'assinatura_path': assinaturaPath,

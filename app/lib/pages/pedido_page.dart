@@ -1,8 +1,6 @@
 // lib/pages/pedido_page.dart
 
 import 'dart:typed_data';
-import 'dart:io';
-import 'package:path_provider/path_provider.dart';
 
 import 'package:flutter/material.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
@@ -24,7 +22,19 @@ class PedidoPage extends StatefulWidget {
   /// e não consulta SQLite nem rede.
   final ({List<Map<String, dynamic>> clientes, List<Produto> produtos})? dadosParaCaptura;
 
-  const PedidoPage({super.key, required this.vendedor, this.dadosParaCaptura});
+  /// Para teste: no lugar de abrir a `AssinaturaPage`.
+  final PedirAssinatura? pedirAssinatura;
+
+  /// Para teste: no lugar de `gravarPedidoEEnviar`.
+  final GravarPedido? gravar;
+
+  const PedidoPage({
+    super.key,
+    required this.vendedor,
+    this.dadosParaCaptura,
+    this.pedirAssinatura,
+    this.gravar,
+  });
 
   @override
   State<PedidoPage> createState() => _PedidoPageState();
@@ -33,7 +43,9 @@ class PedidoPage extends StatefulWidget {
 class _PedidoPageState extends State<PedidoPage> {
   Map<Produto, int> carrinho = {};
   Map<Produto, TextEditingController> _qtdControllers = {};
-  Uint8List? _assinatura; // PNG/JPEG bytes prontos para gravar e gerar PDF
+  /// Assinatura do pedido (PNG/JPEG). A da entrega é pedida depois, ao
+  /// registrar a entrega na edição.
+  Uint8List? _assinaturaPedido;
 
   // CLIENTE
   int? _clienteId;
@@ -236,28 +248,33 @@ class _PedidoPageState extends State<PedidoPage> {
     });
   }
 
-  // ====== Grava assinatura no Documents/signatures e retorna caminho ======
-  Future<String?> _gravarAssinaturaLocal(Uint8List? bytes, {required String numero}) async {
-    if (bytes == null || bytes.isEmpty) return null;
-    final dir = await getApplicationDocumentsDirectory();
-    final sigDir = Directory('${dir.path}/signatures');
-    if (!await sigDir.exists()) {
-      await sigDir.create(recursive: true);
-      // ignore: avoid_print
-      print('[PEDIDO] diretório criado: ${sigDir.path}');
-    }
-    final ts = DateTime.now().millisecondsSinceEpoch;
-    final safeNum = (numero.isEmpty ? 's_n' : numero)
-        .replaceAll(RegExp(r'[^0-9A-Za-z_-]'), '_');
-    final file = File('${sigDir.path}/sig_${safeNum}_$ts.png');
-    await file.writeAsBytes(bytes, flush: true);
-    // ignore: avoid_print
-    print('[PEDIDO] assinatura gravada (${bytes.length} bytes) em: ${file.path}');
-    return file.path;
+  /// Abre a tela de assinatura do pedido (com o [aviso], se houver) e devolve
+  /// a imagem, ou null se o vendedor voltou sem assinar.
+  Future<Uint8List?> _pedirAssinatura({String? aviso}) async {
+    final injetada = widget.pedirAssinatura;
+    if (injetada != null) return injetada(TipoAssinatura.pedido, aviso: aviso);
+    // PODE VOLTAR QUALQUER FORMATO -> convertemos
+    final dynamic ret = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => assinatura.AssinaturaPage(
+          assinatura: _assinaturaPedido,
+          titulo: TipoAssinatura.pedido.titulo,
+          aviso: aviso,
+        ),
+      ),
+    );
+    final bytes = signatureToImageBytes(ret);
+    return (bytes == null || bytes.isEmpty) ? null : bytes;
   }
 
-  /// Salva/finaliza e fecha a página retornando o `status`
-  Future<void> _salvarPedido(String status) async {
+  /// "Enviar pedido" ([enviar]): sem a assinatura do pedido, pede ao cliente
+  /// antes (desistiu: nada é gravado e o formulário continua); grava `salvo`
+  /// com a assinatura e envia.
+  /// "Salvar rascunho": grava `salvo` só no aparelho (`so_local = 1`), sem
+  /// assinatura e sem enviar.
+  /// Gravou: fecha a página devolvendo o `status`.
+  Future<void> _salvarPedido({required bool enviar}) async {
     if (carregando) return;
     if (nomeCtrl.text.trim().isEmpty) {
       _showMsg('Preencha o nome do cliente!');
@@ -278,9 +295,10 @@ class _PedidoPageState extends State<PedidoPage> {
       _showMsg('Adicione ao menos um produto ao pedido!');
       return;
     }
-    if (status == 'finalizado' && (_assinatura == null || _assinatura!.isEmpty)) {
-      _showMsg('É obrigatório assinar para finalizar!');
-      return;
+    if (enviar && (_assinaturaPedido == null || _assinaturaPedido!.isEmpty)) {
+      final bytes = await _pedirAssinatura(aviso: kAvisoAssinarPedido);
+      if (!mounted || bytes == null) return;
+      setState(() => _assinaturaPedido = bytes);
     }
 
     setState(() => carregando = true);
@@ -298,30 +316,33 @@ class _PedidoPageState extends State<PedidoPage> {
         return;
       }
 
-      final caminhoAss =
-      await _gravarAssinaturaLocal(_assinatura, numero: numeroPedidoCtrl.text.trim());
-
-      final pedido = pedidoDaTela(
-        base: {
-          'vendedor_codigo': widget.vendedor['codigo'],
-          'vendedor_nome': widget.vendedor['nome'],
-        },
-        numero: numeroPedidoCtrl.text.trim(),
-        produtos: produtosList,
-        total: total,
-        status: status,
-        datahora: DateTime.now().toUtc().toIso8601String(),
-        clienteId: _clienteId,
-        cliente: _camposCliente(),
-        // os bytes vão ao servidor; o caminho fica só no aparelho
-        assinatura: _assinatura,
-        assinaturaPath: caminhoAss,
-      );
+      final pedido = {
+        ...pedidoDaTela(
+          base: {
+            'vendedor_codigo': widget.vendedor['codigo'],
+            'vendedor_nome': widget.vendedor['nome'],
+          },
+          numero: numeroPedidoCtrl.text.trim(),
+          produtos: produtosList,
+          total: total,
+          status: 'salvo',
+          datahora: DateTime.now().toUtc().toIso8601String(),
+          clienteId: _clienteId,
+          cliente: _camposCliente(),
+          // a entrega é assinada depois, ao registrar a entrega
+          assinatura: null,
+          assinaturaPath: null,
+          // os bytes vão no SQLite e ao servidor (sem arquivo no aparelho)
+          assinaturaPedido: enviar ? _assinaturaPedido : null,
+        ),
+        // rascunho: fica só no aparelho até o cliente assinar e o pedido ir
+        if (!enviar) 'so_local': 1,
+      };
+      final status = pedido['status'] as String;
 
       // Grava no aparelho na hora (fora da trava: um pedido novo não pode
-      // estar num envio em andamento) e, se finalizado, tenta enviar. O helper
-      // remove `assinatura_path` do payload e o preserva no SQLite.
-      final r = await gravarPedidoEEnviar(pedido, novo: true);
+      // estar num envio em andamento) e, se não for rascunho, tenta enviar.
+      final r = await (widget.gravar ?? gravarPedidoEEnviar)(pedido, novo: true);
 
       if (!mounted) return;
       final msg = mensagemGravacao(r, status);
@@ -389,7 +410,8 @@ class _PedidoPageState extends State<PedidoPage> {
               ),
               child: MdContentWidth(
                 maxWidth: 640,
-                child: ResumoPedido(
+                // StatefulBuilder: a prévia da assinatura atualiza na folha aberta.
+                child: StatefulBuilder(builder: (folha, setFolha) => ResumoPedido(
                   numero: numeroPedidoCtrl.text,
                   cliente: nomeCtrl.text,
                   ultimoPedido: _ultimoPedido,
@@ -411,35 +433,31 @@ class _PedidoPageState extends State<PedidoPage> {
                       (nome: e.key.nome, quantidade: e.value, subtotal: e.key.preco * e.value),
                   ],
                   total: total,
-                  assinatura: _assinatura,
+                  assinatura: _assinaturaPedido,
                   ocupado: carregando,
                   onAssinar: () async {
-                    // PODE VOLTAR QUALQUER FORMATO -> convertemos
-                    final dynamic assinaturaAny = await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => assinatura.AssinaturaPage(
-                          assinatura: _assinatura,
-                        ),
-                      ),
-                    );
-                    if (!mounted) return;
-                    final bytes = signatureToImageBytes(assinaturaAny);
-                    if (bytes != null && bytes.isNotEmpty) {
-                      setState(() {
-                        _assinatura = bytes;
-                      });
-                    }
+                    final bytes = await _pedirAssinatura();
+                    if (!mounted || bytes == null) return;
+                    setState(() => _assinaturaPedido = bytes);
+                    if (folha.mounted) setFolha(() {});
                   },
-                  onSalvar: () {
-                    Navigator.of(context).pop();
-                    _salvarPedido('salvo');
-                  },
-                  onFinalizar: () {
-                    Navigator.of(context).pop();
-                    _salvarPedido('finalizado');
-                  },
-                ),
+                  principal: (
+                    rotulo: 'Enviar pedido',
+                    icone: Icons.send_outlined,
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      _salvarPedido(enviar: true);
+                    },
+                  ),
+                  secundario: (
+                    rotulo: 'Salvar rascunho',
+                    icone: Icons.save_outlined,
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      _salvarPedido(enviar: false);
+                    },
+                  ),
+                )),
               ),
             ),
           ),

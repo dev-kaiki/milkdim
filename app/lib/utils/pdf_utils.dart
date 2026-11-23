@@ -1,5 +1,6 @@
 // lib/utils/pdf_utils.dart
 import 'dart:convert';
+import 'dart:io' show File;
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -13,18 +14,65 @@ import 'convert.dart'; // signatureToImageBytes, imageTypeFromBytes
 /// Ative/desative logs desta unidade aqui:
 const bool _kPdfDebug = true;
 
+/// Rótulo da assinatura que confirma o pedido.
+const String kRotuloAssinaturaPedido = 'Assinatura do pedido';
+
+/// Rótulo da assinatura que confirma a entrega.
+const String kRotuloAssinaturaEntrega = 'Assinatura da entrega';
+
+/// Uma assinatura no PDF: o rótulo e a imagem (null = "Não assinada").
+typedef AssinaturaPdf = ({String rotulo, Uint8List? imagem});
+
+/// As assinaturas que o PDF mostra, na ordem: a do pedido e a da entrega,
+/// cada uma só se existir. Sem nenhuma, um quadro "Assinatura do pedido"
+/// vazio (o pedido não foi assinado).
+List<AssinaturaPdf> assinaturasDoPdf({Uint8List? pedido, Uint8List? entrega}) {
+  final out = <AssinaturaPdf>[
+    if (pedido != null && pedido.isNotEmpty) (rotulo: kRotuloAssinaturaPedido, imagem: pedido),
+    if (entrega != null && entrega.isNotEmpty)
+      (rotulo: kRotuloAssinaturaEntrega, imagem: entrega),
+  ];
+  return out.isEmpty ? const [(rotulo: kRotuloAssinaturaPedido, imagem: null)] : out;
+}
+
+/// Imagem (PNG/JPEG) de uma assinatura do [pedido]: o arquivo de
+/// [chaveCaminho] quando existe no aparelho; senão os bytes de [chaveBytes]
+/// (lista, hex `0x`/`\x`, base64 ou data-URI). A sincronização limpa o
+/// caminho e traz os bytes do servidor, então os bytes são a fonte segura.
+Uint8List? imagemDaAssinatura(Map pedido,
+    {required String chaveBytes, required String chaveCaminho}) {
+  final caminho = pedido[chaveCaminho];
+  if (caminho is String && caminho.trim().isNotEmpty) {
+    try {
+      final p = caminho.startsWith('file://') ? Uri.parse(caminho).toFilePath() : caminho;
+      final f = File(p);
+      if (f.existsSync()) {
+        final img = signatureToImageBytes(f.readAsBytesSync());
+        if (img != null && img.isNotEmpty) return img;
+      }
+    } catch (_) {
+      // arquivo ilegível: tenta os bytes
+    }
+  }
+  final img = signatureToImageBytes(pedido[chaveBytes]);
+  return (img != null && img.isNotEmpty) ? img : null;
+}
+
 /// Gera o PDF do pedido em um Isolate.
 /// - fontes Unicode via assets (NotoSans Regular/Bold/Itálico)
-/// - assinatura como PNG/JPEG nos bytes (quando houver)
+/// - as assinaturas como PNG/JPEG nos bytes (quando houver), cada uma com o
+///   seu rótulo ([assinaturasDoPdf])
 ///
 /// Uso:
 /// final bytes = await gerarPdfPedido(
 ///   pedido: pedidoMap,
-///   assinaturaBytes: assinaturaOpcional, // pode ser bytes, base64, hex, path, data-uri...
+///   assinaturaBytes: assinaturaDaEntrega, // pode ser bytes, base64, hex, data-uri...
+///   assinaturaPedidoBytes: assinaturaDoPedido,
 /// );
 Future<Uint8List> gerarPdfPedido({
   required Map<String, dynamic> pedido,
   dynamic assinaturaBytes,
+  dynamic assinaturaPedidoBytes,
 }) async {
   if (_kPdfDebug) {
     print('[PDF] gerarPdfPedido() - inicio | num=${pedido['numero']} id=${pedido['id']}');
@@ -55,16 +103,16 @@ Future<Uint8List> gerarPdfPedido({
     logoBytes = null;
   }
 
-  // Normaliza a assinatura AQUI (fora do isolate).
+  // Normaliza a assinatura da entrega AQUI (fora do isolate): a que veio, ou
+  // o arquivo do aparelho, ou os bytes guardados (inclusive chaves antigas).
   final rawSig = assinaturaBytes ??
-      pedido['assinatura_path'] ??
-      pedido['assinatura'] ??
       pedido['assinatura_base64'] ??
       pedido['assinaturaBytes'] ??
       pedido['signature'] ??
       pedido['signature_base64'];
 
-  final Uint8List? assinaturaPngBytes = signatureToImageBytes(rawSig);
+  final Uint8List? assinaturaPngBytes = signatureToImageBytes(rawSig) ??
+      imagemDaAssinatura(pedido, chaveBytes: 'assinatura', chaveCaminho: 'assinatura_path');
   if (_kPdfDebug) {
     if (assinaturaPngBytes == null) {
       print('[PDF] assinatura: null/indisponível (raw=${rawSig?.runtimeType})');
@@ -74,13 +122,20 @@ Future<Uint8List> gerarPdfPedido({
     }
   }
 
+  final Uint8List? assinaturaPedidoPng = signatureToImageBytes(assinaturaPedidoBytes) ??
+      imagemDaAssinatura(pedido,
+          chaveBytes: 'assinatura_pedido', chaveCaminho: 'assinatura_pedido_path');
+
   final payload = <String, dynamic>{
     'pedido': Map<String, dynamic>.from(pedido),
     'fontBase': fontBaseBytes,
     'fontBold': fontBoldBytes,
     'fontItalic': fontItalicBytes,
     'logo': logoBytes,
-    'assinatura': assinaturaPngBytes,
+    'assinaturas': [
+      for (final a in assinaturasDoPdf(pedido: assinaturaPedidoPng, entrega: assinaturaPngBytes))
+        {'rotulo': a.rotulo, 'imagem': a.imagem},
+    ],
     '_debug': _kPdfDebug,
   };
 
@@ -98,13 +153,57 @@ Future<Uint8List> _buildPdfBytes(Map<String, dynamic> data) async {
   final italic = pw.Font.ttf((data['fontItalic'] as Uint8List).buffer.asByteData());
 
   final Uint8List? logoBytes = data['logo'] as Uint8List?;
-  final Uint8List? assinaturaBytes = data['assinatura'] as Uint8List?;
+  final assinaturas = [
+    for (final a in (data['assinaturas'] as List))
+      (rotulo: (a as Map)['rotulo'] as String, imagem: a['imagem'] as Uint8List?),
+  ];
   final bool dbg = (data['_debug'] as bool?) ?? false;
 
   if (dbg) {
     print('[PDF][isolate] construindo PDF | num=${pedido['numero']} id=${pedido['id']} '
-        '| assinatura=${assinaturaBytes == null ? 'null' : '${assinaturaBytes.length} bytes'}');
+        '| assinaturas=${assinaturas.map((a) => '${a.rotulo}:${a.imagem?.length ?? 0}').join(', ')}');
   }
+
+  // Quadro de uma assinatura com o seu rótulo (duas lado a lado ficam menores).
+  final larguraQuadro = assinaturas.length > 1 ? 200.0 : 220.0;
+  pw.Widget quadroAssinatura(AssinaturaPdf a) => pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Text(
+            '${a.rotulo}:',
+            style: const pw.TextStyle(color: PdfColors.orange800, fontSize: 12),
+          ),
+          pw.SizedBox(height: 6),
+          pw.Container(
+            width: larguraQuadro,
+            height: 84,
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(color: PdfColors.orange300),
+              borderRadius: pw.BorderRadius.circular(6),
+              color: PdfColors.white,
+            ),
+            child: (a.imagem != null && a.imagem!.isNotEmpty)
+                ? pw.Center(
+                    child: pw.Image(
+                      pw.MemoryImage(a.imagem!),
+                      width: larguraQuadro - 10,
+                      height: 74,
+                      fit: pw.BoxFit.contain,
+                    ),
+                  )
+                : pw.Center(
+                    child: pw.Text(
+                      'Não assinada',
+                      style: pw.TextStyle(
+                        color: PdfColors.orange300,
+                        fontStyle: pw.FontStyle.italic, // usa NotoSans-Italico.ttf
+                        fontSize: 10,
+                      ),
+                    ),
+                  ),
+          ),
+        ],
+      );
 
   final pdf = pw.Document(
     theme: pw.ThemeData.withFont(
@@ -415,55 +514,24 @@ Future<Uint8List> _buildPdfBytes(Map<String, dynamic> data) async {
             pw.Spacer(),
             pw.Divider(color: PdfColors.orange100, thickness: 0.8),
 
-            // Assinatura
+            // Assinaturas (a do pedido e/ou a da entrega, cada uma com o seu rótulo)
             pw.Row(
-              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               crossAxisAlignment: pw.CrossAxisAlignment.center,
               children: [
-                pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                    pw.Text(
-                      'Assinatura do Cliente:',
-                      style: const pw.TextStyle(color: PdfColors.orange800, fontSize: 12),
+                for (var i = 0; i < assinaturas.length; i++) ...[
+                  if (i > 0) pw.SizedBox(width: 12),
+                  quadroAssinatura(assinaturas[i]),
+                ],
+                pw.SizedBox(width: 12),
+                pw.Expanded(
+                  child: pw.Text(
+                    'Obrigado pela preferência!',
+                    textAlign: pw.TextAlign.right,
+                    style: pw.TextStyle(
+                      color: PdfColors.orange700,
+                      fontWeight: pw.FontWeight.bold,
+                      fontSize: 13.5,
                     ),
-                    pw.SizedBox(height: 6),
-                    pw.Container(
-                      width: 220,
-                      height: 84,
-                      decoration: pw.BoxDecoration(
-                        border: pw.Border.all(color: PdfColors.orange300),
-                        borderRadius: pw.BorderRadius.circular(6),
-                        color: PdfColors.white,
-                      ),
-                      child: (assinaturaBytes != null && assinaturaBytes.isNotEmpty)
-                          ? pw.Center(
-                        child: pw.Image(
-                          pw.MemoryImage(assinaturaBytes),
-                          width: 210,
-                          height: 74,
-                          fit: pw.BoxFit.contain,
-                        ),
-                      )
-                          : pw.Center(
-                        child: pw.Text(
-                          'Não assinada',
-                          style: pw.TextStyle(
-                            color: PdfColors.orange300,
-                            fontStyle: pw.FontStyle.italic, // usa NotoSans-Italico.ttf
-                            fontSize: 10,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                pw.Text(
-                  'Obrigado pela preferência!',
-                  style: pw.TextStyle(
-                    color: PdfColors.orange700,
-                    fontWeight: pw.FontWeight.bold,
-                    fontSize: 13.5,
                   ),
                 ),
               ],

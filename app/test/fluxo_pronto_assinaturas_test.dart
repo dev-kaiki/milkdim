@@ -457,9 +457,17 @@ void main() {
       expect(
           precisaAssinaturaDoPedido(
               original: {...semAss, 'assinatura_pedido_path': '/sig/p.png'},
-              editado: editado()),
+              editado: editado(),
+              arquivoExiste: (c) => c == '/sig/p.png'),
           isFalse,
-          reason: 'só o arquivo também vale');
+          reason: 'só o arquivo também vale, se existir');
+      expect(
+          precisaAssinaturaDoPedido(
+              original: {...semAss, 'assinatura_pedido_path': '/sig/p.png'},
+              editado: editado(),
+              arquivoExiste: (_) => false),
+          isTrue,
+          reason: 'caminho sem arquivo não é assinatura');
     });
     test('precisaAssinaturaDoPedido: com assinatura e itens iguais', () {
       expect(precisaAssinaturaDoPedido(original: original, editado: editado()), isFalse);

@@ -1,5 +1,6 @@
 // Regras puras do fluxo do pedido (sem Flutter nem banco), usadas pelas telas.
 import 'dart:convert';
+import 'dart:io' show File;
 
 import 'db.dart' show buscarUltimoNumeroPedido, jaChegouAoServidor, kErroNumeroEmUso, numeroUsadoNoAparelho;
 import 'supabase_helper.dart' show ResultadoGravacao, kPrazoConsultaNumero, numeroLivreNoServidor;
@@ -43,7 +44,13 @@ AcaoRemover acaoRemover(Map<String, dynamic> p) {
 String? mensagemGravacao(ResultadoGravacao r, String status) {
   switch (r) {
     case ResultadoGravacao.enviado:
-      return status == 'salvo' ? 'Pedido enviado para produção.' : null;
+      // `pronto` só volta da tela quando nada mudou: o pedido já estava na
+      // produção (e pronto), então não é "enviado para produção".
+      return switch (status) {
+        'salvo' => 'Pedido enviado para produção.',
+        'pronto' => 'Pedido salvo.',
+        _ => null,
+      };
     case ResultadoGravacao.pendente:
       return 'Pedido salvo. Será enviado quando houver internet.';
     case ResultadoGravacao.fechadoNoControle:
@@ -108,6 +115,13 @@ Future<String?> proximoNumeroLivreDoVendedor(String vendedorCodigo,
 
 // ---------------------- Assinatura do pedido ----------------------
 
+/// Aviso da tela de assinatura: pedido nunca assinado (ou rascunho).
+const String kAvisoAssinarPedido = 'O cliente precisa assinar o pedido.';
+
+/// Aviso da tela de assinatura: pedido assinado cujos itens ou cliente mudaram.
+const String kAvisoAssinarPedidoDeNovo =
+    'O cliente precisa assinar o pedido de novo, porque os itens mudaram.';
+
 double _numero(Object? v) {
   if (v is num) return v.toDouble();
   return double.tryParse('${v ?? ''}'.trim().replaceAll(',', '.')) ?? 0.0;
@@ -116,8 +130,11 @@ double _numero(Object? v) {
 int? _inteiro(Object? v) => v is num ? v.toInt() : int.tryParse('${v ?? ''}'.trim());
 
 /// Itens comparáveis: nome, quantidade e preço de cada um, em ordem fixa
-/// (a ordem da lista e o subtotal não contam). `produtos` pode ser a lista ou
-/// o texto JSON do SQLite. null se não der para ler.
+/// (a ordem da lista e o subtotal não contam). Quantidade e preço contam
+/// **exatos**, como números (2 e 2.0 são iguais; 18.9 e 18.900000000000002
+/// não): o servidor compara o jsonb, então só o subtotal pode ter ruído.
+/// `produtos` pode ser a lista ou o texto JSON do SQLite. null se não der
+/// para ler.
 List<String>? _itensComparaveis(Object? produtos) {
   Object? lista = produtos;
   if (lista is String) {
@@ -132,9 +149,11 @@ List<String>? _itensComparaveis(Object? produtos) {
   final out = <String>[];
   for (final it in lista) {
     if (it is! Map) return null;
+    // double.toString() é a forma mais curta que volta ao mesmo double:
+    // textos iguais <=> números iguais.
     out.add('${(it['nome'] ?? '').toString().trim()}'
-        '|${_numero(it['quantidade']).toStringAsFixed(3)}'
-        '|${_numero(it['preco']).toStringAsFixed(2)}');
+        '|${_numero(it['quantidade'])}'
+        '|${_numero(it['preco'])}');
   }
   out.sort();
   return out;
@@ -152,24 +171,76 @@ bool mesmosItens(Object? antes, Object? depois) {
   return true;
 }
 
+/// Nome do cliente para comparar: sem espaços nas pontas, e null vale ''.
+String nomeClienteComparavel(Object? v) => (v ?? '').toString().trim();
+
 /// Mudaram os itens (nome, quantidade, preço), o `cliente_id` ou o
 /// `cliente_nome`? É o que tira um pedido de `pronto` no servidor.
-/// O nome é comparado exatamente como vai ao servidor (null e '' diferem):
-/// na dúvida conta como mudança, que só pede uma assinatura a mais.
+/// O nome é comparado sem espaços nas pontas e com null igual a '': salvar de
+/// novo sem mexer não pede assinatura. O servidor compara o valor cru, por
+/// isso `pedidoDaTela` manda o nome guardado quando só mudam espaços.
 bool itensOuClienteMudaram(Map antes, Map depois) =>
     !mesmosItens(antes['produtos'], depois['produtos']) ||
     _inteiro(antes['cliente_id']) != _inteiro(depois['cliente_id']) ||
-    antes['cliente_nome']?.toString() != depois['cliente_nome']?.toString();
+    nomeClienteComparavel(antes['cliente_nome']) !=
+        nomeClienteComparavel(depois['cliente_nome']);
 
-bool _temAssinatura(Object? v) =>
-    v is List ? v.isNotEmpty : (v != null && '$v'.trim().isNotEmpty);
+/// Os bytes da assinatura existem (lista não vazia, ou texto hex/base64 com
+/// conteúdo além do prefixo `0x`/`\x`)?
+bool _temBytes(Object? v) {
+  if (v is List) return v.isNotEmpty;
+  if (v == null) return false;
+  final t = '$v'.trim();
+  return t.isNotEmpty && t != '0x' && t != r'\x';
+}
+
+/// O arquivo existe no aparelho (aceita `file://`).
+bool arquivoExisteNoAparelho(String caminho) {
+  try {
+    final p = caminho.startsWith('file://') ? Uri.parse(caminho).toFilePath() : caminho;
+    return File(p).existsSync();
+  } catch (_) {
+    return false;
+  }
+}
+
+/// O pedido tem a assinatura do pedido: os bytes (`assinatura_pedido`) ou o
+/// arquivo de `assinatura_pedido_path` **existindo** no aparelho. Só o
+/// caminho, sem o arquivo, não conta.
+bool temAssinaturaDoPedido(Map p,
+    {bool Function(String caminho) arquivoExiste = arquivoExisteNoAparelho}) {
+  if (_temBytes(p['assinatura_pedido'])) return true;
+  final caminho = (p['assinatura_pedido_path'] ?? '').toString().trim();
+  return caminho.isNotEmpty && arquivoExiste(caminho);
+}
 
 /// Salvar [editado] pede a assinatura do pedido de novo?
 /// - [original] é rascunho só do aparelho (`so_local = 1`): o envio pede;
-/// - [original] não tem assinatura do pedido (nem bytes nem arquivo);
+/// - [original] não tem assinatura do pedido ([temAssinaturaDoPedido]);
 /// - mudaram os itens ou o cliente ([itensOuClienteMudaram]).
-bool precisaAssinaturaDoPedido({required Map original, required Map editado}) =>
+bool precisaAssinaturaDoPedido({
+  required Map original,
+  required Map editado,
+  bool Function(String caminho) arquivoExiste = arquivoExisteNoAparelho,
+}) =>
     _verdadeiro(original['so_local']) ||
-    !(_temAssinatura(original['assinatura_pedido']) ||
-        _temAssinatura(original['assinatura_pedido_path'])) ||
+    !temAssinaturaDoPedido(original, arquivoExiste: arquivoExiste) ||
     itensOuClienteMudaram(original, editado);
+
+/// O aviso da tela de assinatura ao salvar [editado], ou null quando não
+/// precisa de assinatura nova ([precisaAssinaturaDoPedido]).
+/// Pedido já assinado: [kAvisoAssinarPedidoDeNovo]; rascunho ou pedido sem
+/// assinatura: [kAvisoAssinarPedido].
+String? avisoAssinaturaDoPedido({
+  required Map original,
+  required Map editado,
+  bool Function(String caminho) arquivoExiste = arquivoExisteNoAparelho,
+}) {
+  if (!precisaAssinaturaDoPedido(
+      original: original, editado: editado, arquivoExiste: arquivoExiste)) {
+    return null;
+  }
+  final jaAssinado = !_verdadeiro(original['so_local']) &&
+      temAssinaturaDoPedido(original, arquivoExiste: arquivoExiste);
+  return jaAssinado ? kAvisoAssinarPedidoDeNovo : kAvisoAssinarPedido;
+}
