@@ -44,30 +44,55 @@ class _ServidorFalso {
   final linhas = <Map<String, dynamic>>[];
   final gravacoes = <Map<String, dynamic>>[];
   final consultas = <String>[];
+  final inserts = <Map<String, dynamic>>[];
   var _proximoId = 100;
 
   Future<Map<String, dynamic>?> buscar(String numero, String vend) async {
     consultas.add('$numero/$vend');
     for (final l in linhas) {
       if (l['numero'] == numero && l['vendedor_codigo'] == vend) {
-        return {'id': l['id'], 'id_aparelho': l['id_aparelho']};
+        return {
+          'id': l['id'],
+          'id_aparelho': l['id_aparelho'],
+          'datahora': l['datahora'],
+        };
       }
     }
     return null;
   }
 
-  Future<Map<String, dynamic>?> gravar(Map<String, dynamic> payload) async {
+  /// Índices únicos do servidor: id_aparelho e (numero, vendedor_codigo).
+  void _unico(Map<String, dynamic> nova) {
+    for (final l in linhas) {
+      if (l['id'] == nova['id']) continue;
+      if (nova['id_aparelho'] != null && l['id_aparelho'] == nova['id_aparelho']) {
+        throw StateError('23505 id_aparelho duplicado');
+      }
+      if (l['numero'] == nova['numero'] &&
+          l['vendedor_codigo'] == nova['vendedor_codigo']) {
+        throw StateError('23505 pedidos_numero_vendedor_key');
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>?> gravar(Map<String, dynamic> payload,
+      {int? idServidor}) async {
     gravacoes.add(Map<String, dynamic>.from(payload));
-    final i = linhas.indexWhere((l) =>
-        l['numero'] == payload['numero'] &&
-        l['vendedor_codigo'] == payload['vendedor_codigo']);
+    final i = idServidor != null
+        ? linhas.indexWhere((l) => l['id'] == idServidor)
+        : linhas.indexWhere((l) =>
+            l['numero'] == payload['numero'] &&
+            l['vendedor_codigo'] == payload['vendedor_codigo']);
     if (i < 0) {
+      if (idServidor != null) return null; // UPDATE por id sem linha
       final nova = {
         ...payload,
         'id': _proximoId++,
         'enviado_em': '2026-11-23T12:00:00+00:00',
         'finalizado_manual': false,
       };
+      _unico(nova);
+      inserts.add(nova);
       linhas.add(nova);
       return Map<String, dynamic>.from(nova);
     }
@@ -83,6 +108,7 @@ class _ServidorFalso {
       'id': old['id'],
       'id_aparelho': old['id_aparelho'] ?? payload['id_aparelho'],
     };
+    _unico(nova);
     linhas[i] = nova;
     return Map<String, dynamic>.from(nova);
   }
@@ -140,9 +166,130 @@ void main() {
   group('conflito de numero', () {
     test('conflitoDeNumero', () {
       expect(conflitoDeNumero('a', 'a'), isFalse);
-      expect(conflitoDeNumero('a', null), isFalse);
       expect(conflitoDeNumero('a', 'b'), isTrue);
       expect(conflitoDeNumero(null, 'b'), isFalse);
+      expect(conflitoDeNumero(null, null), isFalse);
+      expect(conflitoDeNumero(null, null, datahoraLocal: 'x', datahoraRemota: 'y'),
+          isFalse);
+      // Remoto sem id_aparelho: mesmo pedido só com a mesma datahora (instante).
+      expect(
+          conflitoDeNumero('a', null,
+              datahoraLocal: '2026-11-23T10:00:00Z',
+              datahoraRemota: '2026-11-23T07:00:00-03:00'),
+          isFalse);
+      expect(
+          conflitoDeNumero('a', null,
+              datahoraLocal: '2026-11-23T10:00:00.123456Z',
+              datahoraRemota: '2026-11-23T10:00:00.123456+00:00'),
+          isFalse);
+      expect(
+          conflitoDeNumero('a', null,
+              datahoraLocal: '2026-11-23T10:00:00Z',
+              datahoraRemota: '2026-11-23T10:00:01+00:00'),
+          isTrue);
+      expect(conflitoDeNumero('a', null), isTrue, reason: 'sem datahora é conflito');
+      expect(
+          conflitoDeNumero('a', null,
+              datahoraLocal: '2026-11-23T10:00:00Z', datahoraRemota: 'lixo'),
+          isTrue);
+    });
+
+    test('remoto sem id_aparelho e mesma datahora: eco perdido de envio antigo', () async {
+      srv.linhas.add({
+        ..._pedido(numero: '6', status: 'finalizado'),
+        'id': 41,
+        'id_aparelho': null,
+        'datahora': '2026-11-23T10:00:00+00:00',
+      });
+      await salvarPedidoLocal(_pedido(
+          id: kLocalIdBase + 1, numero: '6', status: 'finalizado', idAparelho: 'a'));
+
+      final r = await subirPedidosPendentes(vendedorCodigo: '0003');
+
+      expect(r.enviados, 1);
+      expect(r.numeroEmUso, 0);
+      expect(srv.inserts, isEmpty);
+      final l = (await _porNumero('6')).single;
+      expect(l['id'], 41);
+      expect(l['pendente_envio'], 0);
+      expect(l['id_aparelho'], 'a');
+    });
+
+    test('remoto sem id_aparelho e outra datahora: numero em uso', () async {
+      srv.linhas.add({
+        ..._pedido(numero: '6', status: 'finalizado', total: 99.0),
+        'id': 41,
+        'id_aparelho': null,
+        'datahora': '2026-10-01T09:00:00+00:00',
+      });
+      final r = await gravarPedidoEEnviar(
+          _pedido(numero: '6', total: 12.0, idAparelho: 'a'), novo: true);
+
+      expect(r, ResultadoGravacao.numeroEmUso);
+      expect(srv.gravacoes, isEmpty, reason: 'o servidor não recebe escrita');
+      expect(srv.linhas.single['total'], 99.0);
+      expect(srv.linhas.single['id_aparelho'], isNull);
+      final l = (await _porNumero('6')).single;
+      expect(l['id'] as int, greaterThanOrEqualTo(kLocalIdBase));
+      expect(l['total'], 12.0, reason: 'o pedido local fica como está');
+      expect(l['status'], 'salvo');
+      expect(l['erro_envio'], 'numero');
+      expect(l['pendente_envio'], 1);
+      expect(await _descartados(), 0);
+    });
+
+    test('eco de outro pedido (antigo, fechado, sem id_aparelho) nao leva o nosso',
+        () async {
+      const idLocal = kLocalIdBase + 1;
+      final enviado = _pedido(id: idLocal, numero: '6', idAparelho: 'a');
+      await salvarPedidoLocal(enviado);
+
+      final r = await aplicarEcoDoServidor(enviado: enviado, remoto: {
+        ..._pedido(id: 41, numero: '6', status: 'finalizado', total: 99.0),
+        'id_aparelho': null,
+        'datahora': '2026-10-01T09:00:00+00:00',
+      });
+
+      expect(r, ResultadoEco.servidorFechou);
+      expect(await _descartados(), 1);
+      final p = await _porId(41);
+      expect(p!['id_aparelho'], isNull, reason: 'não carimba o nosso id_aparelho');
+    });
+
+    test('sync nao leva o nosso id_aparelho para outro pedido de mesmo numero', () async {
+      final db = await getDb();
+      await db.insert('pedidos', {
+        'id': kLocalIdBase + 5, 'numero': '13', 'vendedor_codigo': '0003',
+        'status': 'finalizado', 'pendente_envio': 0, 'id_aparelho': 'a',
+        'datahora': '2026-11-23T10:00:00Z',
+      });
+      await aplicarPedidosRemotos([
+        {
+          'id': 71, 'numero': '13', 'vendedor_codigo': '0003', 'status': 'finalizado',
+          'datahora': '2026-10-01T09:00:00+00:00',
+        },
+        {
+          'id': 72, 'numero': '14', 'vendedor_codigo': '0003', 'status': 'finalizado',
+          'datahora': '2026-11-23T11:00:00+00:00',
+        },
+      ]);
+      expect((await _porId(71))!['id_aparelho'], isNull);
+    });
+
+    test('sync leva o id_aparelho quando e o mesmo pedido (mesma datahora)', () async {
+      final db = await getDb();
+      await db.insert('pedidos', {
+        'id': kLocalIdBase + 5, 'numero': '13', 'vendedor_codigo': '0003',
+        'status': 'finalizado', 'pendente_envio': 0, 'id_aparelho': 'a',
+        'datahora': '2026-11-23T10:00:00Z',
+      });
+      await aplicarPedidosRemotos([
+        {
+          'id': 71, 'numero': '13', 'vendedor_codigo': '0003', 'status': 'finalizado',
+          'datahora': '2026-11-23T10:00:00+00:00',
+        },
+      ]);
+      expect((await _porId(71))!['id_aparelho'], 'a');
     });
 
     test('eco perdido nao vira numero em uso', () async {
@@ -533,10 +680,10 @@ void main() {
       expect((await _porId(kLocalIdBase + 3))!['id_aparelho'], isNull);
 
       String? guardadoNoEnvio;
-      gravarPedidoNoServidor = (payload) async {
+      gravarPedidoNoServidor = (payload, {int? idServidor}) async {
         guardadoNoEnvio =
             (await _porId(kLocalIdBase + 3))?['id_aparelho']?.toString();
-        return srv.gravar(payload);
+        return srv.gravar(payload, idServidor: idServidor);
       };
 
       final r = await subirPedidosPendentes(vendedorCodigo: '0003');
@@ -551,12 +698,147 @@ void main() {
     });
 
     test('falha de rede deixa pendente', () async {
-      gravarPedidoNoServidor = (p) async => throw const SocketException('sem rede');
+      gravarPedidoNoServidor =
+          (p, {int? idServidor}) async => throw const SocketException('sem rede');
       final r = await gravarPedidoEEnviar(_pedido(numero: '17'), novo: true);
       expect(r, ResultadoGravacao.pendente);
       final l = (await _porNumero('17')).single;
       expect(l['pendente_envio'], 1);
       expect(l['erro_envio'], isNull);
+    });
+  });
+
+  // ---------------------------------------------------- correções (rodada 1)
+
+  group('rodada 1', () {
+    Future<void> pedidoJaEnviado500() async {
+      final db = await getDb();
+      await db.insert('pedidos', {
+        'id': 500, 'numero': '9', 'vendedor_codigo': '0003', 'status': 'salvo',
+        'pendente_envio': 0, 'id_aparelho': 'x', 'total': 40.0,
+        'datahora': '2026-11-22T10:00:00Z', 'cliente_nome': 'Cliente antigo',
+      });
+    }
+
+    test('pedido novo com o numero de um pedido ja enviado nao sobrescreve', () async {
+      await pedidoJaEnviado500();
+      final db = await getDb();
+      final antes = (await db.query('pedidos', where: 'id = 500')).single;
+
+      await expectLater(
+          salvarPedidoLocal(_pedido(numero: '9', total: 5.0)), throwsA(isA<NumeroEmUso>()));
+
+      var envios = 0;
+      await expectLater(
+        gravarPedidoEEnviar(_pedido(numero: '9', total: 5.0), novo: true,
+            enviar: (p) async => envios++),
+        throwsA(isA<NumeroEmUso>()),
+      );
+      expect(envios, 0);
+
+      final linhas = await db.query('pedidos');
+      expect(linhas, hasLength(1), reason: 'nada foi gravado nem apagado');
+      expect(linhas.single, antes, reason: 'a linha 500 continua igual');
+    });
+
+    test('pedido novo ainda reaproveita a linha nunca enviada de mesmo numero', () async {
+      await salvarPedidoLocal(_pedido(numero: '9', total: 5.0));
+      final db = await getDb();
+      final id1 = (await db.query('pedidos')).single['id'];
+      await salvarPedidoLocal(_pedido(numero: '9', total: 7.0));
+      final rows = await db.query('pedidos');
+      expect(rows, hasLength(1));
+      expect(rows.single['id'], id1);
+      expect(rows.single['total'], 7.0);
+    });
+
+    test('trocar o numero para o de outra linha nao apaga a outra', () async {
+      await pedidoJaEnviado500();
+      await salvarPedidoLocal(_pedido(id: kLocalIdBase + 1, numero: '10'));
+      await expectLater(
+          atualizarPedidoLocal(_pedido(id: kLocalIdBase + 1, numero: '9')),
+          throwsA(isA<NumeroEmUso>()));
+      await expectLater(salvarPedidoLocal(_pedido(id: kLocalIdBase + 1, numero: '9')),
+          throwsA(isA<NumeroEmUso>()));
+      expect((await _porId(500))!['total'], 40.0);
+      expect((await _porId(kLocalIdBase + 1))!['numero'], '10');
+    });
+
+    test('pedido ja enviado com numero trocado atualiza a mesma linha do servidor',
+        () async {
+      srv.linhas.add({..._pedido(numero: '20', idAparelho: 'a'), 'id': 45});
+      await salvarPedidoLocal(_pedido(id: 45, numero: '20', idAparelho: 'a'));
+
+      final r = await gravarPedidoEEnviar(
+          _pedido(id: 45, numero: '21', datahora: '2026-11-23T11:00:00Z'),
+          novo: false);
+
+      expect(r, ResultadoGravacao.enviado);
+      expect(srv.inserts, isEmpty, reason: 'sem insert de outra linha');
+      expect(srv.linhas, hasLength(1));
+      expect(srv.linhas.single['id'], 45);
+      expect(srv.linhas.single['numero'], '21');
+      final l = (await _porNumero('21')).single;
+      expect(l['id'], 45);
+      expect(l['pendente_envio'], 0);
+      expect(await _porNumero('20'), isEmpty);
+    });
+
+    test('erro_envio numero some ao regravar com numero livre', () async {
+      await salvarPedidoLocal(
+          {..._pedido(id: kLocalIdBase + 1, numero: '5', idAparelho: 'a'), 'erro_envio': 'numero'});
+      gravarPedidoNoServidor =
+          (p, {int? idServidor}) async => throw const SocketException('sem rede');
+
+      final r = await gravarPedidoEEnviar(
+          _pedido(id: kLocalIdBase + 1, numero: '25', datahora: '2026-11-23T11:00:00Z'),
+          novo: false);
+
+      expect(r, ResultadoGravacao.pendente);
+      final l = (await _porId(kLocalIdBase + 1))!;
+      expect(l['erro_envio'], isNull);
+      expect(l['pendente_envio'], 1);
+
+      final chamados = <String>[];
+      final s = await subirPedidosPendentes(
+          vendedorCodigo: '0003', enviar: (p) async => chamados.add('${p['numero']}'));
+      expect(chamados, ['25']);
+      expect(s.numeroEmUso, 0);
+    });
+
+    test('fechado no servidor com mesma situacao e itens mas outra datahora guarda copia',
+        () async {
+      // Edição de cliente/anotação de um pedido que o Controle já finalizou:
+      // mesmos itens, total e situação; o gatilho devolve a versão antiga.
+      final enviado = {
+        ..._pedido(id: 42, status: 'finalizado', datahora: '2026-11-23T11:00:00Z'),
+        'cliente_nome': 'Nome corrigido',
+        'cliente_anotacao': 'Entregar na portaria',
+      };
+      await salvarPedidoLocal(enviado);
+      final remoto = {
+        ..._pedido(id: 42, status: 'finalizado', datahora: '2026-11-23T10:00:00+00:00'),
+        'finalizado_manual': true,
+      };
+
+      expect(decidirEco(enviado, enviado, remoto), ResultadoEco.servidorFechou);
+      final r = await aplicarEcoDoServidor(enviado: enviado, remoto: remoto);
+
+      expect(r, ResultadoEco.servidorFechou);
+      expect(await _descartados(), 1);
+      final db = await getDb();
+      final copia = jsonDecode(
+              (await db.query('pedidos_descartados')).single['pedido_json'] as String)
+          as Map<String, dynamic>;
+      expect(copia['cliente_anotacao'], 'Entregar na portaria');
+      expect((await _porId(42))!['cliente_nome'], 'Cliente');
+    });
+
+    test('fechado no servidor igual ao enviado (mesma datahora) aplica sem copia', () {
+      final f = _pedido(id: 42, status: 'finalizado', datahora: '2026-11-23T11:00:00Z');
+      expect(
+          decidirEco(f, f, {...f, 'datahora': '2026-11-23T11:00:00+00:00'}),
+          ResultadoEco.aplicado);
     });
   });
 

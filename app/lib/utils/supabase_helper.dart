@@ -22,6 +22,8 @@ import 'convert.dart'; // assinaturaToBytes(), bytesToHex0x()
 import 'db.dart';      // getDb()
 import 'id_aparelho.dart'; // novoIdAparelho()
 
+export 'db.dart' show NumeroEmUso, kErroNumeroEmUso;
+
 final supabase = Supabase.instance.client;
 
 // ---------------------- Utils de conversão ----------------------
@@ -256,7 +258,7 @@ Future<void> _sincronizarPedidos(String vendedorCodigo) async {
   }
 }
 
-//// Colunas de auditoria que só o servidor preenche. O app guarda uma cópia em
+/// Colunas de auditoria que só o servidor preenche. O app guarda uma cópia em
 /// texto (vinda do eco/sync) e nunca as envia.
 const List<String> _colunasAuditoria = [
   'enviado_em',
@@ -356,13 +358,22 @@ Future<void> aplicarPedidosRemotos(List<Map<String, dynamic>> remotos) async {
       if (idAparelhoLocal == null && numero != null && vend != null) {
         final porNumero = await txn.query(
           'pedidos',
-          columns: ['id_aparelho'],
+          columns: ['id', 'id_aparelho', 'datahora'],
           where: 'numero = ? AND vendedor_codigo = ?',
           whereArgs: [numero, vend],
           limit: 1,
         );
+        // Outro id local com o mesmo número: só leva o id_aparelho se for o
+        // mesmo pedido (nunca carimba o nosso num pedido de outro aparelho).
         if (porNumero.isNotEmpty) {
-          idAparelhoLocal = _texto(porNumero.first['id_aparelho']);
+          final l = porNumero.first;
+          final candidato = _texto(l['id_aparelho']);
+          if (_mesmoPedidoQueORemoto(m,
+              idAparelhoLocal: candidato,
+              idLocal: (l['id'] as num?)?.toInt(),
+              datahoraLocal: l['datahora'])) {
+            idAparelhoLocal = candidato;
+          }
         }
       }
       aplicar.add((m, idAparelhoLocal));
@@ -455,7 +466,7 @@ Future<({int enviados, int falhas, int numeroEmUso})> _subirPedidosPendentes(
   return (enviados: enviados, falhas: falhas, numeroEmUso: numeroEmUso);
 }
 
-// Apaga duplicados locais após salvar no servidor:
+/// Apaga duplicados locais após salvar no servidor:
 /// - Remove o registro local antigo (idLocalAntigo)
 /// - Remove qualquer outro com o mesmo (numero, vendedor_codigo) e id != idNovo
 Future<void> _limparDuplicadosLocais({
@@ -562,47 +573,77 @@ Future<int> ensureClienteSupabaseId(Map<String, dynamic> pedido) async {
   return (inserted['id'] as num).toInt();
 }
 
-/// ---------------------- Conflito de número ----------------------
+// ---------------------- Conflito de número ----------------------
+// `NumeroEmUso` e `kErroNumeroEmUso` moram em db.dart (a gravação local também
+// recusa número de outro pedido) e são reexportados no topo deste arquivo.
 
-/// Valor de `erro_envio` quando o número já é de outro pedido no servidor.
-const String kErroNumeroEmUso = 'numero';
+final RegExp _temFuso = RegExp(r'(Z|[+-]\d\d(:?\d\d)?)$', caseSensitive: false);
 
-/// O servidor já tem o mesmo `(numero, vendedor_codigo)` com outro
-/// `id_aparelho`: é outro pedido (de outro aparelho do mesmo vendedor). O
-/// envio não acontece; o pedido fica pendente até o vendedor trocar o número.
-class NumeroEmUso implements Exception {
-  const NumeroEmUso(this.numero, this.vendedorCodigo);
-  final String numero;
-  final String vendedorCodigo;
+/// Os dois valores são o mesmo instante (ISO-8601, comparados em UTC)?
+/// Ausente ou ilegível em qualquer lado: `false`. Sem fuso no texto, vale como
+/// UTC: o app sempre grava `toUtc()`, e uma coluna sem fuso guardaria esse
+/// mesmo relógio.
+bool _mesmoInstante(Object? a, Object? b) {
+  DateTime? p(Object? v) {
+    if (v is DateTime) return v.toUtc();
+    final s = v?.toString().trim() ?? '';
+    if (s.isEmpty) return null;
+    return DateTime.tryParse(_temFuso.hasMatch(s) ? s : '${s}Z')?.toUtc();
+  }
 
-  @override
-  String toString() => 'NumeroEmUso: o pedido $numero do vendedor $vendedorCodigo '
-      'já existe no servidor com outro id_aparelho';
+  final x = p(a), y = p(b);
+  return x != null && y != null && x.isAtSameMomentAs(y);
 }
 
-/// `true` só quando os dois id_aparelho existem e são diferentes.
-/// - Local sem id_aparelho (pedido legado): comportamento de hoje, sem conflito.
-/// - Remoto sem id_aparelho (pedido antigo, ou o próprio pedido enviado pelo
-///   APK antigo): segue o upsert como hoje.
-bool conflitoDeNumero(String? idAparelhoLocal, String? idAparelhoRemoto) {
+/// O pedido do servidor com o mesmo `(numero, vendedor_codigo)` é OUTRO pedido?
+/// - Local sem id_aparelho (pedido legado): `false`, comportamento de hoje.
+/// - Os dois com id_aparelho: conflito se forem diferentes.
+/// - Remoto sem id_aparelho (pedido antigo / APK antigo) e local com: é o
+///   mesmo pedido (eco perdido de um envio antigo) só se as duas `datahora`
+///   forem o mesmo instante; ausente ou ilegível em qualquer lado é conflito.
+bool conflitoDeNumero(
+  String? idAparelhoLocal,
+  String? idAparelhoRemoto, {
+  String? datahoraLocal,
+  String? datahoraRemota,
+}) {
   final l = idAparelhoLocal?.trim() ?? '';
   final r = idAparelhoRemoto?.trim() ?? '';
-  if (l.isEmpty || r.isEmpty) return false;
-  return l != r;
+  if (l.isEmpty) return false;
+  if (r.isNotEmpty) return l != r;
+  return !_mesmoInstante(datahoraLocal, datahoraRemota);
+}
+
+/// A linha [remoto] do servidor é o mesmo pedido que o local que tem
+/// [idAparelhoLocal], [idLocal] e [datahoraLocal]? Mesmo id do servidor, ou
+/// [conflitoDeNumero] diz que não há conflito. Só então o id_aparelho local
+/// pode ser levado para a linha do servidor que veio sem um.
+bool _mesmoPedidoQueORemoto(
+  Map<String, dynamic> remoto, {
+  required String? idAparelhoLocal,
+  required int? idLocal,
+  required Object? datahoraLocal,
+}) {
+  final idRemoto = _idDe(remoto);
+  if (idLocal != null && idRemoto != null && idLocal == idRemoto) return true;
+  if (_texto(idAparelhoLocal) == null) return false;
+  return !conflitoDeNumero(idAparelhoLocal, _texto(remoto['id_aparelho']),
+      datahoraLocal: datahoraLocal?.toString(),
+      datahoraRemota: remoto['datahora']?.toString());
 }
 
 Future<Map<String, dynamic>?> _buscarRemotoPorNumeroSupabase(
     String numero, String vendedorCodigo) async {
   final r = await supabase
       .from('pedidos')
-      .select('id, id_aparelho')
+      .select('id, id_aparelho, datahora')
       .eq('numero', numero)
       .eq('vendedor_codigo', vendedorCodigo)
       .maybeSingle();
   return r == null ? null : Map<String, dynamic>.from(r);
 }
 
-/// Busca `id, id_aparelho` do pedido do servidor com esse
+/// Busca `id, id_aparelho, datahora` do pedido do servidor com esse
 /// `(numero, vendedor_codigo)`, ou null se não existe. Lança se não houver
 /// rede. Trocável nos testes.
 @visibleForTesting
@@ -724,13 +765,29 @@ Map<String, dynamic> montarPayloadPedido(Map<String, dynamic> pedido) {
 
 /// Grava o payload no Supabase e devolve a linha resultante (o eco), ou null.
 /// - Garante o cliente (FK) e usa o id remoto dele.
+/// - Pedido que já chegou ao servidor ([idServidor]): UPDATE por id. O número
+///   pode ter mudado (troca depois de "número em uso"); um upsert pelo número
+///   novo tentaria INSERIR outra linha com o mesmo id_aparelho (23505).
 /// - Se o Supabase tiver `numero` + índice único com `vendedor_codigo`, usa UPSERT
 /// - Se NÃO tiver, tenta localizar por (numero,vendedor_codigo) e faz UPDATE por id; se não achar, INSERT
-Future<Map<String, dynamic>?> _gravarPedidoNoSupabase(Map<String, dynamic> payload) async {
+Future<Map<String, dynamic>?> _gravarPedidoNoSupabase(
+  Map<String, dynamic> payload, {
+  int? idServidor,
+}) async {
   final ped = <String, dynamic>{...payload};
 
   // 🔴 GARANTE O CLIENTE NO SUPABASE E USA O ID REMOTO (evita 23503)
   ped['cliente_id'] = await ensureClienteSupabaseId(ped);
+
+  if (idServidor != null) {
+    final r = await supabase
+        .from('pedidos')
+        .update(_stripNulls(ped))
+        .eq('id', idServidor)
+        .select()
+        .maybeSingle();
+    return r == null ? null : Map<String, dynamic>.from(r);
+  }
 
   Map<String, dynamic>? remoto; // linha resultante (insert/update/upsert)
 
@@ -785,9 +842,11 @@ Future<Map<String, dynamic>?> _gravarPedidoNoSupabase(Map<String, dynamic> paylo
   return remoto;
 }
 
-/// Grava o payload no servidor e devolve o eco. Trocável nos testes.
+/// Grava o payload no servidor e devolve o eco. Com [idServidor], atualiza
+/// essa linha (pedido que já chegou ao servidor); sem, faz o upsert por
+/// (numero, vendedor_codigo). Trocável nos testes.
 @visibleForTesting
-Future<Map<String, dynamic>?> Function(Map<String, dynamic> payload)
+Future<Map<String, dynamic>?> Function(Map<String, dynamic> payload, {int? idServidor})
     gravarPedidoNoServidor = _gravarPedidoNoSupabase;
 
 /// Salva/atualiza um pedido no Supabase (qualquer situação) e aplica o eco no
@@ -795,8 +854,10 @@ Future<Map<String, dynamic>?> Function(Map<String, dynamic> payload)
 /// local***.
 /// - Sem id_aparelho (pendente da v16): ganha um, gravado antes do envio.
 /// - Pedido que ainda não chegou ao servidor: confere o número antes; se o
-///   servidor tem esse (numero, vendedor) com outro id_aparelho, lança
-///   [NumeroEmUso] sem enviar nada.
+///   servidor tem esse (numero, vendedor) e [conflitoDeNumero] diz que é
+///   outro pedido, lança [NumeroEmUso] sem enviar nada. Depois, upsert por
+///   (numero, vendedor_codigo).
+/// - Pedido que já chegou ao servidor: UPDATE pelo id do servidor.
 /// Devolve o [ResultadoEco], ou null se o servidor não devolveu a linha (aí
 /// puxa os pedidos do vendedor). Roda sob [comTravaDePedidos].
 Future<ResultadoEco?> salvarPedidoSupabase(Map<String, dynamic> pedido) =>
@@ -808,15 +869,24 @@ Future<ResultadoEco?> _salvarPedidoSupabase(Map<String, dynamic> pedidoOriginal)
     final numero = pedido['numero']?.toString() ?? '';
     final vend = pedido['vendedor_codigo']?.toString() ?? '';
 
-    if (!jaChegouAoServidor(pedido) && numero.isNotEmpty && vend.isNotEmpty) {
+    final noServidor = jaChegouAoServidor(pedido);
+    if (!noServidor && numero.isNotEmpty && vend.isNotEmpty) {
       final existente = await buscarRemotoPorNumero(numero, vend);
       if (existente != null &&
-          conflitoDeNumero(_texto(pedido['id_aparelho']), _texto(existente['id_aparelho']))) {
+          conflitoDeNumero(
+            _texto(pedido['id_aparelho']),
+            _texto(existente['id_aparelho']),
+            datahoraLocal: pedido['datahora']?.toString(),
+            datahoraRemota: existente['datahora']?.toString(),
+          )) {
         throw NumeroEmUso(numero, vend);
       }
     }
 
-    final remoto = await gravarPedidoNoServidor(montarPayloadPedido(pedido));
+    final remoto = await gravarPedidoNoServidor(
+      montarPayloadPedido(pedido),
+      idServidor: noServidor ? _idDe(pedido) : null,
+    );
 
     // Aplicar no SQLite e LIMPAR duplicados (se a cópia local não mudou
     // enquanto o envio estava no ar)
@@ -900,6 +970,12 @@ bool _mesmoConteudo(Map<String, dynamic> enviado, Map<String, dynamic> remoto) {
 
 /// Decide o que fazer com o eco [remoto] do envio de [enviado], dada a cópia
 /// [local] que está no SQLite agora.
+/// - `edicaoLocalMaisNova`: [local] não é mais a versão enviada.
+/// - `servidorFechou`: o remoto está finalizado/cancelado e não é o que foi
+///   enviado: outra situação, total ou itens, ou outra `datahora` (o gatilho
+///   devolveu a versão antiga; toda gravação das telas troca a datahora, então
+///   isso pega também edição de cliente/anotação que o servidor recusou).
+/// - `aplicado`: o resto.
 ResultadoEco decidirEco(
   Map<String, dynamic> local,
   Map<String, dynamic> enviado,
@@ -907,7 +983,9 @@ ResultadoEco decidirEco(
 ) {
   if (!_mesmaVersao(local, enviado)) return ResultadoEco.edicaoLocalMaisNova;
   final st = '${remoto['status'] ?? ''}';
-  if ((st == 'finalizado' || st == 'cancelado') && !_mesmoConteudo(enviado, remoto)) {
+  if ((st == 'finalizado' || st == 'cancelado') &&
+      (!_mesmoConteudo(enviado, remoto) ||
+          !_mesmoInstante(enviado['datahora'], remoto['datahora']))) {
     return ResultadoEco.servidorFechou;
   }
   return ResultadoEco.aplicado;
@@ -921,9 +999,10 @@ ResultadoEco decidirEco(
 /// - [ResultadoEco.servidorFechou]: a cópia local vai para
 ///   `pedidos_descartados` ('fechado no Controle') ANTES de o eco ser gravado;
 /// - [ResultadoEco.aplicado]: o eco é gravado.
-/// O eco gravado leva id_aparelho (o do servidor, senão o local), as cópias
-/// de auditoria, `so_local = 0` e `erro_envio = null`. Preserva sempre o
-/// `assinatura_path` local.
+/// O eco gravado leva id_aparelho (o do servidor; sem um, o local, mas só se
+/// a linha do servidor for o mesmo pedido: mesmo id, ou mesma datahora), as
+/// cópias de auditoria, `so_local = 0` e `erro_envio = null`. Preserva sempre
+/// o `assinatura_path` local.
 Future<ResultadoEco> aplicarEcoDoServidor({
   required Map<String, dynamic> enviado,
   required Map<String, dynamic> remoto,
@@ -999,9 +1078,20 @@ Future<ResultadoEco> aplicarEcoDoServidor({
       print('🔒 Pedido ${numero ?? idLocalAntigo} já fechado no Controle; versão local guardada.');
     }
 
-    String? idAparelhoLocal = _texto(enviado['id_aparelho']);
-    for (final l in locais) {
-      idAparelhoLocal ??= _texto(l['id_aparelho']);
+    // Nunca carimba o NOSSO id_aparelho numa linha do servidor que é outro
+    // pedido (ex.: pedido antigo fechado, sem id_aparelho, devolvido pelo
+    // gatilho).
+    String? idAparelhoLocal;
+    for (final l in [enviado, ...locais]) {
+      final candidato = _texto(l['id_aparelho']);
+      if (candidato != null &&
+          _mesmoPedidoQueORemoto(remoto,
+              idAparelhoLocal: candidato,
+              idLocal: _idDe(l),
+              datahoraLocal: l['datahora'])) {
+        idAparelhoLocal = candidato;
+        break;
+      }
     }
     mapLocal.addAll(_camposDoServidor(remoto, idAparelhoLocal));
 
@@ -1050,7 +1140,13 @@ Future<Map<String, dynamic>?> _linhaGravada(Map<String, dynamic> pedido) async {
 /// Grava o pedido no SQLite **na hora** (fora da trava: nada espera a rede) e,
 /// se não for rascunho antigo (`so_local`), tenta enviar. Falha de envio não é
 /// erro: o pedido já está salvo com `pendente_envio = 1`. Só lança se a
-/// gravação local falhar.
+/// gravação local falhar, inclusive com [NumeroEmUso] quando o número é de
+/// outra linha do aparelho (ex.: pedido já enviado): nada foi gravado, e a
+/// tela deve manter o formulário aberto para o vendedor trocar o número.
+///
+/// Antes de enviar, limpa `erro_envio` (persistido): se o vendedor trocou o
+/// número, o pedido volta a ser enviado; se o conflito continua, o envio
+/// marca de novo.
 ///
 /// O valor que [enviar] devolve é lido: [salvarPedidoSupabase] devolve o
 /// [ResultadoEco]; qualquer outro valor (ou nenhum) conta como enviado.
@@ -1070,12 +1166,19 @@ Future<ResultadoGravacao> gravarPedidoEEnviar(
     return ResultadoGravacao.rascunho;
   }
 
+  if (gravado?['id'] != null && gravado!['erro_envio'] != null) {
+    final db = await getDb();
+    await db.update('pedidos', {'erro_envio': null},
+        where: 'id = ?', whereArgs: [gravado['id']]);
+  }
+
   // Envia com o id e o id_aparelho que ficaram no aparelho (o mapa da tela
   // de pedido novo não tem nenhum dos dois).
   final envio = <String, dynamic>{
     ...pedido,
     if (gravado?['id'] != null) 'id': gravado!['id'],
     if (_texto(gravado?['id_aparelho']) != null) 'id_aparelho': gravado!['id_aparelho'],
+    'erro_envio': null,
   };
   try {
     // Future<void> é Future<Object?>: lê o ResultadoEco de salvarPedidoSupabase.

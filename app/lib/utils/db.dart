@@ -491,6 +491,49 @@ Future<void> _aplicarCamposLocais(
   }
 }
 
+/// Valor de `erro_envio` quando o número já é de outro pedido no servidor.
+const String kErroNumeroEmUso = 'numero';
+
+/// O `(numero, vendedor_codigo)` já é de outro pedido: no servidor (com outro
+/// `id_aparelho`, lançada pelo envio) ou no aparelho (um pedido já enviado ou
+/// outra linha local, lançada pela gravação local antes de escrever qualquer
+/// coisa: o índice único local apagaria a outra linha). Nada é perdido; o
+/// vendedor precisa trocar o número.
+class NumeroEmUso implements Exception {
+  const NumeroEmUso(this.numero, this.vendedorCodigo);
+  final String numero;
+  final String vendedorCodigo;
+
+  @override
+  String toString() =>
+      'NumeroEmUso: o número $numero do vendedor $vendedorCodigo já é de outro pedido';
+}
+
+/// Linha local que um pedido NOVO pode reaproveitar (mesmo numero+vendedor):
+/// só as que nunca chegaram ao servidor.
+bool _reaproveitavel(Map<String, Object?> l) {
+  final id = (l['id'] as num?)?.toInt() ?? 0;
+  if ((l['so_local'] as num?)?.toInt() == 1) return true;
+  if (id < kLocalIdBase) return false;
+  return (l['pendente_envio'] as num?)?.toInt() == 1 || l['status']?.toString() == 'salvo';
+}
+
+/// Outra linha (id diferente de [id]) com o mesmo (numero, vendedor), ou null.
+Future<Map<String, Object?>?> _outraComMesmoNumero(
+    sq.DatabaseExecutor db, String? numero, String? vend, int? id) async {
+  if (numero == null || numero.isEmpty || vend == null || vend.isEmpty) return null;
+  final r = await db.query(
+    'pedidos',
+    columns: ['id', 'so_local', 'pendente_envio', 'status'],
+    where: id == null
+        ? 'numero = ? AND vendedor_codigo = ?'
+        : 'numero = ? AND vendedor_codigo = ? AND id <> ?',
+    whereArgs: id == null ? [numero, vend] : [numero, vend, id],
+    limit: 1,
+  );
+  return r.isEmpty ? null : r.first;
+}
+
 /// O pedido já existe no servidor (id serial baixo, fora da faixa local).
 bool jaChegouAoServidor(Map<String, dynamic> pedido) {
   final raw = pedido['id'];
@@ -544,33 +587,29 @@ Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
 
   // Define o id do registro local.
   // - Se o pedido já tem id (ex.: veio do servidor), respeita-o.
-  // - Se é um rascunho novo, usa um id na faixa local segura (>= kLocalIdBase),
-  //   reaproveitando o id de um rascunho (ou pedido aguardando envio) já
-  //   existente de mesmo (numero, vendedor) para não trocar o id a cada novo
-  //   salvamento.
+  // - Se é um pedido novo, usa um id na faixa local segura (>= kLocalIdBase),
+  //   reaproveitando o id de uma linha de mesmo (numero, vendedor) que nunca
+  //   chegou ao servidor (rascunho so_local, ou salvo/pendente na faixa
+  //   local), para não trocar o id a cada novo salvamento.
+  // - Se o (numero, vendedor) é de outra linha que não pode ser reaproveitada
+  //   (pedido já enviado), lança [NumeroEmUso] ANTES de escrever: o
+  //   `INSERT OR REPLACE` pelo índice único local apagaria aquele pedido.
+  final numero = map['numero'] as String?;
+  final vend = map['vendedor_codigo'] as String?;
   final int? idExistente = (pedido['id'] is int)
       ? pedido['id'] as int
       : int.tryParse('${pedido['id'] ?? ''}');
   if (idExistente != null) {
     map['id'] = idExistente;
+    if (await _outraComMesmoNumero(db, numero, vend, idExistente) != null) {
+      throw NumeroEmUso(numero!, vend!);
+    }
   } else {
     int? reusar;
-    final numero = map['numero'];
-    final vend = map['vendedor_codigo'];
-    if (numero != null &&
-        '$numero'.isNotEmpty &&
-        vend != null &&
-        '$vend'.isNotEmpty) {
-      // Rascunho ou pedido ainda aguardando envio: finalizar de novo o mesmo
-      // (numero, vendedor) atualiza a mesma linha em vez de criar outra.
-      final ex = await db.query(
-        'pedidos',
-        columns: ['id'],
-        where: "numero = ? AND vendedor_codigo = ? AND (status = 'salvo' OR pendente_envio = 1)",
-        whereArgs: [numero, vend],
-        limit: 1,
-      );
-      if (ex.isNotEmpty) reusar = ex.first['id'] as int?;
+    final ex = await _outraComMesmoNumero(db, numero, vend, null);
+    if (ex != null) {
+      if (!_reaproveitavel(ex)) throw NumeroEmUso(numero!, vend!);
+      reusar = (ex['id'] as num).toInt();
     }
     map['id'] = reusar ?? await proximoIdLocalSeguro(db);
   }
@@ -611,6 +650,13 @@ Future<void> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
   };
 
   map['id'] = id;
+  // Trocar o número para o de outra linha apagaria a outra (índice único).
+  final idInt = id is int ? id : int.tryParse('$id');
+  if (await _outraComMesmoNumero(
+          db, map['numero'] as String?, map['vendedor_codigo'] as String?, idInt) !=
+      null) {
+    throw NumeroEmUso(map['numero'] as String, map['vendedor_codigo'] as String);
+  }
   await _aplicarCamposLocais(db, map, pedido, replace: false);
   map.remove('id');
   final filtered = await _filterToTableColumns(db, 'pedidos', map);
