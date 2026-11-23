@@ -1,6 +1,6 @@
 // Regras puras do fluxo do pedido (sem Flutter nem banco), usadas pelas telas.
 import 'db.dart' show buscarUltimoNumeroPedido, jaChegouAoServidor, kErroNumeroEmUso, numeroUsadoNoAparelho;
-import 'supabase_helper.dart' show ResultadoGravacao, numeroLivreNoServidor;
+import 'supabase_helper.dart' show ResultadoGravacao, kPrazoConsultaNumero, numeroLivreNoServidor;
 
 /// Texto único de número em uso (tela de pedido novo, edição e selo da lista).
 const String kMsgNumeroEmUso = 'Número já usado; troque o número';
@@ -64,15 +64,26 @@ Future<String?> proximoNumeroLivre(
   return null;
 }
 
-/// Número livre no aparelho e no servidor (sem internet, o servidor não bloqueia).
-Future<bool> numeroLivreParaVendedor(String numero, String vendedorCodigo) async {
+/// Número livre no aparelho e no servidor (sem internet, ou sem resposta do
+/// servidor em [prazo], o servidor não bloqueia).
+Future<bool> numeroLivreParaVendedor(String numero, String vendedorCodigo,
+    {Duration prazo = kPrazoConsultaNumero}) async {
   if (numero.isEmpty) return true;
   if (await numeroUsadoNoAparelho(numero, vendedorCodigo)) return false;
-  return numeroLivreNoServidor(numero, vendedorCodigo);
+  return numeroLivreNoServidor(numero, vendedorCodigo, prazo: prazo);
 }
 
 /// Próximo número livre do vendedor: último local + 1, até 20 tentativas.
-Future<String?> proximoNumeroLivreDoVendedor(String vendedorCodigo) async {
+/// O servidor tem [prazo] no total (não por tentativa): esgotado, as
+/// tentativas que faltam olham só o aparelho (regra do offline).
+Future<String?> proximoNumeroLivreDoVendedor(String vendedorCodigo,
+    {Duration prazo = kPrazoConsultaNumero}) async {
   final ultimo = (await buscarUltimoNumeroPedido()) ?? 0;
-  return proximoNumeroLivre(ultimo + 1, (n) => numeroLivreParaVendedor(n, vendedorCodigo));
+  final relogio = Stopwatch()..start();
+  return proximoNumeroLivre(ultimo + 1, (n) async {
+    if (await numeroUsadoNoAparelho(n, vendedorCodigo)) return false;
+    final resta = prazo - relogio.elapsed;
+    if (resta <= Duration.zero) return true;
+    return numeroLivreNoServidor(n, vendedorCodigo, prazo: resta);
+  });
 }

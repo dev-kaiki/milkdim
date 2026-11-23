@@ -545,7 +545,11 @@ class _PedidoPageState extends State<PedidoPage> {
         ],
       ),
       bottomNavigationBar: !carregandoTela && total > 0
-          ? BarraResumo(total: total, onPressed: carregando ? null : _abrirPopupResumo)
+          ? BarraResumo(
+              total: total,
+              onPressed: carregando ? null : _abrirPopupResumo,
+              ocupado: carregando,
+            )
           : null,
       body: carregandoTela
           ? const Center(child: CircularProgressIndicator())

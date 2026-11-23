@@ -644,12 +644,18 @@ Future<Map<String, dynamic>?> _buscarRemotoPorNumeroSupabase(
 Future<Map<String, dynamic>?> Function(String numero, String vendedorCodigo)
     buscarRemotoPorNumero = _buscarRemotoPorNumeroSupabase;
 
+/// Quanto a tela espera o servidor responder se um número está livre antes de
+/// gravar. Passou disso, vale a regra do offline (livre).
+const Duration kPrazoConsultaNumero = Duration(seconds: 3);
+
 /// `true` se nenhum pedido do servidor tem esse `(numero, vendedor_codigo)`.
-/// Sem rede (ou qualquer erro) devolve `true`: offline não bloqueia salvar; o
-/// conflito, se houver, aparece no envio ([NumeroEmUso]).
-Future<bool> numeroLivreNoServidor(String numero, String vendedorCodigo) async {
+/// Sem rede, sem resposta em [prazo] (ou qualquer erro) devolve `true`:
+/// offline não bloqueia salvar; o conflito, se houver, aparece no envio
+/// ([NumeroEmUso]).
+Future<bool> numeroLivreNoServidor(String numero, String vendedorCodigo,
+    {Duration prazo = kPrazoConsultaNumero}) async {
   try {
-    return await buscarRemotoPorNumero(numero, vendedorCodigo) == null;
+    return await buscarRemotoPorNumero(numero, vendedorCodigo).timeout(prazo) == null;
   } catch (e) {
     // ignore: avoid_print
     print('⚠️ Não deu para conferir o número $numero no servidor: $e');
@@ -1165,6 +1171,10 @@ Future<ResultadoEco> aplicarEcoDoServidor({
 
 // ---------------------- Gravar e enviar (telas de pedido) ----------------------
 
+/// Quanto a tela de pedido espera o envio antes de dizer "salvo, será
+/// enviado" (o pedido já está gravado no aparelho).
+const Duration kPrazoEnvioNaTela = Duration(seconds: 10);
+
 enum ResultadoGravacao {
   /// Rascunho antigo só do aparelho (`so_local = 1`): gravado, não enviado.
   rascunho,
@@ -1211,10 +1221,15 @@ Future<Map<String, dynamic>?> _linhaGravada(Map<String, dynamic> pedido) async {
 ///
 /// O valor que [enviar] devolve é lido: [salvarPedidoSupabase] devolve o
 /// [ResultadoEco]; qualquer outro valor (ou nenhum) conta como enviado.
+///
+/// A tela não espera o envio mais que [prazoEnvio]: o pedido já está gravado
+/// e pendente, então passou do prazo devolve [ResultadoGravacao.pendente] e o
+/// envio segue no ar (o eco, quando chegar, é aplicado como sempre).
 Future<ResultadoGravacao> gravarPedidoEEnviar(
   Map<String, dynamic> pedido, {
   required bool novo,
   Future<void> Function(Map<String, dynamic>) enviar = salvarPedidoSupabase,
+  Duration prazoEnvio = kPrazoEnvioNaTela,
 }) async {
   // O id gravado pode não ser o do mapa: a edição de um pedido cujo eco
   // trocou o id local pelo do servidor com a tela aberta cai na linha nova.
@@ -1240,12 +1255,21 @@ Future<ResultadoGravacao> gravarPedidoEEnviar(
     if (_texto(gravado?['id_aparelho']) != null) 'id_aparelho': gravado!['id_aparelho'],
     'erro_envio': null,
   };
+  Future<Object?>? envioNoAr;
   try {
     // Future<void> é Future<Object?>: lê o ResultadoEco de salvarPedidoSupabase.
-    final Future<Object?> envioNoAr = enviar(envio);
-    final r = await envioNoAr;
+    envioNoAr = enviar(envio);
+    final r = await envioNoAr.timeout(prazoEnvio);
     if (r == ResultadoEco.servidorFechou) return ResultadoGravacao.fechadoNoControle;
     return ResultadoGravacao.enviado;
+  } on TimeoutException {
+    // ignore: avoid_print
+    print('⏳ Pedido ${pedido['numero']} salvo no aparelho; envio demorando, segue pendente.');
+    // O envio continua: se terminar com número em uso, marca como a tela marcaria.
+    unawaited(envioNoAr!.then<void>((_) {}, onError: (Object e) async {
+      if (e is NumeroEmUso) await _marcarNumeroEmUso(envio);
+    }));
+    return ResultadoGravacao.pendente;
   } on NumeroEmUso catch (e) {
     // ignore: avoid_print
     print('⚠️ $e');

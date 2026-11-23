@@ -634,7 +634,11 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
         ],
       ),
       bottomNavigationBar: mostrarForm && total > 0
-          ? BarraResumo(total: total, onPressed: processando ? null : _abrirPopupResumo)
+          ? BarraResumo(
+              total: total,
+              onPressed: processando ? null : _abrirPopupResumo,
+              ocupado: processando,
+            )
           : null,
       body: carregandoProdutos
           ? const Center(child: CircularProgressIndicator())

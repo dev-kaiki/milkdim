@@ -371,7 +371,16 @@ class BarraResumo extends StatelessWidget {
   final double total;
   final VoidCallback? onPressed;
 
-  const BarraResumo({super.key, required this.total, required this.onPressed});
+  /// Gravando/conferindo o número: o botão mostra o progresso (e fica
+  /// desligado pelo [onPressed] nulo que a tela passa).
+  final bool ocupado;
+
+  const BarraResumo({
+    super.key,
+    required this.total,
+    required this.onPressed,
+    this.ocupado = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -395,7 +404,13 @@ class BarraResumo extends StatelessWidget {
                 height: 56,
                 child: FilledButton.icon(
                   onPressed: onPressed,
-                  icon: const Icon(Icons.shopping_cart_outlined),
+                  icon: ocupado
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.shopping_cart_outlined),
                   label: Text('Resumo ${formatarReais(total)}'),
                 ),
               ),
