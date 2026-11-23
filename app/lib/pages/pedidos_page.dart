@@ -844,6 +844,16 @@ class _PedidosPageState extends State<PedidosPage>
             onPressed: () => _trocarNumero(p),
           )
         : null;
+    // Entregue pelo Controle sem a assinatura da entrega: o vendedor ainda
+    // registra a entrega (a dele vale). O resto dos entregues é só leitura.
+    final registrarEntrega = podeRegistrarEntregaDepois(p)
+        ? _acao(
+            label: 'Registrar entrega',
+            icon: Icons.local_shipping_outlined,
+            onPressed: () => _editar(p),
+            principal: true,
+          )
+        : null;
     final List<Widget> botoes = somenteLeitura
         ? [
             _acao(
@@ -906,6 +916,10 @@ class _PedidosPageState extends State<PedidosPage>
           const SizedBox(height: MdSpace.md),
           if (trocar != null) ...[
             SizedBox(width: double.infinity, child: trocar),
+            const SizedBox(height: MdSpace.sm),
+          ],
+          if (registrarEntrega != null) ...[
+            SizedBox(width: double.infinity, child: registrarEntrega),
             const SizedBox(height: MdSpace.sm),
           ],
           actions,

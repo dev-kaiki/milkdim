@@ -248,3 +248,33 @@ String? avisoAssinaturaDoPedido({
 
 /// Rascunho só do aparelho (`so_local = 1`): nunca foi enviado.
 bool ehRascunhoDoAparelho(Map p) => _verdadeiro(p['so_local']);
+
+// ---------------------- Entrega depois do Controle ----------------------
+
+/// `finalizado_manual` como o app guarda (texto 'true'/'false', vindo do
+/// servidor) ou como bool/1.
+bool _finalizadoManual(Object? v) {
+  if (v == true) return true;
+  final s = '${v ?? ''}'.trim().toLowerCase();
+  return s == 'true' || s == 't' || s == '1';
+}
+
+/// O pedido tem a assinatura da **entrega**: os bytes (`assinatura`) ou o
+/// arquivo de `assinatura_path` existindo no aparelho.
+bool temAssinaturaDaEntrega(Map p,
+    {bool Function(String caminho) arquivoExiste = arquivoExisteNoAparelho}) {
+  if (_temBytes(p['assinatura'])) return true;
+  final caminho = (p['assinatura_path'] ?? '').toString().trim();
+  return caminho.isNotEmpty && arquivoExiste(caminho);
+}
+
+/// Entregue pelo Controle ("Marcar como entregue": `finalizado` com
+/// `finalizado_manual`) e ainda sem a assinatura da entrega: o vendedor pode
+/// "Registrar entrega" com a assinatura do cliente, e a dele vale (o servidor
+/// aceita a entrega assinada sobre um finalizado manual). Fora disso, os
+/// entregues são só leitura.
+bool podeRegistrarEntregaDepois(Map p,
+        {bool Function(String caminho) arquivoExiste = arquivoExisteNoAparelho}) =>
+    _status(p) == 'finalizado' &&
+    _finalizadoManual(p['finalizado_manual']) &&
+    !temAssinaturaDaEntrega(p, arquivoExiste: arquivoExiste);

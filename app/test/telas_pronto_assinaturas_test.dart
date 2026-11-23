@@ -844,6 +844,102 @@ void main() {
     });
   });
 
+  group('entrega depois do Controle', () {
+    Map<String, dynamic> entreguePeloControle({Object? manual = 'true', String? assinatura}) => {
+          ..._pedidoGuardado(status: 'finalizado'),
+          'finalizado_manual': manual,
+          'finalizado_em': '2026-11-23T12:00:00+00:00',
+          if (assinatura != null) 'assinatura': assinatura,
+        };
+
+    test('podeRegistrarEntregaDepois', () {
+      expect(podeRegistrarEntregaDepois(entreguePeloControle()), isTrue);
+      expect(podeRegistrarEntregaDepois(entreguePeloControle(manual: '1')), isTrue);
+      expect(podeRegistrarEntregaDepois(entreguePeloControle(manual: true)), isTrue);
+      expect(podeRegistrarEntregaDepois(entreguePeloControle(manual: 'false')), isFalse,
+          reason: 'entregue pelo vendedor');
+      expect(podeRegistrarEntregaDepois(entreguePeloControle(manual: null)), isFalse);
+      expect(podeRegistrarEntregaDepois(entreguePeloControle(assinatura: _hex0x)), isFalse,
+          reason: 'já tem a assinatura da entrega');
+      expect(podeRegistrarEntregaDepois(entreguePeloControle(assinatura: '0x')), isTrue);
+      expect(
+          podeRegistrarEntregaDepois(
+              {...entreguePeloControle(), 'assinatura_path': '/sig/e.png'},
+              arquivoExiste: (c) => c == '/sig/e.png'),
+          isFalse);
+      expect(
+          podeRegistrarEntregaDepois(
+              {...entreguePeloControle(), 'assinatura_path': '/sig/e.png'},
+              arquivoExiste: (_) => false),
+          isTrue);
+      for (final st in ['salvo', 'pronto', 'cancelado']) {
+        expect(podeRegistrarEntregaDepois({...entreguePeloControle(), 'status': st}), isFalse);
+      }
+    });
+
+    testWidgets('Entregues: so o entregue pelo Controle sem assinatura tem Registrar entrega',
+        (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(412, 2000);
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(MaterialApp(
+        theme: buildMilkdimTheme(),
+        home: PedidosPage(vendedorCodigo: '0003', pedidosParaCaptura: [
+          {...entreguePeloControle(), 'cliente_nome': 'Padaria Central'},
+          {
+            ...entreguePeloControle(manual: 'false', assinatura: _hex0x),
+            'id': 43,
+            'numero': '71',
+            'cliente_nome': 'Mercearia Boa Vista',
+          },
+        ]),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Entregues (2)'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Registrar entrega'), findsOneWidget);
+      final card = find.ancestor(
+          of: find.text('Registrar entrega'), matching: find.byType(MdCard));
+      expect(find.descendant(of: card, matching: find.text('Padaria Central')), findsOneWidget);
+      expect(find.text('Editar'), findsNothing, reason: 'o resto continua só leitura');
+      expect(find.text('Entregue'), findsNWidgets(2));
+    });
+
+    testWidgets('edicao do entregue pelo Controle so registra a entrega e envia finalizado '
+        'com a assinatura da entrega', (tester) async {
+      final espiao = _Espiao()..resposta = _png;
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: entreguePeloControle(),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+          gravarArquivoAssinatura: (b, {required numero}) async => '/sig/entrega_$numero.png',
+          lerSituacaoGravada: (p) async => 'finalizado',
+        ),
+      );
+      await tester
+          .tap(find.descendant(of: find.byType(BarraResumo), matching: find.byType(FilledButton)));
+      await tester.pumpAndSettle();
+      expect(find.text('Salvar alterações'), findsNothing);
+      expect(find.text('Salvar rascunho'), findsNothing);
+      await tester.ensureVisible(find.text('Registrar entrega'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Registrar entrega'));
+      await tester.pumpAndSettle();
+
+      expect(espiao.pedidos, [(TipoAssinatura.entrega, null)]);
+      final g = espiao.gravados.single;
+      expect(g['status'], 'finalizado');
+      expect(g['assinatura'], _png);
+      expect(g['assinatura_path'], '/sig/entrega_70.png');
+      expect(g['so_local'], 0);
+      expect(find.text('Editar Pedido'), findsNothing, reason: 'gravou e fechou');
+    });
+  });
+
   group('meus pedidos', () {
     testWidgets('pronto fica em Em aberto com o selo Pronto e pode ser editado', (tester) async {
       tester.view.devicePixelRatio = 1;

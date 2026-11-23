@@ -87,6 +87,10 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     _assinadoSobre = _itensEClienteDaTela();
   }
 
+  /// Entregue pelo Controle e sem a assinatura da entrega
+  /// ([podeRegistrarEntregaDepois]): a tela só oferece "Registrar entrega".
+  bool get _soEntrega => podeRegistrarEntregaDepois(widget.pedido);
+
   /// A assinatura colhida agora foi dada para outros itens ou outro cliente?
   bool get _assinaturaNovaVencida =>
       _assinaturaPedidoNova != null &&
@@ -764,14 +768,17 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
                     _registrarEntrega();
                   },
                 ),
-                secundario: (
-                  rotulo: 'Salvar alterações',
-                  icone: Icons.save_outlined,
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    _salvarAlteracoes();
-                  },
-                ),
+                // entregue pelo Controle sem assinatura: só registra a entrega
+                secundario: _soEntrega
+                    ? null
+                    : (
+                        rotulo: 'Salvar alterações',
+                        icone: Icons.save_outlined,
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          _salvarAlteracoes();
+                        },
+                      ),
                 // rascunho do aparelho: pode continuar rascunho (não envia)
                 terciario: ehRascunhoDoAparelho(widget.pedido)
                     ? (

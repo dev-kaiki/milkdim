@@ -513,6 +513,51 @@ void main() {
       expect(await situacaoGravada(linha), 'salvo', reason: 'agora com o id 100 do servidor');
     });
 
+    test('entregue pelo Controle: Registrar entrega envia finalizado com a assinatura e vale',
+        () async {
+      await aplicarPedidosRemotos([
+        _remoto(status: 'finalizado', assinaturaPedido: _byteaPedido, extra: {
+          'finalizado_manual': true,
+          'finalizado_em': '2026-11-23T12:00:00+00:00',
+          'finalizado_por': '0001',
+        }),
+      ]);
+      final linha = await _linha(42);
+      expect(linha['finalizado_manual'], 'true');
+      expect(podeRegistrarEntregaDepois(linha), isTrue);
+
+      final daTela = pedidoDaTela(
+        base: linha,
+        numero: '70',
+        produtos: _itensDaTela(),
+        total: 33.0,
+        status: 'finalizado',
+        datahora: '2026-11-23T13:00:00.000Z',
+        clienteId: 7,
+        cliente: _cliente,
+        assinatura: _pngEntrega,
+        assinaturaPath: null,
+      );
+      // O servidor aceita: a entrega assinada vence o finalizado manual.
+      noServidor = _remoto(
+        status: 'finalizado',
+        datahora: '2026-11-23T13:00:00+00:00',
+        assinaturaPedido: _byteaPedido,
+        extra: {'assinatura': _byteaEntrega, 'finalizado_manual': false},
+      );
+
+      expect(await gravarPedidoEEnviar(daTela, novo: false), ResultadoGravacao.enviado);
+      final p = payloads.single;
+      expect(p['status'], 'finalizado');
+      expect(p['assinatura'], _byteaEntrega);
+      expect(p.containsKey('finalizado_manual'), isFalse, reason: 'só o servidor grava');
+      final depois = await _linha(42);
+      expect(depois['finalizado_manual'], 'false');
+      expect(assinaturaToBytes(depois['assinatura']), _pngEntrega);
+      expect(podeRegistrarEntregaDepois(depois), isFalse);
+      expect(await _descartados(), 0);
+    });
+
     test('reenvio sem mudanca leva produtos iguais aos recebidos do servidor', () async {
       await aplicarPedidosRemotos([_remoto(status: 'pronto', assinaturaPedido: _byteaPedido)]);
       final recebido = jsonEncode(_itensDoServidor());
