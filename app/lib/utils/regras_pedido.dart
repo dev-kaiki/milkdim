@@ -2,7 +2,13 @@
 import 'dart:convert';
 import 'dart:io' show File;
 
-import 'db.dart' show buscarUltimoNumeroPedido, jaChegouAoServidor, kErroNumeroEmUso, numeroUsadoNoAparelho;
+import 'db.dart'
+    show
+        buscarUltimoNumeroPedido,
+        jaChegouAoServidor,
+        kErroApagadoNoControle,
+        kErroNumeroEmUso,
+        numeroUsadoNoAparelho;
 import 'supabase_helper.dart' show ResultadoGravacao, kPrazoConsultaNumero, numeroLivreNoServidor;
 
 /// Texto único de número em uso (tela de pedido novo, edição e selo da lista).
@@ -29,8 +35,17 @@ bool estaEmAberto(Map p) {
 
 String _status(Map p) => (p['status'] ?? '').toString().trim().toLowerCase();
 
+/// Texto do selo e da mensagem de pedido apagado no Controle.
+const String kMsgApagadoNoControle = 'Este pedido foi apagado no Controle.';
+
+/// O pedido tinha chegado ao servidor e foi apagado no Controle (qualquer
+/// status): fora da fila de envio, só pode ser apagado do aparelho.
+bool apagadoNoControle(Map p) => p['erro_envio']?.toString() == kErroApagadoNoControle;
+
 /// `pronto` conta como `salvo` (em aberto): cancelar, nunca apagar.
+/// Apagado no Controle (qualquer status): só apagar do aparelho.
 AcaoRemover acaoRemover(Map<String, dynamic> p) {
+  if (apagadoNoControle(p)) return AcaoRemover.apagarDoAparelho;
   if (!estaEmAberto(p)) return AcaoRemover.nenhuma;
   if (_verdadeiro(p['so_local'])) return AcaoRemover.apagarDoAparelho;
   if (jaChegouAoServidor(p) || _verdadeiro(p['pendente_envio'])) {
@@ -59,6 +74,8 @@ String? mensagemGravacao(ResultadoGravacao r, String status) {
       return 'Este pedido foi cancelado no Controle.';
     case ResultadoGravacao.numeroEmUso:
       return kMsgNumeroEmUso;
+    case ResultadoGravacao.apagadoNoControle:
+      return kMsgApagadoNoControle;
     case ResultadoGravacao.rascunho:
       return null;
   }
@@ -72,6 +89,7 @@ bool podeTrocarNumero(Map<String, dynamic> p) =>
 /// Resultados que o vendedor precisa notar (não são sucesso).
 bool gravacaoEhAviso(ResultadoGravacao r) =>
     r == ResultadoGravacao.numeroEmUso ||
+    r == ResultadoGravacao.apagadoNoControle ||
     r == ResultadoGravacao.fechadoNoControle ||
     r == ResultadoGravacao.canceladoNoControle;
 

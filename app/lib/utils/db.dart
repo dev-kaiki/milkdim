@@ -566,6 +566,11 @@ const String kLimparAssinaturaPedido = 'limpar_assinatura_pedido';
 /// Valor de `erro_envio` quando o número já é de outro pedido no servidor.
 const String kErroNumeroEmUso = 'numero';
 
+/// Valor de `erro_envio` quando o pedido já tinha chegado ao servidor e foi
+/// apagado no Controle: sai da fila de envio (`pendente_envio = 0`), mas a
+/// linha fica no aparelho até o vendedor apagá-la.
+const String kErroApagadoNoControle = 'apagado';
+
 /// O `(numero, vendedor_codigo)` já é de outro pedido: no servidor (com outro
 /// `id_aparelho`, lançada pelo envio) ou no aparelho (um pedido já enviado ou
 /// outra linha local, lançada pela gravação local antes de escrever qualquer

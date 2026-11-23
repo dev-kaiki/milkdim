@@ -22,7 +22,7 @@ import 'convert.dart'; // assinaturaToBytes(), bytesToHex0x(), assinaturaParaByt
 import 'db.dart';      // getDb()
 import 'id_aparelho.dart'; // novoIdAparelho()
 
-export 'db.dart' show NumeroEmUso, kErroNumeroEmUso;
+export 'db.dart' show NumeroEmUso, kErroApagadoNoControle, kErroNumeroEmUso;
 
 final supabase = Supabase.instance.client;
 
@@ -117,7 +117,7 @@ Future<bool> sincronizarTudo({required String vendedorCodigo}) async {
     final r = await subirPedidosPendentes(vendedorCodigo: vendedorCodigo);
     // ignore: avoid_print
     print('📤 Pendentes: ${r.enviados} enviados, ${r.falhas} falhas, '
-        '${r.numeroEmUso} com número em uso');
+        '${r.numeroEmUso} com número em uso, ${r.apagados} apagados no Controle');
   } catch (e) {
     // ignore: avoid_print
     print('❌ Erro ao subir pendentes: $e');
@@ -428,15 +428,17 @@ Future<void> aplicarPedidosRemotos(List<Map<String, dynamic>> remotos) async {
 /// qualquer situação). Cada falha deixa o pedido pendente e segue para o
 /// próximo. Pedido com `erro_envio = 'numero'` (o número já é de outro pedido
 /// no servidor) não é tentado: continua pendente e conta em `numeroEmUso` até
-/// o vendedor trocar o número. Chamar ao abrir com internet, depois do login e
-/// depois da sync. Roda sob [comTravaDePedidos].
-Future<({int enviados, int falhas, int numeroEmUso})> subirPedidosPendentes({
+/// o vendedor trocar o número. Pedido apagado no Controle
+/// ([PedidoApagadoNoControle]) sai da fila e conta em `apagados`, não em
+/// `falhas`. Chamar ao abrir com internet, depois do login e depois da sync.
+/// Roda sob [comTravaDePedidos].
+Future<({int enviados, int falhas, int numeroEmUso, int apagados})> subirPedidosPendentes({
   required String vendedorCodigo,
   Future<void> Function(Map<String, dynamic>) enviar = salvarPedidoSupabase,
 }) =>
     comTravaDePedidos(() => _subirPedidosPendentes(vendedorCodigo, enviar));
 
-Future<({int enviados, int falhas, int numeroEmUso})> _subirPedidosPendentes(
+Future<({int enviados, int falhas, int numeroEmUso, int apagados})> _subirPedidosPendentes(
   String vendedorCodigo,
   Future<void> Function(Map<String, dynamic>) enviar,
 ) async {
@@ -444,6 +446,7 @@ Future<({int enviados, int falhas, int numeroEmUso})> _subirPedidosPendentes(
   var enviados = 0;
   var falhas = 0;
   var numeroEmUso = 0;
+  var apagados = 0;
   for (final row in rows) {
     if (row['vendedor_codigo']?.toString() != vendedorCodigo) continue;
     if (row['erro_envio']?.toString() == kErroNumeroEmUso) {
@@ -456,13 +459,20 @@ Future<({int enviados, int falhas, int numeroEmUso})> _subirPedidosPendentes(
     } on NumeroEmUso {
       numeroEmUso++;
       await _marcarNumeroEmUso(row);
+    } on PedidoApagadoNoControle {
+      apagados++;
     } catch (e) {
       falhas++;
       // ignore: avoid_print
       print('⚠️ Falha ao subir pendente ${row['numero'] ?? row['id']}: $e');
     }
   }
-  return (enviados: enviados, falhas: falhas, numeroEmUso: numeroEmUso);
+  return (
+    enviados: enviados,
+    falhas: falhas,
+    numeroEmUso: numeroEmUso,
+    apagados: apagados,
+  );
 }
 
 /// Apaga duplicados locais após salvar no servidor:
@@ -648,6 +658,17 @@ Future<Map<String, dynamic>?> _buscarRemotoPorNumeroSupabase(
 @visibleForTesting
 Future<Map<String, dynamic>?> Function(String numero, String vendedorCodigo)
     buscarRemotoPorNumero = _buscarRemotoPorNumeroSupabase;
+
+Future<Map<String, dynamic>?> _buscarRemotoPorIdSupabase(int id) async {
+  final r = await supabase.from('pedidos').select('id').eq('id', id).maybeSingle();
+  return r == null ? null : Map<String, dynamic>.from(r);
+}
+
+/// Busca `id` do pedido do servidor com esse id, ou null se não existe (o RLS
+/// só mostra os pedidos do próprio vendedor). Lança se não houver rede.
+/// Trocável nos testes.
+@visibleForTesting
+Future<Map<String, dynamic>?> Function(int id) buscarRemotoPorId = _buscarRemotoPorIdSupabase;
 
 /// Quanto a tela espera o servidor responder se um número está livre antes de
 /// gravar. Passou disso, vale a regra do offline (livre).
@@ -903,18 +924,68 @@ Future<Map<String, dynamic>?> Function(Map<String, dynamic> payload, {int? idSer
 ///   (numero, vendedor_codigo).
 /// - Pedido que já chegou ao servidor: UPDATE pelo id do servidor.
 /// Devolve o [ResultadoEco]. Lança [PedidoNaoConfirmado] se o servidor não
-/// devolveu a linha (o pedido continua pendente). Roda sob [comTravaDePedidos].
+/// devolveu a linha (o pedido continua pendente), ou [PedidoApagadoNoControle]
+/// se o pedido já tinha chegado ao servidor e não existe mais lá (sai da fila
+/// de envio). Roda sob [comTravaDePedidos].
 Future<ResultadoEco> salvarPedidoSupabase(Map<String, dynamic> pedido) =>
     comTravaDePedidos(() => _salvarPedidoSupabase(pedido));
 
-/// O servidor não devolveu a linha gravada (ex.: pedido apagado no servidor).
-/// O envio não conta como feito: o pedido continua pendente.
+/// O servidor não devolveu a linha gravada e não deu para dizer que o pedido
+/// foi apagado no Controle (ele ainda existe, ou a consulta falhou). O envio
+/// não conta como feito: o pedido continua pendente.
 class PedidoNaoConfirmado implements Exception {
   const PedidoNaoConfirmado(this.numero);
   final String numero;
 
   @override
   String toString() => 'PedidoNaoConfirmado: o servidor não devolveu o pedido $numero';
+}
+
+/// O pedido já tinha chegado ao servidor e não existe mais lá (apagado no
+/// Controle). Quando é lançada, o aparelho já guardou a cópia em
+/// `pedidos_descartados` e tirou o pedido da fila de envio
+/// (`pendente_envio = 0`, `erro_envio = 'apagado'`); a linha local fica.
+class PedidoApagadoNoControle implements Exception {
+  const PedidoApagadoNoControle(this.numero);
+  final String numero;
+
+  @override
+  String toString() => 'PedidoApagadoNoControle: o pedido $numero foi apagado no Controle';
+}
+
+/// O UPDATE por id de um pedido que já chegou ao servidor não devolveu linha:
+/// o pedido ainda existe? `true` só quando o servidor respondeu que não
+/// existe; se a consulta falhar (sem rede), `false` (fica pendente, como
+/// sempre).
+Future<bool> _apagadoNoServidor(int id) async {
+  try {
+    return await buscarRemotoPorId(id) == null;
+  } catch (e) {
+    // ignore: avoid_print
+    print('⚠️ Não deu para conferir se o pedido $id ainda existe no servidor: $e');
+    return false;
+  }
+}
+
+/// Pedido apagado no Controle: numa transação, guarda a cópia local mais nova
+/// em `pedidos_descartados` ('apagado no Controle') e tira o pedido da fila
+/// de envio (`pendente_envio = 0`, `erro_envio = 'apagado'`). Nunca apaga a
+/// linha local.
+Future<void> _marcarApagadoNoControle(Map<String, dynamic> enviado, int id) async {
+  final db = await getDb();
+  await db.transaction((txn) async {
+    final locais = await txn.query('pedidos', where: 'id = ?', whereArgs: [id]);
+    for (final l in locais.isEmpty ? [enviado] : locais) {
+      await guardarVersaoDescartada(Map<String, dynamic>.from(l), 'apagado no Controle',
+          em: txn);
+    }
+    await txn.update(
+        'pedidos', {'pendente_envio': 0, 'erro_envio': kErroApagadoNoControle},
+        where: 'id = ?', whereArgs: [id]);
+  });
+  // ignore: avoid_print
+  print('🗑️ Pedido ${enviado['numero'] ?? id} foi apagado no Controle; '
+      'sai da fila de envio (cópia guardada).');
 }
 
 Future<ResultadoEco> _salvarPedidoSupabase(Map<String, dynamic> pedidoOriginal) async {
@@ -942,15 +1013,25 @@ Future<ResultadoEco> _salvarPedidoSupabase(Map<String, dynamic> pedidoOriginal) 
       idServidor: noServidor ? _idDe(pedido) : null,
     );
 
-    // Sem linha de volta (ex.: o pedido foi apagado no servidor e o UPDATE
-    // por id não achou nada): não conta como enviado; continua pendente.
-    if (remoto == null) throw PedidoNaoConfirmado(numero);
+    // Sem linha de volta: não conta como enviado. Se o pedido já tinha
+    // chegado ao servidor e não existe mais lá (apagado no Controle), sai da
+    // fila de envio; senão (ou sem como conferir), continua pendente.
+    if (remoto == null) {
+      final id = _idDe(pedido);
+      if (noServidor && id != null && await _apagadoNoServidor(id)) {
+        await _marcarApagadoNoControle(pedido, id);
+        throw PedidoApagadoNoControle(numero);
+      }
+      throw PedidoNaoConfirmado(numero);
+    }
 
     // Aplicar no SQLite e LIMPAR duplicados (se a cópia local não mudou
     // enquanto o envio estava no ar)
     return await aplicarEcoDoServidor(enviado: pedido, remoto: remoto);
   } on NumeroEmUso {
     rethrow; // não é erro de envio: quem chamou marca erro_envio = 'numero'
+  } on PedidoApagadoNoControle {
+    rethrow; // já tirado da fila de envio, com cópia guardada
   } catch (e) {
     // ignore: avoid_print
     print('❌ Erro ao salvar pedido no Supabase: $e');
@@ -1236,6 +1317,11 @@ enum ResultadoGravacao {
   /// O número já é de outro pedido no servidor: fica pendente com
   /// `erro_envio = 'numero'` até o vendedor trocar o número.
   numeroEmUso,
+
+  /// O pedido já tinha chegado ao servidor e foi apagado no Controle: sai da
+  /// fila de envio com `erro_envio = 'apagado'` (a linha fica no aparelho) e
+  /// a versão local foi guardada em `pedidos_descartados`.
+  apagadoNoControle,
 }
 
 /// Linha do SQLite do pedido recém-gravado (por id, senão por numero+vendedor).
@@ -1341,6 +1427,10 @@ Future<ResultadoGravacao> gravarPedidoEEnviar(
     print('⚠️ $e');
     await _marcarNumeroEmUso(envio);
     return ResultadoGravacao.numeroEmUso;
+  } on PedidoApagadoNoControle catch (e) {
+    // ignore: avoid_print
+    print('⚠️ $e');
+    return ResultadoGravacao.apagadoNoControle;
   } catch (e) {
     // ignore: avoid_print
     print('⚠️ Pedido ${pedido['numero']} salvo no aparelho; envio pendente: $e');

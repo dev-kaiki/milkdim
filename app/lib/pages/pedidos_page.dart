@@ -153,12 +153,17 @@ class _PedidosPageState extends State<PedidosPage>
     final id = pedido['id'] as int?;
     if (id == null) return;
 
+    // Apagado no Controle: o servidor não tem mais o pedido (a cópia ficou em
+    // pedidos_descartados); só sai da lista do aparelho.
+    final apagado = apagadoNoControle(pedido);
     final confirmou = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Apagar rascunho?'),
-        content: const Text(
-            'Esse pedido ainda não foi finalizado. Deseja removê-lo do aparelho?'),
+        title: Text(apagado ? 'Apagar do aparelho?' : 'Apagar rascunho?'),
+        content: Text(apagado
+            ? 'Este pedido foi apagado no Controle e não será enviado. '
+                'Deseja removê-lo do aparelho?'
+            : 'Esse pedido ainda não foi finalizado. Deseja removê-lo do aparelho?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -184,7 +189,7 @@ class _PedidosPageState extends State<PedidosPage>
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('Rascunho apagado.'),
+        content: Text(apagado ? 'Pedido apagado do aparelho.' : 'Rascunho apagado.'),
         action: SnackBarAction(
           label: 'DESFAZER',
           onPressed: () async {
@@ -318,6 +323,7 @@ class _PedidosPageState extends State<PedidosPage>
         case ResultadoGravacao.fechadoNoControle:
         case ResultadoGravacao.canceladoNoControle:
         case ResultadoGravacao.numeroEmUso:
+        case ResultadoGravacao.apagadoNoControle:
         case ResultadoGravacao.pendente:
           _snack(mensagemGravacao(r, 'cancelado')!, ok: r == ResultadoGravacao.pendente);
         case ResultadoGravacao.enviado:
@@ -675,6 +681,10 @@ class _PedidosPageState extends State<PedidosPage>
   Widget _seloStatus(Map<String, dynamic> p) {
     final status = (p['status'] ?? '-').toString();
     final pendente = (p['pendente_envio'] ?? 0).toString() == '1';
+    if (apagadoNoControle(p)) {
+      return const MdStatusChip(
+          tipo: MdTipo.erro, texto: 'Apagado no Controle', icone: Icons.delete_outline);
+    }
     if (p['erro_envio']?.toString() == kErroNumeroEmUso) {
       return const MdStatusChip(
           tipo: MdTipo.erro, texto: kMsgNumeroEmUso, icone: Icons.error_outline);
@@ -836,8 +846,11 @@ class _PedidosPageState extends State<PedidosPage>
     );
 
     // ações por status
+    // Apagado no Controle: só "Apagar do aparelho" (sem editar, enviar,
+    // trocar número nem registrar entrega).
+    final apagado = apagadoNoControle(p);
     final acao = acaoRemover(p);
-    final trocar = podeTrocarNumero(p)
+    final trocar = !apagado && podeTrocarNumero(p)
         ? _acao(
             label: 'Trocar número',
             icon: Icons.swap_horiz,
@@ -846,7 +859,7 @@ class _PedidosPageState extends State<PedidosPage>
         : null;
     // Entregue pelo Controle sem a assinatura da entrega: o vendedor ainda
     // registra a entrega (a dele vale). O resto dos entregues é só leitura.
-    final registrarEntrega = podeRegistrarEntregaDepois(p)
+    final registrarEntrega = !apagado && podeRegistrarEntregaDepois(p)
         ? _acao(
             label: 'Registrar entrega',
             icon: Icons.local_shipping_outlined,
@@ -854,7 +867,16 @@ class _PedidosPageState extends State<PedidosPage>
             principal: true,
           )
         : null;
-    final List<Widget> botoes = somenteLeitura
+    final List<Widget> botoes = apagado
+        ? [
+            _acao(
+              label: 'Apagar do aparelho',
+              icon: Icons.delete_outline,
+              onPressed: () => _remover(p),
+              perigo: true,
+            ),
+          ]
+        : somenteLeitura
         ? [
             _acao(
               label: 'Ver',
@@ -898,7 +920,11 @@ class _PedidosPageState extends State<PedidosPage>
     );
 
     return MdCard(
-      onTap: somenteLeitura ? () => _imprimirPdf(p) : () => _editar(p),
+      onTap: apagado
+          ? null
+          : somenteLeitura
+              ? () => _imprimirPdf(p)
+              : () => _editar(p),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

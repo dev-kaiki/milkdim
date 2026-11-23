@@ -123,4 +123,30 @@ void main() {
       expect(mensagemGravacao(ResultadoGravacao.rascunho, 'salvo'), isNull);
     });
   });
+
+  group('apagado no Controle', () {
+    test('apagadoNoControle so com erro_envio apagado', () {
+      expect(apagadoNoControle({'id': 492, 'status': 'finalizado', 'erro_envio': 'apagado'}),
+          isTrue);
+      expect(apagadoNoControle({'id': 492, 'status': 'salvo', 'erro_envio': kErroApagadoNoControle}),
+          isTrue);
+      expect(apagadoNoControle({'id': 492, 'status': 'salvo'}), isFalse);
+      expect(apagadoNoControle({'id': 492, 'status': 'salvo', 'erro_envio': 'numero'}), isFalse);
+    });
+    test('qualquer status: so Apagar do aparelho', () {
+      for (final st in ['salvo', 'pronto', 'finalizado', 'cancelado']) {
+        final p = {'id': 492, 'status': st, 'so_local': 0, 'pendente_envio': 0,
+          'erro_envio': 'apagado'};
+        expect(acaoRemover(p), AcaoRemover.apagarDoAparelho, reason: st);
+        expect(podeTrocarNumero(p), isFalse, reason: st);
+      }
+    });
+    test('mensagem exata e e aviso', () {
+      expect(mensagemGravacao(ResultadoGravacao.apagadoNoControle, 'salvo'),
+          'Este pedido foi apagado no Controle.');
+      expect(mensagemGravacao(ResultadoGravacao.apagadoNoControle, 'finalizado'),
+          'Este pedido foi apagado no Controle.');
+      expect(gravacaoEhAviso(ResultadoGravacao.apagadoNoControle), isTrue);
+    });
+  });
 }
