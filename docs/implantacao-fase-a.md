@@ -30,7 +30,54 @@ só pedidos já entregues ou cancelados.
 **Nunca desinstalar o app antes de instalar o novo.** Desinstalar apaga os pedidos guardados
 no celular. Sempre instalar **por cima**.
 
-## 2. Controle novo (instalar primeiro)
+## 2. Teste de ponta a ponta (antes de instalar na fábrica e nos vendedores)
+
+O teste roda **fora da fábrica e longe dos vendedores**:
+
+- [ ] Celular do dono: instalar `MilkDim_Funcionario_2026-11-23_faseA.apk` **por cima** e entrar
+      com **um código de vendedor que nenhum outro celular usa** (por exemplo 0001).
+- [ ] Computador do dono: copiar a pasta `MilkDim_Controle_Windows_2026-11-23_faseA` para
+      qualquer lugar e abrir o `milkdim_admin.exe` dela. Isso não mexe no computador da fábrica.
+
+Só depois de tudo certo aqui, instalar o Controle na fábrica (seção 3) e o APK nos vendedores
+(seção 4).
+
+- [ ] **1.** Pedido novo → **Enviar pedido** → o cliente assina. O pedido aparece em **Pedidos
+      em aberto** em até 30 segundos e o total de **A fabricar** sobe.
+- [ ] **2.** No Controle: **Produção concluída**. O pedido passa para **Prontos para entrega** e
+      os totais descem. No celular, depois de sincronizar, o pedido mostra **Pronto**.
+  - Se aparecer "O pedido mudou depois que a tela foi atualizada…" logo depois de tocar em
+    Atualizar, é defeito — me avise.
+- [ ] **3.** No celular: abrir o pedido, mudar uma quantidade e tocar **Salvar alterações**. O
+      app pede nova assinatura do cliente. O Controle mostra o pedido de volta em **Pedidos em
+      aberto**, com **alterado depois de pronto**.
+- [ ] **4.** No Controle: **Produção concluída** de novo.
+- [ ] **5.** No celular: **Registrar entrega** → o cliente assina a entrega. O pedido sai da
+      Produção; no detalhe aparecem as duas assinaturas; o PDF no celular mostra as duas.
+- [ ] **6.** Rascunhos:
+  - Pedido novo: no resumo, tocar **Assinar** (o cliente assina) e depois **Salvar rascunho**.
+    O pedido aparece como **Não enviado** e não aparece no Controle. Abrir o rascunho e tocar
+    **Salvar alterações**: o app **não pede** a assinatura de novo e o pedido aparece em
+    **Pedidos em aberto**.
+  - Outro pedido novo, sem assinar: **Salvar rascunho**. Abrir o rascunho e tocar **Salvar
+    rascunho** de novo: continua **Não enviado**, sem pedir assinatura. Abrir de novo e tocar
+    **Salvar alterações**: o app **pede** a assinatura do pedido.
+  - Outro pedido novo: **Assinar**, **Salvar rascunho**. Abrir o rascunho, mudar uma quantidade
+    e tocar **Salvar alterações**: o app **pede** a assinatura de novo.
+- [ ] **7.** Outro pedido: **Produção concluída**. Colocar o celular em modo avião. No Controle,
+      **Marcar como entregue**. No celular (ainda sem internet): abrir o pedido, mudar uma
+      quantidade e **Registrar entrega** com assinatura. Ligar a internet e tocar **Enviar
+      agora**. Vale a versão do vendedor: quantidades dele, "Finalizado por" com o código dele
+      (sem "(manual)") e assinatura preenchida.
+- [ ] **8.** Outro pedido: **Produção concluída** e, no Controle, **Marcar como entregue** (o
+      celular com internet). No celular, depois de sincronizar, o pedido está em **Entregues**
+      com o botão **Registrar entrega**. Tocar, o cliente assina a entrega. Vale a do vendedor:
+      no Controle, "Finalizado por" com o código dele (sem "(manual)") e a assinatura da
+      entrega preenchida; no celular o botão some.
+- [ ] **9.** Outro pedido: **Cancelar** pelo Controle. Ele aparece em **Cancelados** no celular.
+- [ ] **10.** Limpar os pedidos de teste pelo Controle (só os entregues ou cancelados).
+
+## 3. Controle novo na fábrica (depois do teste, antes dos vendedores)
 
 - [ ] Computador da fábrica: substituir a pasta do Controle antigo pela pasta
       `MilkDim_Controle_Windows_2026-11-23_faseA`. O executável tem o mesmo nome
@@ -50,6 +97,8 @@ O que a fábrica vai notar:
 - A tela atualiza sozinha a cada 30 segundos, e há o botão **Atualizar**.
 - Aparece o aviso **"alterado depois de pronto"** quando o vendedor mexeu num pedido que já
   estava pronto. Esse pedido volta para **Pedidos em aberto**.
+  - **Antes de produzir de novo, conferir o que mudou.** O pedido volta com as quantidades
+    inteiras, não só a diferença: produzir tudo de novo duplica o que já foi feito.
 - Se o vendedor mudou o pedido depois que a tela foi atualizada, **Produção concluída** é
   recusada com "O pedido mudou depois que a tela foi atualizada. Atualize e confira." Basta
   tocar em Atualizar e conferir.
@@ -57,7 +106,7 @@ O que a fábrica vai notar:
 - No detalhe do pedido aparecem **Pronto em/por**, quem entregou ou cancelou, e quando, e as
   **duas assinaturas** (do pedido e da entrega).
 
-## 3. APK novo nos vendedores (depois do Controle)
+## 4. APK novo nos vendedores (depois do Controle)
 
 Para cada vendedor, **com o celular na internet**:
 
@@ -74,37 +123,21 @@ O que o vendedor vai notar:
 - Ao abrir um pedido em aberto ou pronto aparecem **Salvar alterações** e **Registrar entrega**:
   - **Salvar alterações**: se itens ou cliente mudaram, o cliente assina o pedido de novo.
   - **Registrar entrega**: o cliente assina a **entrega** e o pedido vira **Entregue**.
+  - Num rascunho aparece também **Salvar rascunho**: continua só no celular, sem pedir
+    assinatura. Se o cliente já assinou e nada mudou, **Salvar alterações** envia sem pedir de
+    novo.
 - "Meus pedidos" tem três abas: **Em aberto** (inclui os pedidos prontos, com o selo
-  **Pronto**), **Entregues** e **Cancelados**. Os selos dos pedidos são **Em aberto** e **Entregue**.
+  **Pronto**), **Entregues** e **Cancelados**. Os selos dos pedidos são **Em aberto**,
+  **Pronto**, **Aguardando envio**, **Não enviado**, **Entregue** e **Cancelado**.
+- Um pedido que a fábrica marcou como entregue, ainda sem a assinatura da entrega, aparece em
+  **Entregues** com o botão **Registrar entrega**: o cliente assina e vale a do vendedor. Os
+  outros entregues são só para ver.
 - O PDF mostra **Assinatura do pedido** e **Assinatura da entrega**.
-- Rascunhos antigos que estavam no celular aparecem como **Não enviado**. Para serem enviados
-  precisam da assinatura do cliente no pedido.
+- **Não enviado** aparece nos rascunhos antigos que estavam no celular e nos rascunhos novos
+  feitos com **Salvar rascunho**. Para serem enviados precisam da assinatura do cliente no
+  pedido.
 - O número do pedido fica travado depois que o pedido chega ao servidor.
 - O botão **Trocar número** só aparece quando há conflito de número.
-
-## 4. Teste de ponta a ponta
-
-Usar **um código de vendedor que nenhum outro celular usa** (por exemplo 0001), no celular do
-dono, e o Controle novo (pasta do Windows copiada para qualquer lugar do computador do dono;
-isso não mexe no computador da fábrica).
-
-- [ ] **1.** Pedido novo → **Enviar pedido** → o cliente assina. O pedido aparece em **Pedidos
-      em aberto** em até 30 segundos e o total de **A fabricar** sobe.
-- [ ] **2.** No Controle: **Produção concluída**. O pedido passa para **Prontos para entrega** e
-      os totais descem. No celular, depois de sincronizar, o pedido mostra **Pronto**.
-- [ ] **3.** No celular: abrir o pedido, mudar uma quantidade e tocar **Salvar alterações**. O
-      app pede nova assinatura do cliente. O Controle mostra o pedido de volta em **Pedidos em
-      aberto**, com **alterado depois de pronto**.
-- [ ] **4.** No Controle: **Produção concluída** de novo.
-- [ ] **5.** No celular: **Registrar entrega** → o cliente assina a entrega. O pedido sai da
-      Produção; no detalhe aparecem as duas assinaturas; o PDF no celular mostra as duas.
-- [ ] **6.** Outro pedido: **Produção concluída**. Colocar o celular em modo avião. No Controle,
-      **Marcar como entregue**. No celular (ainda sem internet): abrir o pedido, mudar uma
-      quantidade e **Registrar entrega** com assinatura. Ligar a internet e tocar **Enviar
-      agora**. Vale a versão do vendedor: quantidades dele, "Finalizado por" com o código dele
-      (sem "(manual)") e assinatura preenchida.
-- [ ] **7.** Outro pedido: **Cancelar** pelo Controle. Ele aparece em **Cancelados** no celular.
-- [ ] **8.** Limpar os pedidos de teste pelo Controle (só os entregues ou cancelados).
 
 ## Pendência
 
