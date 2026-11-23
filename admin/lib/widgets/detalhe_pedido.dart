@@ -282,31 +282,17 @@ class _FolhaDetalhe extends StatelessWidget {
             // ITENS
             const SizedBox(height: MdSpace.md),
             const MdSectionHeader(titulo: 'Itens do pedido'),
+            // Lista em vez de tabela: com nomes longos ("1100g Chocolate ...") a tabela
+            // rolava de lado e escondia a quantidade e o subtotal.
             MdCard(
               padding: EdgeInsets.zero,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  headingTextStyle: tt.labelLarge!.copyWith(color: MdColors.textMuted),
-                  columns: const [
-                    DataColumn(label: Text('Produto')),
-                    DataColumn(label: Text('Preço'), numeric: true),
-                    DataColumn(label: Text('Qtd'), numeric: true),
-                    DataColumn(label: Text('Subtotal'), numeric: true),
+              child: Column(
+                children: [
+                  for (var i = 0; i < ped.itens.length; i++) ...[
+                    if (i > 0) const Divider(height: 1),
+                    _ItemPedidoLinha(item: ped.itens[i]),
                   ],
-                  rows: ped.itens
-                      .map(
-                        (it) => DataRow(
-                          cells: [
-                            DataCell(Text(it.nome)),
-                            DataCell(Text(fmtMoedaPedido(it.preco))),
-                            DataCell(Text(it.quantidade.toString())),
-                            DataCell(Text(fmtMoedaPedido(it.subtotal))),
-                          ],
-                        ),
-                      )
-                      .toList(),
-                ),
+                ],
               ),
             ),
             Align(
@@ -404,6 +390,51 @@ class _FolhaDetalhe extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// Uma linha de item: quantidade em destaque, nome (quebra linha se longo),
+/// "N un × preço" embaixo e o subtotal à direita. Nada fica escondido.
+class _ItemPedidoLinha extends StatelessWidget {
+  final PedidoItem item;
+
+  const _ItemPedidoLinha({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    final tt = Theme.of(context).textTheme;
+    final q = item.quantidade;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: MdSpace.lg, vertical: MdSpace.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 48),
+            child: Text(
+              '$q×',
+              style: tt.titleMedium!.copyWith(color: MdColors.primaryStrong),
+            ),
+          ),
+          const SizedBox(width: MdSpace.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(item.nome.trim(), style: tt.bodyLarge),
+                const SizedBox(height: 2),
+                Text(
+                  '$q ${q == 1 ? 'unidade' : 'unidades'} × ${fmtMoedaPedido(item.preco)}',
+                  style: tt.bodyMedium!.copyWith(color: MdColors.textMuted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: MdSpace.md),
+          Text(fmtMoedaPedido(item.subtotal), style: tt.titleSmall),
+        ],
+      ),
     );
   }
 }
