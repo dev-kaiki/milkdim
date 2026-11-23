@@ -23,8 +23,11 @@
 --       Controle
 --   p3  pronto, "Marcar como entregue" pelo Controle, depois a entrega
 --       assinada do vendedor vence
---   p4  pronto, entregue pelo vendedor com a assinatura da entrega
+--   p4  alterado pelo vendedor (alterado_em = now()); pronto so com o
+--       alterado_em certo; entregue pelo vendedor com a assinatura da entrega
 --   p5  finalizado direto (para a RPC recusar)
+--   p6  pronto que volta para salvo porque o vendedor mudou o cliente
+--   p7  (do teste_fa2_adm) o admin pelo app do vendedor nao grava pronto
 
 -- 0. Preparacao, sem JWT (como o SQL Editor): contas Auth e vendedores.
 select set_config('request.jwt.claims', '', true);
@@ -143,6 +146,23 @@ begin
   returning id into v_id;
   perform set_config('teste.fa2_p4', v_id::text, true);
 
+  -- p4 alterado pelo vendedor: alterado_em = now() (secao 2 confere a RPC
+  -- contra ele).
+  update public.pedidos
+     set produtos = '[{"nome":"Leite","preco":5,"quantidade":3,"subtotal":15}]'::jsonb,
+         total = 15
+   where id = v_id;
+  select * into v_r from public.pedidos where id = v_id;
+  if v_r.alterado_em is distinct from now() then
+    raise exception 'FALHA: preparo de p4 nao preencheu alterado_em (%)', v_r.alterado_em;
+  end if;
+
+  insert into public.pedidos (numero, vendedor_codigo, cliente_nome, produtos, total, status, datahora)
+  values ('teste-fa2-6', 'teste_fa2_vend', 'Cliente teste',
+          '[{"nome":"Leite","preco":5,"quantidade":1,"subtotal":5}]'::jsonb, 5, 'salvo', now())
+  returning id into v_id;
+  perform set_config('teste.fa2_p6', v_id::text, true);
+
   insert into public.pedidos (numero, vendedor_codigo, cliente_nome, produtos, total,
                               status, datahora, assinatura)
   values ('teste-fa2-5', 'teste_fa2_vend', 'Cliente teste',
@@ -187,14 +207,32 @@ select set_config('request.jwt.claims',
 set local role authenticated;
 do $$
 declare
-  v_r record;
+  v_id bigint;
+  v_n  bigint;
+  v_r  record;
 begin
   if not public.app_is_admin() then
     raise exception 'FALHA: teste_fa2_adm nao aparece como admin';
   end if;
 
-  -- 2a. pedido_marcar_pronto num salvo: pronto, pronto_em = now(),
-  --     pronto_por = codigo do admin; o resto fica.
+  -- 2a. pedido_marcar_pronto num salvo nunca alterado (alterado_em nulo).
+  --     A tela dizendo que ele foi alterado (valor que nao bate): MD001, nada
+  --     muda. Chamada com um argumento so (nulo = nulo): pronto,
+  --     pronto_em = now(), pronto_por = codigo do admin; o resto fica.
+  begin
+    perform public.pedido_marcar_pronto(current_setting('teste.fa2_p1')::bigint, now());
+    raise exception 'FALHA: pedido_marcar_pronto aceitou alterado_em que nao bate (p1)';
+  exception when sqlstate 'MD001' then
+    null;
+  end;
+  select * into v_r from public.pedidos where id = current_setting('teste.fa2_p1')::bigint;
+  if v_r.status is distinct from 'salvo' or v_r.pronto_em is not null or v_r.pronto_por is not null then
+    raise exception 'FALHA: p1 mudou depois do MD001 (status %, pronto_em %)', v_r.status, v_r.pronto_em;
+  end if;
+  if coalesce(current_setting('milkdim.acao_controle', true), '') = '1' then
+    raise exception 'FALHA: milkdim.acao_controle ligada depois do MD001';
+  end if;
+
   perform public.pedido_marcar_pronto(current_setting('teste.fa2_p1')::bigint);
   select * into v_r from public.pedidos where id = current_setting('teste.fa2_p1')::bigint;
   if v_r.status is distinct from 'pronto'
@@ -236,9 +274,70 @@ begin
     raise exception 'FALHA: p5 mudou depois do pedido_marcar_pronto recusado';
   end if;
 
-  perform public.pedido_marcar_pronto(current_setting('teste.fa2_p2')::bigint);
+  -- 2b2. Pedido alterado depois que a tela foi atualizada (p4, alterado_em
+  --      = now()): a tela com o valor antigo, ou sem alteracao (nulo, e a
+  --      chamada com um argumento so), da MD001 e nada muda; com o valor
+  --      que esta no banco, marca pronto.
+  begin
+    perform public.pedido_marcar_pronto(current_setting('teste.fa2_p4')::bigint,
+                                        now() - interval '1 hour');
+    raise exception 'FALHA: pedido_marcar_pronto aceitou alterado_em velho (p4)';
+  exception when sqlstate 'MD001' then
+    null;
+  end;
+  begin
+    perform public.pedido_marcar_pronto(current_setting('teste.fa2_p4')::bigint, null);
+    raise exception 'FALHA: pedido_marcar_pronto aceitou alterado_em nulo em pedido alterado (p4)';
+  exception when sqlstate 'MD001' then
+    null;
+  end;
+  begin
+    perform public.pedido_marcar_pronto(current_setting('teste.fa2_p4')::bigint);
+    raise exception 'FALHA: pedido_marcar_pronto com um argumento aceitou pedido alterado (p4)';
+  exception when sqlstate 'MD001' then
+    null;
+  end;
+  select * into v_r from public.pedidos where id = current_setting('teste.fa2_p4')::bigint;
+  if v_r.status is distinct from 'salvo' or v_r.pronto_em is not null or v_r.pronto_por is not null
+     or v_r.alterado_em is distinct from now() then
+    raise exception 'FALHA: p4 mudou depois do MD001 (status %, pronto_em %, alterado_em %)',
+      v_r.status, v_r.pronto_em, v_r.alterado_em;
+  end if;
+
+  perform public.pedido_marcar_pronto(current_setting('teste.fa2_p4')::bigint, now());
+  select * into v_r from public.pedidos where id = current_setting('teste.fa2_p4')::bigint;
+  if v_r.status is distinct from 'pronto' or v_r.pronto_em is distinct from now()
+     or v_r.pronto_por is distinct from 'teste_fa2_adm' then
+    raise exception 'FALHA: marcar pronto com alterado_em certo: status %, pronto_em %, pronto_por %',
+      v_r.status, v_r.pronto_em, v_r.pronto_por;
+  end if;
+
+  -- As duas formas de chamar com nulo resolvem (sem ambiguidade).
+  perform public.pedido_marcar_pronto(current_setting('teste.fa2_p2')::bigint, null);
   perform public.pedido_marcar_pronto(current_setting('teste.fa2_p3')::bigint);
-  perform public.pedido_marcar_pronto(current_setting('teste.fa2_p4')::bigint);
+  perform public.pedido_marcar_pronto(current_setting('teste.fa2_p6')::bigint);
+  select count(*) into v_n from public.pedidos
+   where id in (current_setting('teste.fa2_p2')::bigint, current_setting('teste.fa2_p3')::bigint,
+                current_setting('teste.fa2_p6')::bigint)
+     and status = 'pronto';
+  if v_n <> 3 then
+    raise exception 'FALHA: % de 3 pedidos (p2, p3, p6) ficaram pronto', v_n;
+  end if;
+
+  -- 2b3. O admin pelo caminho do vendedor (UPDATE comum no proprio pedido)
+  --      nao grava pronto: fica salvo, pronto_* nulos.
+  insert into public.pedidos (numero, vendedor_codigo, cliente_nome, produtos, total, status, datahora)
+  values ('teste-fa2-7', 'teste_fa2_adm', 'Cliente teste',
+          '[{"nome":"Leite","preco":5,"quantidade":1,"subtotal":5}]'::jsonb, 5, 'salvo', now())
+  returning id into v_id;
+  update public.pedidos
+     set status = 'pronto', pronto_em = timestamptz '2000-01-01', pronto_por = 'X'
+   where id = v_id;
+  select * into v_r from public.pedidos where id = v_id;
+  if v_r.status is distinct from 'salvo' or v_r.pronto_em is not null or v_r.pronto_por is not null then
+    raise exception 'FALHA: admin gravou pronto por UPDATE comum (status %, pronto_em %, pronto_por %)',
+      v_r.status, v_r.pronto_em, v_r.pronto_por;
+  end if;
 
   -- 2c. pedido_cancelar num pronto: cancelado; pronto_* guardados.
   perform public.pedido_cancelar(current_setting('teste.fa2_p2')::bigint);
@@ -379,6 +478,25 @@ begin
     raise exception 'FALHA: mudar quantidade de pronto nao gravou os produtos';
   end if;
 
+  -- 4c2. Vendedor muda so o cliente de um pronto (p6), mandando status
+  --      pronto: volta para salvo, alterado_em = now(), pronto_* guardados.
+  update public.pedidos set cliente_nome = 'Outro cliente', status = 'pronto'
+   where id = current_setting('teste.fa2_p6')::bigint;
+  select * into v_r from public.pedidos where id = current_setting('teste.fa2_p6')::bigint;
+  if v_r.status is distinct from 'salvo' then
+    raise exception 'FALHA: mudar cliente_nome de pronto nao voltou para salvo (status %)', v_r.status;
+  end if;
+  if v_r.alterado_em is distinct from now() then
+    raise exception 'FALHA: mudar cliente_nome de pronto: alterado_em = % (esperado now())', v_r.alterado_em;
+  end if;
+  if v_r.pronto_em is distinct from now() or v_r.pronto_por is distinct from 'teste_fa2_adm' then
+    raise exception 'FALHA: mudar cliente_nome de pronto apagou pronto_em/pronto_por (%, %)',
+      v_r.pronto_em, v_r.pronto_por;
+  end if;
+  if v_r.cliente_nome is distinct from 'Outro cliente' then
+    raise exception 'FALHA: mudar cliente_nome de pronto nao gravou o cliente';
+  end if;
+
   -- 4d. Vendedor entrega um pronto com a assinatura da entrega (UPDATE
   --     comum, autor falso): finalizado pelo vendedor; pronto_* guardados.
   update public.pedidos
@@ -477,16 +595,21 @@ begin
     raise exception 'FALHA: % de 4 gatilhos esperados em pedidos', v_n;
   end if;
 
-  -- RPC nova: authenticated executa, anon nao; security definer com
-  -- search_path vazio.
-  if not has_function_privilege('authenticated', 'public.pedido_marcar_pronto(bigint)', 'execute') then
+  -- RPC nova: uma assinatura so (bigint, timestamptz); authenticated
+  -- executa, anon nao; security definer com search_path vazio.
+  select count(*) into v_n from pg_proc
+   where pronamespace = 'public'::regnamespace and proname = 'pedido_marcar_pronto';
+  if v_n <> 1 or to_regprocedure('public.pedido_marcar_pronto(bigint)') is not null then
+    raise exception 'FALHA: % versao(oes) de pedido_marcar_pronto (esperada so a de 2 argumentos)', v_n;
+  end if;
+  if not has_function_privilege('authenticated', 'public.pedido_marcar_pronto(bigint, timestamptz)', 'execute') then
     raise exception 'FALHA: authenticated sem EXECUTE em pedido_marcar_pronto';
   end if;
-  if has_function_privilege('anon', 'public.pedido_marcar_pronto(bigint)', 'execute') then
+  if has_function_privilege('anon', 'public.pedido_marcar_pronto(bigint, timestamptz)', 'execute') then
     raise exception 'FALHA: anon executa pedido_marcar_pronto';
   end if;
   select count(*) into v_n from pg_proc
-   where oid = 'public.pedido_marcar_pronto(bigint)'::regprocedure
+   where oid = 'public.pedido_marcar_pronto(bigint, timestamptz)'::regprocedure
      and prosecdef and proconfig @> array['search_path=""'];
   if v_n <> 1 then
     raise exception 'FALHA: pedido_marcar_pronto sem security definer / search_path vazio';

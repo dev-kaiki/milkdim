@@ -214,23 +214,42 @@ revoke execute on function public.pedidos_antes_alterar() from public, anon, aut
 -- transacao e e desligada logo depois do UPDATE.
 --
 -- Erros: 42501 sem permissao; P0002 pedido inexistente; 55000 pedido fora
--- da situacao aceita.
+-- da situacao aceita; MD001 (codigo proprio do MilkDim, so em
+-- pedido_marcar_pronto) pedido mudou depois que a tela do Controle foi
+-- atualizada.
 
 -- Producao concluida: salvo -> pronto.
-create or replace function public.pedido_marcar_pronto(p_id bigint)
+--
+-- p_alterado_em: o alterado_em que a tela do Controle mostrava quando a
+-- fabrica clicou "Producao concluida". Se o vendedor mudou o pedido depois
+-- disso, o alterado_em do banco ja e outro e a RPC recusa com MD001, para
+-- a fabrica nao marcar como pronta uma versao que ela nao viu (e produzir
+-- as quantidades antigas). Nulo = nulo conta como igual: pedido nunca
+-- alterado. Quem chama sempre manda o valor que viu; a chamada com um
+-- argumento so (p_alterado_em nulo) continua valendo para pedido nunca
+-- alterado.
+--
+-- A versao de um argumento so nao fica ao lado desta (deixaria a chamada
+-- com um argumento ambigua); o drop cobre um banco onde ela exista.
+drop function if exists public.pedido_marcar_pronto(bigint);
+
+create or replace function public.pedido_marcar_pronto(
+  p_id bigint,
+  p_alterado_em timestamptz default null)
 returns void
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
-  v_status text;
+  v_status   text;
+  v_alterado timestamptz;
 begin
   if not public.app_is_admin() then
     raise exception 'Sem permissao para marcar pedido como pronto.' using errcode = '42501';
   end if;
 
-  select p.status into v_status
+  select p.status, p.alterado_em into v_status, v_alterado
     from public.pedidos p
    where p.id = p_id
      for update;
@@ -242,6 +261,11 @@ begin
   if v_status is distinct from 'salvo' then
     raise exception 'So pedido em aberto pode ser marcado como pronto (pedido % esta %).',
       p_id, coalesce(v_status, 'sem situacao') using errcode = '55000';
+  end if;
+
+  if v_alterado is distinct from p_alterado_em then
+    raise exception 'O pedido mudou depois que a tela foi atualizada. Atualize e confira.'
+      using errcode = 'MD001';
   end if;
 
   perform set_config('milkdim.acao_controle', '1', true);
@@ -337,10 +361,10 @@ begin
 end;
 $$;
 
-revoke execute on function public.pedido_marcar_pronto(bigint) from public, anon;
+revoke execute on function public.pedido_marcar_pronto(bigint, timestamptz) from public, anon;
 revoke execute on function public.pedido_finalizar_manual(bigint) from public, anon;
 revoke execute on function public.pedido_cancelar(bigint) from public, anon;
 
-grant execute on function public.pedido_marcar_pronto(bigint) to authenticated;
+grant execute on function public.pedido_marcar_pronto(bigint, timestamptz) to authenticated;
 grant execute on function public.pedido_finalizar_manual(bigint) to authenticated;
 grant execute on function public.pedido_cancelar(bigint) to authenticated;
