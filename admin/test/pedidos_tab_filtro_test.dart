@@ -46,4 +46,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Cliente Pronto'), findsOneWidget);
   });
+
+  testWidgets('tocar no pedido abre o detalhe com Apagar', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final p = _p(5, 'finalizado', 'Cliente Detalhe');
+    await tester.pumpWidget(MaterialApp(
+      theme: buildMilkdimTheme(),
+      home: Scaffold(
+        body: PedidosTab(
+          carregar: () async => [p],
+          buscarDetalhe: (id) async => (raw: <String, dynamic>{'id': id}, parsed: p),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Cliente Detalhe'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Dados do cliente'), findsOneWidget);
+    expect(find.byTooltip('Apagar pedido'), findsOneWidget);
+  });
 }

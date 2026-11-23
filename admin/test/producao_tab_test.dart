@@ -217,4 +217,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(finalizados, [7]);
   });
+
+  testWidgets('tocar no pedido abre o detalhe (sem Apagar)', (tester) async {
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final p = _ped(7, '318', 3);
+    final buscados = <int>[];
+    await tester.pumpWidget(_app(ProducaoTab(
+      carregar: () async => [p],
+      buscarDetalhe: (id) async {
+        buscados.add(id);
+        return (
+          raw: <String, dynamic>{'id': id, 'cliente_nome': 'Cliente 318'},
+          parsed: p,
+        );
+      },
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('Dados do cliente'), findsNothing);
+
+    await tester.tap(find.text('Cliente 318'));
+    await tester.pumpAndSettle();
+
+    expect(buscados, [7]);
+    expect(find.text('Dados do cliente'), findsOneWidget);
+    expect(find.text('Cliente 318'), findsNWidgets(3),
+        reason: 'cartão, título do detalhe e linha Nome');
+    expect(find.byTooltip('Apagar pedido'), findsNothing,
+        reason: 'pedido em aberto se cancela, não se apaga');
+  });
 }

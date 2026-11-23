@@ -8,6 +8,7 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 import '../models/pedido.dart';
 import '../models/producao.dart';
 import '../services/supabase_service.dart';
+import '../widgets/detalhe_pedido.dart';
 import '../widgets/lista_adaptavel.dart';
 
 /// Largura a partir da qual os totais ficam ao lado da lista de pedidos.
@@ -35,6 +36,10 @@ class ProducaoTab extends StatefulWidget {
   @visibleForTesting
   final Future<void> Function(int id)? cancelar;
 
+  /// Busca do detalhe ao tocar no pedido; nulo usa [buscarDetalhePedido].
+  @visibleForTesting
+  final Future<DetalheDoPedido> Function(int id)? buscarDetalhe;
+
   final Duration intervalo;
 
   const ProducaoTab({
@@ -42,6 +47,7 @@ class ProducaoTab extends StatefulWidget {
     this.carregar,
     this.finalizar,
     this.cancelar,
+    this.buscarDetalhe,
     this.intervalo = const Duration(seconds: 30),
   });
 
@@ -266,7 +272,10 @@ class _ProducaoTabState extends State<ProducaoTab> {
     final cliente = (p.clienteNome ?? p.clienteNomeFantasia ?? '—').toString();
     final ocupado = _ocupados.contains(p.id);
 
+    // Tocar abre o mesmo detalhe da aba Pedidos (sem "Apagar": pedido em
+    // aberto se cancela, não se apaga).
     return MdCard(
+      onTap: () => abrirDetalhesPedido(context, p, buscar: widget.buscarDetalhe),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
