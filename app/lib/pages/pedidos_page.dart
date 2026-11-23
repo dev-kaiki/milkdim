@@ -15,6 +15,8 @@ import '../utils/db.dart';
 import '../utils/moeda.dart';
 import '../utils/json_utils.dart';
 import '../utils/pdf_utils.dart';
+import '../utils/regras_pedido.dart';
+import '../utils/supabase_helper.dart';
 import '../utils/convert.dart'; // assinaturaToBytes / signatureToImageBytes
 
 class PedidosPage extends StatefulWidget {
@@ -25,7 +27,15 @@ class PedidosPage extends StatefulWidget {
   /// lê o SQLite ao abrir.
   final List<Map<String, dynamic>>? pedidosParaCaptura;
 
-  const PedidosPage({super.key, this.vendedorCodigo, this.pedidosParaCaptura});
+  /// Só para a captura visual: aba aberta (0 Em aberto, 1 Finalizados, 2 Cancelados).
+  final int abaInicialParaCaptura;
+
+  const PedidosPage({
+    super.key,
+    this.vendedorCodigo,
+    this.pedidosParaCaptura,
+    this.abaInicialParaCaptura = 0,
+  });
 
   @override
   State<PedidosPage> createState() => _PedidosPageState();
@@ -185,6 +195,62 @@ class _PedidosPageState extends State<PedidosPage>
         duration: const Duration(seconds: 3),
       ),
     );
+  }
+
+  /// Botão do item: apaga rascunho antigo do aparelho ou cancela o pedido.
+  Future<void> _remover(Map<String, dynamic> pedido) async {
+    switch (acaoRemover(pedido)) {
+      case AcaoRemover.apagarDoAparelho:
+        return _apagarPedidoSalvo(pedido);
+      case AcaoRemover.cancelar:
+        return _cancelarPedido(pedido);
+      case AcaoRemover.nenhuma:
+        return;
+    }
+  }
+
+  Future<void> _cancelarPedido(Map<String, dynamic> pedido) async {
+    final confirmou = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancelar pedido?'),
+        content: const Text('O pedido sai da produção e vai para a aba Cancelados.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Voltar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: MdColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Cancelar pedido'),
+          ),
+        ],
+      ),
+    );
+    if (confirmou != true) return;
+
+    try {
+      final r = await gravarPedidoEEnviar(
+        {...pedido, 'status': 'cancelado', 'so_local': 0},
+        novo: false,
+      );
+      await _carregar();
+      if (!mounted) return;
+      switch (r) {
+        case ResultadoGravacao.fechadoNoControle:
+        case ResultadoGravacao.numeroEmUso:
+        case ResultadoGravacao.pendente:
+          _snack(mensagemGravacao(r, 'cancelado')!, ok: r == ResultadoGravacao.pendente);
+        case ResultadoGravacao.enviado:
+        case ResultadoGravacao.rascunho:
+          _snack('Pedido cancelado.', ok: true);
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('[PEDIDOS] erro ao cancelar: $e');
+      if (mounted) _snack('Erro ao cancelar pedido.');
+    }
   }
 
   void _snack(String msg, {bool ok = false}) {
@@ -524,6 +590,22 @@ class _PedidosPageState extends State<PedidosPage>
   Widget _seloStatus(Map<String, dynamic> p) {
     final status = (p['status'] ?? '-').toString();
     final pendente = (p['pendente_envio'] ?? 0).toString() == '1';
+    if (p['erro_envio']?.toString() == kErroNumeroEmUso) {
+      return const MdStatusChip(
+          tipo: MdTipo.erro, texto: kMsgNumeroEmUso, icone: Icons.error_outline);
+    }
+    if ('${p['so_local'] ?? 0}' == '1') {
+      return const MdStatusChip(
+          tipo: MdTipo.atencao, texto: 'Não enviado', icone: Icons.cloud_off_outlined);
+    }
+    if (status == 'cancelado') {
+      return const MdStatusChip(
+          tipo: MdTipo.neutro, texto: 'Cancelado', icone: Icons.block);
+    }
+    if (status == 'salvo' && pendente) {
+      return const MdStatusChip(
+          tipo: MdTipo.atencao, texto: 'Aguardando envio', icone: Icons.cloud_upload_outlined);
+    }
     if (status == 'finalizado' && pendente) {
       return const MdStatusChip(
           tipo: MdTipo.atencao, texto: 'Aguardando envio', icone: Icons.cloud_upload_outlined);
@@ -580,7 +662,7 @@ class _PedidosPageState extends State<PedidosPage>
   // Card/item com pré-visualização mais rica
   Widget _pedidoTile(
       Map<String, dynamic> p, {
-        required bool isFinalizado,
+        required bool somenteLeitura,
       }) {
     final tt = Theme.of(context).textTheme;
     final numero = (p['numero'] ?? '-').toString();
@@ -665,7 +747,8 @@ class _PedidosPageState extends State<PedidosPage>
     );
 
     // ações por status
-    final List<Widget> botoes = isFinalizado
+    final acao = acaoRemover(p);
+    final List<Widget> botoes = somenteLeitura
         ? [
             _acao(
               label: 'Ver',
@@ -690,12 +773,13 @@ class _PedidosPageState extends State<PedidosPage>
               onPressed: () => _editar(p),
               principal: true,
             ),
-            _acao(
-              label: 'Apagar',
-              icon: Icons.delete_outline,
-              onPressed: () => _apagarPedidoSalvo(p),
-              perigo: true,
-            ),
+            if (acao != AcaoRemover.nenhuma)
+              _acao(
+                label: acao == AcaoRemover.cancelar ? 'Cancelar pedido' : 'Apagar do aparelho',
+                icon: acao == AcaoRemover.cancelar ? Icons.block : Icons.delete_outline,
+                onPressed: () => _remover(p),
+                perigo: true,
+              ),
           ];
 
     final actions = Row(
@@ -708,7 +792,7 @@ class _PedidosPageState extends State<PedidosPage>
     );
 
     return MdCard(
-      onTap: isFinalizado ? () => _imprimirPdf(p) : () => _editar(p),
+      onTap: somenteLeitura ? () => _imprimirPdf(p) : () => _editar(p),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -734,7 +818,7 @@ class _PedidosPageState extends State<PedidosPage>
   Widget _aba(String status) {
     final query = _buscaCtrl.text;
     final lista = _filtrarPorStatus(status, query);
-    final isFinalizado = status == 'finalizado';
+    final somenteLeitura = status != 'salvo';
 
     return RefreshIndicator(
       onRefresh: _carregar,
@@ -745,10 +829,16 @@ class _PedidosPageState extends State<PedidosPage>
           }
           if (lista.isEmpty) {
             return MdEmptyState(
-              icone: isFinalizado ? Icons.receipt_long_outlined : Icons.edit_note,
-              titulo: isFinalizado
-                  ? 'Nenhum pedido finalizado.'
-                  : 'Nenhum rascunho salvo.',
+              icone: switch (status) {
+                'finalizado' => Icons.receipt_long_outlined,
+                'cancelado' => Icons.block,
+                _ => Icons.edit_note,
+              },
+              titulo: switch (status) {
+                'finalizado' => 'Nenhum pedido finalizado.',
+                'cancelado' => 'Nenhum pedido cancelado.',
+                _ => 'Nenhum pedido em aberto.',
+              },
             );
           }
           const pad = EdgeInsets.fromLTRB(MdSpace.lg, MdSpace.sm, MdSpace.lg, MdSpace.lg);
@@ -758,7 +848,7 @@ class _PedidosPageState extends State<PedidosPage>
               padding: pad,
               itemCount: lista.length,
               separatorBuilder: (_, __) => const SizedBox(height: MdSpace.md),
-              itemBuilder: (_, i) => _pedidoTile(lista[i], isFinalizado: isFinalizado),
+              itemBuilder: (_, i) => _pedidoTile(lista[i], somenteLeitura: somenteLeitura),
             );
           }
           final largura =
@@ -773,7 +863,7 @@ class _PedidosPageState extends State<PedidosPage>
                 for (final p in lista)
                   SizedBox(
                     width: largura,
-                    child: _pedidoTile(p, isFinalizado: isFinalizado),
+                    child: _pedidoTile(p, somenteLeitura: somenteLeitura),
                   ),
               ],
             ),
@@ -1107,10 +1197,12 @@ class _PedidosPageState extends State<PedidosPage>
 
     final finalizadosCount =
         _filtrarPorStatus('finalizado', _buscaCtrl.text).length;
-    final salvosCount = _filtrarPorStatus('salvo', _buscaCtrl.text).length;
+    final abertosCount = _filtrarPorStatus('salvo', _buscaCtrl.text).length;
+    final canceladosCount = _filtrarPorStatus('cancelado', _buscaCtrl.text).length;
 
     return DefaultTabController(
-      length: 2,
+      length: 3,
+      initialIndex: widget.abaInicialParaCaptura,
       child: Scaffold(
         appBar: AppBar(
           title: Text(temFiltro ? 'Meus Pedidos' : 'Pedidos'),
@@ -1129,8 +1221,9 @@ class _PedidosPageState extends State<PedidosPage>
           ],
           bottom: TabBar(
             tabs: [
+              Tab(text: 'Em aberto ($abertosCount)'),
               Tab(text: 'Finalizados ($finalizadosCount)'),
-              Tab(text: 'Salvos ($salvosCount)'),
+              Tab(text: 'Cancelados ($canceladosCount)'),
             ],
           ),
         ),
@@ -1153,8 +1246,9 @@ class _PedidosPageState extends State<PedidosPage>
             Expanded(
               child: TabBarView(
                 children: [
-                  _aba('finalizado'),
                   _aba('salvo'),
+                  _aba('finalizado'),
+                  _aba('cancelado'),
                 ],
               ),
             ),

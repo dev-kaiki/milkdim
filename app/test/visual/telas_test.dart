@@ -75,6 +75,51 @@ final _pedidos = <Map<String, dynamic>>[
   },
 ];
 
+final _cancelados = <Map<String, dynamic>>[
+  {
+    'id': 4,
+    'numero': '126',
+    'status': 'cancelado',
+    'pendente_envio': 0,
+    'datahora': '2026-11-17T09:20:00Z',
+    'total': 64.5,
+    'cliente_nome': 'Mercadinho Primavera',
+    'cliente_cidade': 'Uberlândia',
+    'vendedor_nome': 'João Silva',
+    'vendedor_codigo': '0001',
+    'produtos': '[{"nome":"Requeijão Cremoso 200 g","quantidade":5}]',
+  },
+];
+
+final _naoEnviados = <Map<String, dynamic>>[
+  {
+    'id': 1000000011,
+    'numero': '130',
+    'status': 'salvo',
+    'so_local': 1,
+    'pendente_envio': 0,
+    'datahora': '2026-11-20T11:00:00Z',
+    'total': 37.8,
+    'cliente_nome': 'Lanchonete do Zé',
+    'vendedor_nome': 'João Silva',
+    'vendedor_codigo': '0001',
+    'produtos': '[{"nome":"Queijo Minas Frescal 500 g","quantidade":2}]',
+  },
+  {
+    'id': 1000000012,
+    'numero': '131',
+    'status': 'salvo',
+    'erro_envio': 'numero',
+    'pendente_envio': 1,
+    'datahora': '2026-11-20T12:00:00Z',
+    'total': 22.5,
+    'cliente_nome': 'Padaria Central',
+    'vendedor_nome': 'João Silva',
+    'vendedor_codigo': '0001',
+    'produtos': '[{"nome":"Requeijão Cremoso 200 g","quantidade":3}]',
+  },
+];
+
 void main() {
   setUpAll(carregarFontesReais);
 
@@ -103,6 +148,26 @@ void main() {
       tester,
       PedidosPage(vendedorCodigo: '0001', pedidosParaCaptura: _pedidos),
       'app_pedidos',
+    );
+  });
+
+  testWidgets('meus pedidos cancelados', (tester) async {
+    await capturar(
+      tester,
+      PedidosPage(
+        vendedorCodigo: '0001',
+        pedidosParaCaptura: [..._pedidos, ..._cancelados],
+        abaInicialParaCaptura: 2,
+      ),
+      'meus_pedidos_cancelados',
+    );
+  });
+
+  testWidgets('pedido não enviado', (tester) async {
+    await capturar(
+      tester,
+      PedidosPage(vendedorCodigo: '0001', pedidosParaCaptura: _naoEnviados),
+      'pedido_nao_enviado',
     );
   });
 

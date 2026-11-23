@@ -11,6 +11,7 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 import '../utils/produto.dart';
 import '../utils/produto_service.dart';
 import '../utils/db.dart';
+import '../utils/regras_pedido.dart';
 import '../utils/supabase_helper.dart';
 import '../utils/convert.dart'; // assinaturaToBytes / signatureToImageBytes / imageTypeFromBytes
 import '../widgets/pedido_ui.dart';
@@ -345,6 +346,13 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
 
         // somente o CAMINHO local:
         'assinatura_path': caminhoAss,
+
+        // salvar daqui sempre envia (abrir e salvar um rascunho antigo o envia)
+        'so_local': 0,
+        // trocou o número que o servidor recusou: o conflito antigo não vale mais
+        if (widget.pedido['erro_envio'] != null &&
+            numeroPedidoCtrl.text.trim() != (widget.pedido['numero'] ?? '').toString().trim())
+          'erro_envio': null,
       };
 
       // LOG
@@ -357,12 +365,18 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
       final r = await gravarPedidoEEnviar(pedidoAtualizado, novo: false);
 
       if (!mounted) return;
-      if (r == ResultadoGravacao.pendente) {
-        _showSnack('Pedido salvo. Será enviado quando houver internet.', sucesso: true);
+      final msg = mensagemGravacao(r, status);
+      if (msg != null) {
+        _showSnack(msg, sucesso: r != ResultadoGravacao.numeroEmUso);
       }
       // ignore: avoid_print
       print('[EDIT] concluído ($r) -> pop("$status")');
       Navigator.pop(context, status);
+    } on NumeroEmUso catch (e) {
+      // Nada foi gravado: o formulário fica aberto para trocar o número.
+      if (mounted) _showSnack(kMsgNumeroEmUso);
+      // ignore: avoid_print
+      print('[EDIT] $e');
     } catch (e) {
       if (mounted) _showSnack('Erro ao atualizar pedido.');
       // ignore: avoid_print
@@ -534,6 +548,7 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     TextInputType? keyboardType,
     int maxLines = 1,
     VoidCallback? suffixIconTap,
+    bool readOnly = false,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: MdSpace.md),
@@ -544,6 +559,7 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
             controller: controller,
             keyboardType: keyboardType,
             maxLines: maxLines,
+            readOnly: readOnly,
             decoration: InputDecoration(
               prefixIcon: Icon(icon),
               suffixIcon: suffixIconTap != null
@@ -651,6 +667,7 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
                                   label: 'Nº Pedido',
                                   controller: numeroPedidoCtrl,
                                   keyboardType: TextInputType.number,
+                                  readOnly: !numeroEditavel(widget.pedido),
                                 ),
                                 _campoCliente(
                                   icon: Icons.person_outline,

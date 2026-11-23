@@ -10,6 +10,7 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 import '../utils/produto.dart';
 import '../utils/db.dart';
 import '../utils/produto_service.dart';
+import '../utils/regras_pedido.dart';
 import '../utils/supabase_helper.dart';
 import '../utils/convert.dart'; // <- signatureToImageBytes / assinaturaToBytes
 import '../widgets/pedido_ui.dart';
@@ -284,6 +285,17 @@ class _PedidoPageState extends State<PedidoPage> {
     setState(() => carregando = true);
 
     try {
+      // Número já usado (no aparelho ou no servidor): troca o número e não grava.
+      final numero = numeroPedidoCtrl.text.trim();
+      final vendedorCodigo = widget.vendedor['codigo']?.toString() ?? '';
+      if (widget.dadosParaCaptura == null &&
+          !await _numeroLivre(numero, vendedorCodigo)) {
+        await _sugerirProximoNumero(vendedorCodigo);
+        _showMsg(kMsgNumeroEmUso);
+        if (mounted) setState(() => carregando = false);
+        return;
+      }
+
       final caminhoAss =
       await _gravarAssinaturaLocal(_assinatura, numero: numeroPedidoCtrl.text.trim());
 
@@ -312,6 +324,9 @@ class _PedidoPageState extends State<PedidoPage> {
 
         // caminho local da assinatura
         'assinatura_path': caminhoAss,
+
+        // salvar daqui sempre envia (abrir e salvar um rascunho antigo o envia)
+        'so_local': 0,
       };
 
       // Grava no aparelho na hora (fora da trava: um pedido novo não pode
@@ -320,18 +335,47 @@ class _PedidoPageState extends State<PedidoPage> {
       final r = await gravarPedidoEEnviar(pedido, novo: true);
 
       if (!mounted) return;
-      if (r == ResultadoGravacao.pendente) {
-        _showMsg('Pedido salvo. Será enviado quando houver internet.', isError: false);
+      final msg = mensagemGravacao(r, status);
+      if (msg != null) {
+        _showMsg(msg, isError: r == ResultadoGravacao.numeroEmUso);
       }
       // ignore: avoid_print
       print('[PEDIDO] concluído ($r) -> pop("$status")');
       Navigator.pop(context, status);
+    } on NumeroEmUso catch (e) {
+      // Nada foi gravado: o formulário fica aberto com os dados para trocar o número.
+      // ignore: avoid_print
+      print('[PEDIDO] $e');
+      _showMsg(kMsgNumeroEmUso);
+      if (mounted) setState(() => carregando = false);
     } catch (e) {
       // Só chega aqui se a gravação no aparelho falhou.
       // ignore: avoid_print
       print('[PEDIDO] erro ao salvar pedido: $e');
       _showMsg('Erro ao salvar pedido.');
       if (mounted) setState(() => carregando = false);
+    }
+  }
+
+  /// Livre no aparelho e no servidor (sem internet, o servidor não bloqueia).
+  Future<bool> _numeroLivre(String numero, String vendedorCodigo) async {
+    if (numero.isEmpty) return true;
+    if (await numeroUsadoNoAparelho(numero, vendedorCodigo)) return false;
+    return numeroLivreNoServidor(numero, vendedorCodigo);
+  }
+
+  /// Preenche o campo com o próximo número livre (no máximo 20 tentativas).
+  Future<void> _sugerirProximoNumero(String vendedorCodigo) async {
+    var n = ((await buscarUltimoNumeroPedido()) ?? 0) + 1;
+    for (var i = 0; i < 20; i++, n++) {
+      if (await _numeroLivre(n.toString(), vendedorCodigo)) {
+        if (!mounted) return;
+        setState(() {
+          ultimoNumeroPedido = n;
+          numeroPedidoCtrl.text = n.toString();
+        });
+        return;
+      }
     }
   }
 
