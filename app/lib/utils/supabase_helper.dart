@@ -949,6 +949,10 @@ enum ResultadoEco {
   /// gatilho de proteção agiu). A versão local vai para `pedidos_descartados`
   /// e o eco é gravado.
   servidorFechou,
+
+  /// Como [servidorFechou], com o servidor em `cancelado` (só
+  /// [aplicarEcoDoServidor] devolve; [decidirEco] diz [servidorFechou]).
+  servidorCancelou,
 }
 
 double _comoDouble(dynamic v) =>
@@ -1029,6 +1033,8 @@ ResultadoEco decidirEco(
 /// - [ResultadoEco.servidorFechou]: a cópia local vai para
 ///   `pedidos_descartados` ('fechado no Controle') ANTES de o eco ser gravado;
 /// - [ResultadoEco.aplicado]: o eco é gravado.
+/// Devolve [ResultadoEco.servidorCancelou] no lugar de
+/// [ResultadoEco.servidorFechou] quando o servidor tem o pedido cancelado.
 /// Se o eco traz um (numero, vendedor) que no aparelho é de OUTRO pedido (nem
 /// o enviado nem a mesma linha do servidor; ex.: pedido renumerado e fechado
 /// no Controle volta com o número antigo, já usado por um pedido novo), o eco
@@ -1160,6 +1166,9 @@ Future<ResultadoEco> aplicarEcoDoServidor({
     await txn.insert('pedidos', mapLocal, conflictAlgorithm: ConflictAlgorithm.replace);
     // Limpa duplicados locais (apaga o antigo e qualquer outro com mesma chave)
     await _limparDuplicadosLocais(txn: txn, remoto: remoto, idLocalAntigo: idLocalAntigo);
+    if (resultado == ResultadoEco.servidorFechou && '${remoto['status']}' == 'cancelado') {
+      return ResultadoEco.servidorCancelou;
+    }
     return resultado;
   });
   if (resultado == null) {
@@ -1189,6 +1198,9 @@ enum ResultadoGravacao {
   /// Controle: vale a versão do servidor; a local foi guardada em
   /// `pedidos_descartados`.
   fechadoNoControle,
+
+  /// Como [fechadoNoControle], mas o servidor tem o pedido cancelado.
+  canceladoNoControle,
 
   /// O número já é de outro pedido no servidor: fica pendente com
   /// `erro_envio = 'numero'` até o vendedor trocar o número.
@@ -1261,6 +1273,7 @@ Future<ResultadoGravacao> gravarPedidoEEnviar(
     envioNoAr = enviar(envio);
     final r = await envioNoAr.timeout(prazoEnvio);
     if (r == ResultadoEco.servidorFechou) return ResultadoGravacao.fechadoNoControle;
+    if (r == ResultadoEco.servidorCancelou) return ResultadoGravacao.canceladoNoControle;
     return ResultadoGravacao.enviado;
   } on TimeoutException {
     // ignore: avoid_print

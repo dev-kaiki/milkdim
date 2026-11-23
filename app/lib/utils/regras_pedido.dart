@@ -34,6 +34,8 @@ String? mensagemGravacao(ResultadoGravacao r, String status) {
       return 'Pedido salvo. Será enviado quando houver internet.';
     case ResultadoGravacao.fechadoNoControle:
       return 'Este pedido já foi finalizado no Controle.';
+    case ResultadoGravacao.canceladoNoControle:
+      return 'Este pedido foi cancelado no Controle.';
     case ResultadoGravacao.numeroEmUso:
       return kMsgNumeroEmUso;
     case ResultadoGravacao.rascunho:
@@ -48,7 +50,9 @@ bool podeTrocarNumero(Map<String, dynamic> p) =>
 
 /// Resultados que o vendedor precisa notar (não são sucesso).
 bool gravacaoEhAviso(ResultadoGravacao r) =>
-    r == ResultadoGravacao.numeroEmUso || r == ResultadoGravacao.fechadoNoControle;
+    r == ResultadoGravacao.numeroEmUso ||
+    r == ResultadoGravacao.fechadoNoControle ||
+    r == ResultadoGravacao.canceladoNoControle;
 
 /// Primeiro número a partir de [inicio] para o qual [livre] devolve true, em
 /// no máximo [tentativas] tentativas; null se todos estiverem ocupados.

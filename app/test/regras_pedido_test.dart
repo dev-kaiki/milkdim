@@ -20,6 +20,7 @@ void main() {
     test('numeroEmUso e fechadoNoControle sao avisos', () {
       expect(gravacaoEhAviso(ResultadoGravacao.numeroEmUso), isTrue);
       expect(gravacaoEhAviso(ResultadoGravacao.fechadoNoControle), isTrue);
+      expect(gravacaoEhAviso(ResultadoGravacao.canceladoNoControle), isTrue);
       expect(gravacaoEhAviso(ResultadoGravacao.enviado), isFalse);
       expect(gravacaoEhAviso(ResultadoGravacao.pendente), isFalse);
     });
@@ -109,6 +110,10 @@ void main() {
     test('fechadoNoControle', () {
       expect(mensagemGravacao(ResultadoGravacao.fechadoNoControle, 'salvo'),
           'Este pedido já foi finalizado no Controle.');
+    });
+    test('canceladoNoControle', () {
+      expect(mensagemGravacao(ResultadoGravacao.canceladoNoControle, 'salvo'),
+          'Este pedido foi cancelado no Controle.');
     });
     test('numeroEmUso', () {
       expect(mensagemGravacao(ResultadoGravacao.numeroEmUso, 'salvo'),

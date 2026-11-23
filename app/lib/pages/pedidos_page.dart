@@ -311,6 +311,7 @@ class _PedidosPageState extends State<PedidosPage>
       if (!mounted) return;
       switch (r) {
         case ResultadoGravacao.fechadoNoControle:
+        case ResultadoGravacao.canceladoNoControle:
         case ResultadoGravacao.numeroEmUso:
         case ResultadoGravacao.pendente:
           _snack(mensagemGravacao(r, 'cancelado')!, ok: r == ResultadoGravacao.pendente);
