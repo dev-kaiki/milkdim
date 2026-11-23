@@ -352,9 +352,11 @@ String? _bytesToHex0x(dynamic assinatura) {
     return '0x${hex_conv.hex.encode(Uint8List.fromList(assinatura))}';
   }
   if (assinatura is String) {
-    final s = assinatura.startsWith('0x') ? assinatura.substring(2) : assinatura;
+    // "0x..." (SQLite) ou "\x..." (bytea como o PostgREST devolve).
+    final temPrefixo = assinatura.startsWith('0x') || assinatura.startsWith(r'\x');
+    final s = temPrefixo ? assinatura.substring(2) : assinatura;
     final isHex = RegExp(r'^[0-9a-fA-F]+$').hasMatch(s);
-    if (isHex) return assinatura.startsWith('0x') ? assinatura : '0x$s';
+    if (isHex) return '0x$s';
   }
   return null;
 }

@@ -11,6 +11,7 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 import '../utils/produto.dart';
 import '../utils/produto_service.dart';
 import '../utils/db.dart';
+import '../utils/pedido_da_tela.dart';
 import '../utils/regras_pedido.dart';
 import '../utils/supabase_helper.dart';
 import '../utils/convert.dart'; // assinaturaToBytes / signatureToImageBytes / imageTypeFromBytes
@@ -323,32 +324,32 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
       );
 
       final pedidoAtualizado = {
-        ...widget.pedido,
-        'numero': numeroPedidoCtrl.text.trim(),
-        'produtos': itens,
-        'total': total,
-        'status': status,
-        'datahora': DateTime.now().toUtc().toIso8601String(),
-
-        // cliente
-        'cliente_id': _clienteId,
-        'cliente_nome': nomeCtrl.text.trim(),
-        'cliente_nome_fantasia': nomeFantasiaCtrl.text.trim(),
-        'cliente_telefone': telefoneCtrl.text.trim(),
-        'cliente_whatsapp': whatsappCtrl.text.trim(),
-        'cliente_email': emailCtrl.text.trim(),
-        'cliente_endereco': enderecoCtrl.text.trim(),
-        'cliente_cidade': cidadeCtrl.text.trim(),
-        'cliente_cpf_cnpj': cpfCnpjCtrl.text.trim(),
-        'cliente_insc_estadual': inscEstadualCtrl.text.trim(),
-        'cliente_cep': cepCtrl.text.trim(),
-        'cliente_anotacao': anotacaoCtrl.text.trim(),
-
-        // somente o CAMINHO local:
-        'assinatura_path': caminhoAss,
-
-        // salvar daqui sempre envia (abrir e salvar um rascunho antigo o envia)
-        'so_local': 0,
+        ...pedidoDaTela(
+          base: widget.pedido,
+          numero: numeroPedidoCtrl.text.trim(),
+          produtos: itens,
+          total: total,
+          status: status,
+          datahora: DateTime.now().toUtc().toIso8601String(),
+          clienteId: _clienteId,
+          cliente: {
+            'cliente_nome': nomeCtrl.text.trim(),
+            'cliente_nome_fantasia': nomeFantasiaCtrl.text.trim(),
+            'cliente_telefone': telefoneCtrl.text.trim(),
+            'cliente_whatsapp': whatsappCtrl.text.trim(),
+            'cliente_email': emailCtrl.text.trim(),
+            'cliente_endereco': enderecoCtrl.text.trim(),
+            'cliente_cidade': cidadeCtrl.text.trim(),
+            'cliente_cpf_cnpj': cpfCnpjCtrl.text.trim(),
+            'cliente_insc_estadual': inscEstadualCtrl.text.trim(),
+            'cliente_cep': cepCtrl.text.trim(),
+            'cliente_anotacao': anotacaoCtrl.text.trim(),
+          },
+          // os bytes vão ao servidor (e ficam no SQLite para os reenvios);
+          // o caminho fica só no aparelho
+          assinatura: _assinatura,
+          assinaturaPath: caminhoAss,
+        ),
         // trocou o número que o servidor recusou: o conflito antigo não vale mais
         if (widget.pedido['erro_envio'] != null &&
             numeroPedidoCtrl.text.trim() != (widget.pedido['numero'] ?? '').toString().trim())

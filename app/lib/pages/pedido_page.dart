@@ -9,6 +9,7 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 
 import '../utils/produto.dart';
 import '../utils/db.dart';
+import '../utils/pedido_da_tela.dart';
 import '../utils/produto_service.dart';
 import '../utils/regras_pedido.dart';
 import '../utils/supabase_helper.dart';
@@ -300,35 +301,22 @@ class _PedidoPageState extends State<PedidoPage> {
       final caminhoAss =
       await _gravarAssinaturaLocal(_assinatura, numero: numeroPedidoCtrl.text.trim());
 
-      final pedido = {
-        'numero': numeroPedidoCtrl.text.trim(),
-        'produtos': produtosList,
-        'total': total,
-        'status': status,
-        'datahora': DateTime.now().toUtc().toIso8601String(),
-        'vendedor_codigo': widget.vendedor['codigo'],
-        'vendedor_nome': widget.vendedor['nome'],
-
-        // cliente
-        'cliente_id': _clienteId,
-        'cliente_nome': nomeCtrl.text.trim(),
-        'cliente_nome_fantasia': nomeFantasiaCtrl.text.trim(),
-        'cliente_telefone': telefoneCtrl.text.trim(),
-        'cliente_whatsapp': whatsappCtrl.text.trim(),
-        'cliente_email': emailCtrl.text.trim(),
-        'cliente_endereco': enderecoCtrl.text.trim(),
-        'cliente_cidade': cidadeCtrl.text.trim(),
-        'cliente_cpf_cnpj': cpfCnpjCtrl.text.trim(),
-        'cliente_insc_estadual': inscEstadualCtrl.text.trim(),
-        'cliente_cep': cepCtrl.text.trim(),
-        'cliente_anotacao': anotacaoCtrl.text.trim(),
-
-        // caminho local da assinatura
-        'assinatura_path': caminhoAss,
-
-        // salvar daqui sempre envia (abrir e salvar um rascunho antigo o envia)
-        'so_local': 0,
-      };
+      final pedido = pedidoDaTela(
+        base: {
+          'vendedor_codigo': widget.vendedor['codigo'],
+          'vendedor_nome': widget.vendedor['nome'],
+        },
+        numero: numeroPedidoCtrl.text.trim(),
+        produtos: produtosList,
+        total: total,
+        status: status,
+        datahora: DateTime.now().toUtc().toIso8601String(),
+        clienteId: _clienteId,
+        cliente: _camposCliente(),
+        // os bytes vão ao servidor; o caminho fica só no aparelho
+        assinatura: _assinatura,
+        assinaturaPath: caminhoAss,
+      );
 
       // Grava no aparelho na hora (fora da trava: um pedido novo não pode
       // estar num envio em andamento) e, se finalizado, tenta enviar. O helper
@@ -357,6 +345,20 @@ class _PedidoPageState extends State<PedidoPage> {
       if (mounted) setState(() => carregando = false);
     }
   }
+
+  Map<String, String> _camposCliente() => {
+        'cliente_nome': nomeCtrl.text.trim(),
+        'cliente_nome_fantasia': nomeFantasiaCtrl.text.trim(),
+        'cliente_telefone': telefoneCtrl.text.trim(),
+        'cliente_whatsapp': whatsappCtrl.text.trim(),
+        'cliente_email': emailCtrl.text.trim(),
+        'cliente_endereco': enderecoCtrl.text.trim(),
+        'cliente_cidade': cidadeCtrl.text.trim(),
+        'cliente_cpf_cnpj': cpfCnpjCtrl.text.trim(),
+        'cliente_insc_estadual': inscEstadualCtrl.text.trim(),
+        'cliente_cep': cepCtrl.text.trim(),
+        'cliente_anotacao': anotacaoCtrl.text.trim(),
+      };
 
   /// Preenche o campo com o próximo número livre (no máximo 20 tentativas).
   Future<void> _sugerirProximoNumero(String vendedorCodigo) async {

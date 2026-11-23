@@ -11,14 +11,14 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show InternetAddress;
+import 'dart:io' show File, InternetAddress;
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'convert.dart'; // assinaturaToBytes(), bytesToHex0x()
+import 'convert.dart'; // assinaturaToBytes(), bytesToHex0x(), assinaturaParaBytea()
 import 'db.dart';      // getDb()
 import 'id_aparelho.dart'; // novoIdAparelho()
 
@@ -32,12 +32,6 @@ final supabase = Supabase.instance.client;
 String? _toHex0x(dynamic any) {
   final bytes = assinaturaToBytes(any);
   return bytes == null ? null : bytesToHex0x(bytes);
-}
-
-/// Converte qualquer entrada de assinatura (bytes/base64/hex) para base64 (sem data URI)
-String? _toBase64(dynamic any) {
-  final bytes = assinaturaToBytes(any);
-  return bytes == null ? null : base64Encode(bytes);
 }
 
 /// Remove chaves com valor `null` (limpa payloads)
@@ -710,6 +704,26 @@ Future<Map<String, dynamic>> _garantirIdAparelho(Map<String, dynamic> pedido) as
   return {...pedido, 'id_aparelho': guardado ?? novo};
 }
 
+/// Pedido gravado só com o caminho da assinatura (sem os bytes, ex.: salvo
+/// antes desta versão): lê o arquivo para o envio levar a assinatura. Sem
+/// arquivo (ou ilegível), segue sem assinatura.
+Future<Map<String, dynamic>> _comAssinaturaDoArquivo(Map<String, dynamic> pedido) async {
+  if (assinaturaToBytes(pedido['assinatura']) != null) return pedido;
+  final caminho = _texto(pedido['assinatura_path']);
+  if (caminho == null) return pedido;
+  try {
+    final f = File(caminho);
+    if (!await f.exists()) return pedido;
+    final bytes = await f.readAsBytes();
+    if (bytes.isEmpty) return pedido;
+    return {...pedido, 'assinatura': bytes};
+  } catch (e) {
+    // ignore: avoid_print
+    print('⚠️ Não deu para ler a assinatura em $caminho: $e');
+    return pedido;
+  }
+}
+
 // ---------------------- Salvar pedido (com FK garantida) ----------------------
 
 /// Campos que nunca vão ao servidor: controle local, colunas que o servidor
@@ -748,10 +762,11 @@ Map<String, dynamic> montarPayloadPedido(Map<String, dynamic> pedido) {
     ped['produtos'] = [];
   }
 
-  // assinatura → base64 (bytea) se houver
-  final assinaturaB64 = _toBase64(ped['assinatura']);
-  if (assinaturaB64 != null) {
-    ped['assinatura'] = assinaturaB64;
+  // assinatura → bytea em hex ('\x' + hex), o formato que o Postgres decodifica
+  // do JSON do PostgREST (base64 puro seria gravado como texto).
+  final assinaturaBytea = assinaturaParaBytea(ped['assinatura']);
+  if (assinaturaBytea != null) {
+    ped['assinatura'] = assinaturaBytea;
   } else {
     ped.remove('assinatura');
   }
@@ -894,7 +909,7 @@ Future<ResultadoEco> _salvarPedidoSupabase(Map<String, dynamic> pedidoOriginal) 
     }
 
     final remoto = await gravarPedidoNoServidor(
-      montarPayloadPedido(pedido),
+      montarPayloadPedido(await _comAssinaturaDoArquivo(pedido)),
       idServidor: noServidor ? _idDe(pedido) : null,
     );
 

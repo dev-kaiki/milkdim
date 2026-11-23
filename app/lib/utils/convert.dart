@@ -8,7 +8,8 @@
 //   - maybeValidImageBytes(dynamic any) -> Uint8List?    (alias da de cima)
 //   - assinaturaToBytes(dynamic any) -> Uint8List?       (genérica; pode devolver não-imagem)
 //   - bytesToHex0x(Uint8List bytes) -> String
-//   - maybeAssinaturaField(dynamic any) -> String?       (hex "0x..." para BYTEA)
+//   - maybeAssinaturaField(dynamic any) -> String?       (hex "0x..." para o SQLite)
+//   - assinaturaParaBytea(dynamic any) -> String?        ('\\x...' para o bytea do servidor)
 //   - bytesToBase64(Uint8List bytes) -> String
 //   - maybeAssinaturaBase64(dynamic any) -> String?
 //   - looksLikeImage(Uint8List bytes) -> bool
@@ -108,6 +109,18 @@ Uint8List? assinaturaToBytes(dynamic assinatura) {
     try {
       final b = Uint8List.fromList(cvt.hex.decode(cleanedHex));
       if (_kSigDebug) print('[SIG][convert] -> HEX (${b.length} bytes)');
+      // bytea gravado a partir de TEXTO base64 (o Postgres guardou os
+      // caracteres): o hex devolve o texto; decodifica a imagem dentro dele.
+      if (!looksLikeImage(b) && _isAscii(b)) {
+        final inner = utf8.decode(b, allowMalformed: true).trim();
+        if (_looksLikeBase64(inner) && _looksLikeCommonImageB64Prefix(inner)) {
+          try {
+            return Uint8List.fromList(base64Decode(inner));
+          } catch (_) {
+            // fica com os bytes do hex
+          }
+        }
+      }
       return b;
     } catch (_) {
       if (_kSigDebug) print('[SIG][convert] -> HEX inválido, tentar base64...');
@@ -180,6 +193,19 @@ String? maybeAssinaturaField(dynamic assinatura) {
   final bytes = assinaturaToBytes(assinatura);
   if (bytes == null) return null;
   return bytesToHex0x(bytes);
+}
+
+/// Bytes no formato que o Postgres lê como `bytea` vindo do JSON do
+/// PostgREST: `\x` + hex minúsculo (no código Dart, `'\\x'`). (Texto base64 puro seria gravado como
+/// os caracteres, não como a imagem.) É também o formato que o PostgREST
+/// devolve, e [assinaturaToBytes] o decodifica.
+String bytesToPgByteaHex(Uint8List bytes) => '\\x${cvt.hex.encode(bytes)}';
+
+/// Assinatura (bytes/base64/hex/...) para a coluna `bytea`; null se não houver.
+String? assinaturaParaBytea(dynamic assinatura) {
+  final bytes = assinaturaToBytes(assinatura);
+  if (bytes == null || bytes.isEmpty) return null;
+  return bytesToPgByteaHex(bytes);
 }
 
 String bytesToBase64(Uint8List bytes) => base64Encode(bytes);

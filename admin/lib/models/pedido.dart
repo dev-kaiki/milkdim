@@ -105,7 +105,7 @@ class Pedido {
   final DateTime? canceladoEm;
   final String? canceladoPor;
 
-  /// Para UI; no Supabase vai texto base64 simples (sem data URI)
+  /// Para UI. No Supabase é bytea: o PostgREST devolve "\x" + hex.
   final Uint8List? assinaturaBytes;
 
   const Pedido({
@@ -178,11 +178,44 @@ class Pedido {
     return s == 'true' || s == '1';
   }
 
-  static Uint8List? _decodeBase64(String? s) {
+  /// Assinatura em texto: bytea como o PostgREST devolve (`\x` + hex), ou
+  /// base64 (com ou sem data URI).
+  static Uint8List? _decodeAssinatura(String? s) {
     if (s == null || s.trim().isEmpty) return null;
-    final raw = s.contains(',') ? s.split(',').last : s; // remove data URI, se houver
+    final t = s.trim();
+    if (t.startsWith(r'\x') || t.startsWith(r'\X')) {
+      final bytes = _decodeHex(t.substring(2));
+      if (bytes == null) return null;
+      // bytea gravado a partir de TEXTO base64: o hex traz os caracteres.
+      final interno = _base64DeImagemDentro(bytes);
+      return interno ?? bytes;
+    }
+    final raw = t.contains(',') ? t.split(',').last : t; // remove data URI, se houver
     try {
       return Uint8List.fromList(base64Decode(raw));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Uint8List? _decodeHex(String h) {
+    if (h.isEmpty || h.length.isOdd) return null;
+    final out = Uint8List(h.length ~/ 2);
+    for (var i = 0; i < out.length; i++) {
+      final b = int.tryParse(h.substring(i * 2, i * 2 + 2), radix: 16);
+      if (b == null) return null;
+      out[i] = b;
+    }
+    return out;
+  }
+
+  /// [bytes] é texto ASCII com base64 de PNG/JPEG? Devolve a imagem; senão null.
+  static Uint8List? _base64DeImagemDentro(Uint8List bytes) {
+    if (bytes.any((b) => b < 32 || b > 126)) return null;
+    final texto = String.fromCharCodes(bytes).trim();
+    if (!(texto.startsWith('iVBORw0') || texto.startsWith('/9j/'))) return null;
+    try {
+      return Uint8List.fromList(base64Decode(texto));
     } catch (_) {
       return null;
     }
@@ -204,9 +237,9 @@ class Pedido {
     final produtos = _pick(m, 'produtos', 'itens'); // supabase usa 'produtos'
     final itens = _toItens(produtos);
 
-    // assinatura pode vir como bytes (UI) ou como base64 (supabase)
+    // assinatura pode vir como bytes (UI), bytea "\x..." (supabase) ou base64
     final assinaturaBytes = _pick<Uint8List>(m, 'assinatura_bytes', 'assinaturaBytes') ??
-        _decodeBase64(_pick<String>(m, 'assinatura_base64', 'assinaturaBase64') ??
+        _decodeAssinatura(_pick<String>(m, 'assinatura_base64', 'assinaturaBase64') ??
             _pick<String>(m, 'assinatura', 'signature'));
 
     return Pedido(
