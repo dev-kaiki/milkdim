@@ -209,6 +209,78 @@ class _PedidosPageState extends State<PedidosPage>
     }
   }
 
+  /// Pedido que o servidor recusou por número repetido (qualquer status): só o
+  /// número muda, sem abrir a edição completa.
+  Future<void> _trocarNumero(Map<String, dynamic> pedido) async {
+    final vend = (pedido['vendedor_codigo'] ?? '').toString();
+    final sugerido = await proximoNumeroLivreDoVendedor(vend);
+    if (!mounted) return;
+    final ctrl = TextEditingController(text: sugerido ?? '');
+    String? erro;
+    var conferindo = false;
+    final novo = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: const Text('Trocar número'),
+          content: TextField(
+            controller: ctrl,
+            keyboardType: TextInputType.number,
+            autofocus: true,
+            decoration: InputDecoration(labelText: 'Nº Pedido', errorText: erro),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Voltar'),
+            ),
+            FilledButton(
+              onPressed: conferindo
+                  ? null
+                  : () async {
+                      final n = ctrl.text.trim();
+                      if (n.isEmpty) return;
+                      setD(() => conferindo = true);
+                      final livre = n != (pedido['numero'] ?? '').toString().trim() &&
+                          await numeroLivreParaVendedor(n, vend);
+                      if (!ctx.mounted) return;
+                      if (livre) {
+                        Navigator.pop(ctx, n);
+                      } else {
+                        setD(() {
+                          conferindo = false;
+                          erro = kMsgNumeroEmUso;
+                        });
+                      }
+                    },
+              child: const Text('Trocar número'),
+            ),
+          ],
+        ),
+      ),
+    );
+    ctrl.dispose();
+    if (novo == null) return;
+
+    try {
+      final status = (pedido['status'] ?? 'salvo').toString();
+      final r = await gravarPedidoEEnviar(
+        {...pedido, 'numero': novo, 'erro_envio': null, 'so_local': 0},
+        novo: false,
+      );
+      await _carregar();
+      if (!mounted) return;
+      final msg = mensagemGravacao(r, status);
+      _snack(msg ?? 'Número trocado.', ok: !gravacaoEhAviso(r));
+    } on NumeroEmUso {
+      if (mounted) _snack(kMsgNumeroEmUso);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[PEDIDOS] erro ao trocar número: $e');
+      if (mounted) _snack('Erro ao trocar número.');
+    }
+  }
+
   Future<void> _cancelarPedido(Map<String, dynamic> pedido) async {
     final confirmou = await showDialog<bool>(
       context: context,
@@ -748,6 +820,13 @@ class _PedidosPageState extends State<PedidosPage>
 
     // ações por status
     final acao = acaoRemover(p);
+    final trocar = podeTrocarNumero(p)
+        ? _acao(
+            label: 'Trocar número',
+            icon: Icons.swap_horiz,
+            onPressed: () => _trocarNumero(p),
+          )
+        : null;
     final List<Widget> botoes = somenteLeitura
         ? [
             _acao(
@@ -808,6 +887,10 @@ class _PedidosPageState extends State<PedidosPage>
           const SizedBox(height: MdSpace.md),
           const Divider(),
           const SizedBox(height: MdSpace.md),
+          if (trocar != null) ...[
+            SizedBox(width: double.infinity, child: trocar),
+            const SizedBox(height: MdSpace.sm),
+          ],
           actions,
         ],
       ),

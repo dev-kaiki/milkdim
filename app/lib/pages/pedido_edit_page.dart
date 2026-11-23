@@ -367,7 +367,7 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
       if (!mounted) return;
       final msg = mensagemGravacao(r, status);
       if (msg != null) {
-        _showSnack(msg, sucesso: r != ResultadoGravacao.numeroEmUso);
+        _showSnack(msg, sucesso: !gravacaoEhAviso(r));
       }
       // ignore: avoid_print
       print('[EDIT] concluído ($r) -> pop("$status")');

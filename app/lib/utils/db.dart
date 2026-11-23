@@ -773,10 +773,12 @@ Future<int> apagarPedidoLocal(int id) async {
   return db.delete('pedidos', where: 'id = ?', whereArgs: [id]);
 }
 
-/// `true` se alguma linha do aparelho já tem esse `(numero, vendedor_codigo)`.
-Future<bool> numeroUsadoNoAparelho(String numero, String vendedorCodigo) async {
+/// `true` se alguma linha do aparelho (fora a de [ignorarId], o próprio
+/// pedido) já tem esse `(numero, vendedor_codigo)`.
+Future<bool> numeroUsadoNoAparelho(String numero, String vendedorCodigo,
+    {int? ignorarId}) async {
   final db = await getDb();
-  return await _outraComMesmoNumero(db, numero, vendedorCodigo, null) != null;
+  return await _outraComMesmoNumero(db, numero, vendedorCodigo, ignorarId) != null;
 }
 
 /// Busca o maior número numérico de pedido (campo texto).

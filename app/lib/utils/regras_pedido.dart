@@ -1,6 +1,6 @@
 // Regras puras do fluxo do pedido (sem Flutter nem banco), usadas pelas telas.
-import 'db.dart' show jaChegouAoServidor, kErroNumeroEmUso;
-import 'supabase_helper.dart' show ResultadoGravacao;
+import 'db.dart' show buscarUltimoNumeroPedido, jaChegouAoServidor, kErroNumeroEmUso, numeroUsadoNoAparelho;
+import 'supabase_helper.dart' show ResultadoGravacao, numeroLivreNoServidor;
 
 /// Texto único de número em uso (tela de pedido novo, edição e selo da lista).
 const String kMsgNumeroEmUso = 'Número já usado; troque o número';
@@ -39,4 +39,40 @@ String? mensagemGravacao(ResultadoGravacao r, String status) {
     case ResultadoGravacao.rascunho:
       return null;
   }
+}
+
+/// O servidor recusou o número deste pedido (de qualquer status): a lista
+/// oferece "Trocar número".
+bool podeTrocarNumero(Map<String, dynamic> p) =>
+    p['erro_envio']?.toString() == kErroNumeroEmUso;
+
+/// Resultados que o vendedor precisa notar (não são sucesso).
+bool gravacaoEhAviso(ResultadoGravacao r) =>
+    r == ResultadoGravacao.numeroEmUso || r == ResultadoGravacao.fechadoNoControle;
+
+/// Primeiro número a partir de [inicio] para o qual [livre] devolve true, em
+/// no máximo [tentativas] tentativas; null se todos estiverem ocupados.
+Future<String?> proximoNumeroLivre(
+  int inicio,
+  Future<bool> Function(String numero) livre, {
+  int tentativas = 20,
+}) async {
+  for (var i = 0; i < tentativas; i++) {
+    final n = (inicio + i).toString();
+    if (await livre(n)) return n;
+  }
+  return null;
+}
+
+/// Número livre no aparelho e no servidor (sem internet, o servidor não bloqueia).
+Future<bool> numeroLivreParaVendedor(String numero, String vendedorCodigo) async {
+  if (numero.isEmpty) return true;
+  if (await numeroUsadoNoAparelho(numero, vendedorCodigo)) return false;
+  return numeroLivreNoServidor(numero, vendedorCodigo);
+}
+
+/// Próximo número livre do vendedor: último local + 1, até 20 tentativas.
+Future<String?> proximoNumeroLivreDoVendedor(String vendedorCodigo) async {
+  final ultimo = (await buscarUltimoNumeroPedido()) ?? 0;
+  return proximoNumeroLivre(ultimo + 1, (n) => numeroLivreParaVendedor(n, vendedorCodigo));
 }

@@ -289,10 +289,11 @@ class _PedidoPageState extends State<PedidoPage> {
       final numero = numeroPedidoCtrl.text.trim();
       final vendedorCodigo = widget.vendedor['codigo']?.toString() ?? '';
       if (widget.dadosParaCaptura == null &&
-          !await _numeroLivre(numero, vendedorCodigo)) {
+          !await numeroLivreParaVendedor(numero, vendedorCodigo)) {
         await _sugerirProximoNumero(vendedorCodigo);
+        if (!mounted) return;
         _showMsg(kMsgNumeroEmUso);
-        if (mounted) setState(() => carregando = false);
+        setState(() => carregando = false);
         return;
       }
 
@@ -337,7 +338,7 @@ class _PedidoPageState extends State<PedidoPage> {
       if (!mounted) return;
       final msg = mensagemGravacao(r, status);
       if (msg != null) {
-        _showMsg(msg, isError: r == ResultadoGravacao.numeroEmUso);
+        _showMsg(msg, isError: gravacaoEhAviso(r));
       }
       // ignore: avoid_print
       print('[PEDIDO] concluído ($r) -> pop("$status")');
@@ -357,26 +358,14 @@ class _PedidoPageState extends State<PedidoPage> {
     }
   }
 
-  /// Livre no aparelho e no servidor (sem internet, o servidor não bloqueia).
-  Future<bool> _numeroLivre(String numero, String vendedorCodigo) async {
-    if (numero.isEmpty) return true;
-    if (await numeroUsadoNoAparelho(numero, vendedorCodigo)) return false;
-    return numeroLivreNoServidor(numero, vendedorCodigo);
-  }
-
   /// Preenche o campo com o próximo número livre (no máximo 20 tentativas).
   Future<void> _sugerirProximoNumero(String vendedorCodigo) async {
-    var n = ((await buscarUltimoNumeroPedido()) ?? 0) + 1;
-    for (var i = 0; i < 20; i++, n++) {
-      if (await _numeroLivre(n.toString(), vendedorCodigo)) {
-        if (!mounted) return;
-        setState(() {
-          ultimoNumeroPedido = n;
-          numeroPedidoCtrl.text = n.toString();
-        });
-        return;
-      }
-    }
+    final n = await proximoNumeroLivreDoVendedor(vendedorCodigo);
+    if (n == null || !mounted) return;
+    setState(() {
+      ultimoNumeroPedido = int.tryParse(n) ?? ultimoNumeroPedido;
+      numeroPedidoCtrl.text = n;
+    });
   }
 
   void _abrirPopupResumo() {
