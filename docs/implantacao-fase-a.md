@@ -13,7 +13,17 @@ Roteiro da instalação, na ordem. Marque cada caixa ao terminar.
 ## Lembrete importante
 
 **O APK antigo continua funcionando com o banco novo.** Ele só segue enviando apenas pedidos
-finalizados, como antes. Então não há pressa nem risco em instalar aos poucos.
+finalizados, como antes. Dá para instalar aos poucos, **um código de vendedor por vez**:
+
+- **Todos os celulares que usam o mesmo código de vendedor são atualizados juntos**, no mesmo
+  dia, antes de alguém voltar a fazer pedido. APK antigo e APK novo no mesmo código podem
+  perder edições ou finalizações feitas no celular (o antigo não conhece os pedidos em aberto
+  que o novo envia, e a sincronização dele pode passar por cima).
+- Vendedores com códigos diferentes podem ficar um com o antigo e outro com o novo.
+
+**Nunca use Apagar num pedido em aberto no Controle; use Cancelar.** Um pedido em aberto
+apagado no Controle fica para sempre "aguardando envio" no celular do vendedor. Apagar só
+pedidos já finalizados ou cancelados.
 
 **Nunca desinstalar o app antes de instalar o novo.** Desinstalar apaga os pedidos guardados
 no celular. Sempre instalar **por cima**.
@@ -68,7 +78,13 @@ Com um vendedor (de preferência o 0001) e o Controle aberto no computador:
 - [ ] O vendedor finaliza com assinatura. O pedido **sai da Produção** e os totais descem.
 - [ ] Fazer outro pedido sem assinatura e testar **Cancelar** pelo Controle. Ele some da
       Produção e aparece em **Cancelados** no celular do vendedor.
-- [ ] Apagar os pedidos de teste pelo Controle.
+- [ ] Fazer mais um pedido sem assinatura. **Finalizar manualmente no Controle** e depois o
+      vendedor, sem sincronizar o celular antes, abrir o pedido em **Em aberto** e
+      **finalizar com assinatura** (mudando uma quantidade). Vale a do vendedor:
+      no detalhe do pedido no Controle aparecem as quantidades do vendedor, "Finalizado por"
+      com o código dele (sem "manual"), e em **Dados brutos** a coluna `assinatura` vem
+      preenchida.
+- [ ] Apagar os pedidos de teste pelo Controle (só depois de finalizados ou cancelados).
 
 ## Pendência
 
