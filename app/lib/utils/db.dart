@@ -524,7 +524,7 @@ Future<Map<String, Object?>?> _outraComMesmoNumero(
   if (numero == null || numero.isEmpty || vend == null || vend.isEmpty) return null;
   final r = await db.query(
     'pedidos',
-    columns: ['id', 'so_local', 'pendente_envio', 'status'],
+    columns: ['id', 'so_local', 'pendente_envio', 'status', 'id_aparelho'],
     where: id == null
         ? 'numero = ? AND vendedor_codigo = ?'
         : 'numero = ? AND vendedor_codigo = ? AND id <> ?',
@@ -532,6 +532,26 @@ Future<Map<String, Object?>?> _outraComMesmoNumero(
     limit: 1,
   );
   return r.isEmpty ? null : r.first;
+}
+
+/// Id em que a gravação de um pedido com [id] deve cair.
+/// - Nenhuma outra linha com o mesmo (numero, vendedor): o próprio [id].
+/// - Não existe mais linha com [id] e a outra linha tem o mesmo id_aparelho:
+///   é o mesmo pedido, cujo eco trocou o id local pelo do servidor enquanto
+///   a tela estava aberta. A gravação vai para o id dessa linha.
+/// - Senão: [NumeroEmUso] (gravar apagaria a outra pelo índice único).
+Future<int> _idDaGravacao(sq.DatabaseExecutor db, int id, String? numero,
+    String? vend, Object? idAparelho) async {
+  final outra = await _outraComMesmoNumero(db, numero, vend, id);
+  if (outra == null) return id;
+  final meu = idAparelho?.toString().trim() ?? '';
+  final dela = outra['id_aparelho']?.toString().trim() ?? '';
+  if (meu.isNotEmpty && meu == dela) {
+    final existe = await db.query('pedidos',
+        columns: ['id'], where: 'id = ?', whereArgs: [id], limit: 1);
+    if (existe.isEmpty) return (outra['id'] as num).toInt();
+  }
+  throw NumeroEmUso(numero!, vend!);
 }
 
 /// O pedido já existe no servidor (id serial baixo, fora da faixa local).
@@ -556,7 +576,8 @@ Future<void> guardarVersaoDescartada(
   });
 }
 
-Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
+/// Grava o pedido e devolve o id da linha gravada.
+Future<int> salvarPedidoLocal(Map<String, dynamic> pedido) async {
   final db = await getDb();
   final map = <String, dynamic>{
     'numero': pedido['numero']?.toString(),
@@ -600,10 +621,7 @@ Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
       ? pedido['id'] as int
       : int.tryParse('${pedido['id'] ?? ''}');
   if (idExistente != null) {
-    map['id'] = idExistente;
-    if (await _outraComMesmoNumero(db, numero, vend, idExistente) != null) {
-      throw NumeroEmUso(numero!, vend!);
-    }
+    map['id'] = await _idDaGravacao(db, idExistente, numero, vend, pedido['id_aparelho']);
   } else {
     int? reusar;
     final ex = await _outraComMesmoNumero(db, numero, vend, null);
@@ -616,12 +634,17 @@ Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
 
   await _aplicarCamposLocais(db, map, pedido, replace: true);
   await _insertOrReplaceFiltered(db, 'pedidos', map);
+  return map['id'] as int;
 }
 
-Future<void> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
+/// Atualiza o pedido e devolve o id da linha gravada (pode ser outro que o
+/// do mapa: veja [_idDaGravacao]).
+Future<int> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
   final db = await getDb();
-  final id = pedido['id'];
-  if (id == null) { await salvarPedidoLocal(pedido); return; }
+  final idMapa = pedido['id'];
+  if (idMapa == null) return salvarPedidoLocal(pedido);
+  final idPedido = idMapa is int ? idMapa : int.tryParse('$idMapa');
+  if (idPedido == null) return salvarPedidoLocal({...pedido, 'id': null});
 
   final map = <String, dynamic>{
     'numero': pedido['numero']?.toString(),
@@ -649,14 +672,11 @@ Future<void> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
     'cliente_email': pedido['cliente_email']?.toString(),
   };
 
+  // Trocar o número para o de outra linha apagaria a outra (índice único);
+  // o mesmo pedido já trocado de id pelo eco é seguido.
+  final id = await _idDaGravacao(db, idPedido, map['numero'] as String?,
+      map['vendedor_codigo'] as String?, pedido['id_aparelho']);
   map['id'] = id;
-  // Trocar o número para o de outra linha apagaria a outra (índice único).
-  final idInt = id is int ? id : int.tryParse('$id');
-  if (await _outraComMesmoNumero(
-          db, map['numero'] as String?, map['vendedor_codigo'] as String?, idInt) !=
-      null) {
-    throw NumeroEmUso(map['numero'] as String, map['vendedor_codigo'] as String);
-  }
   await _aplicarCamposLocais(db, map, pedido, replace: false);
   map.remove('id');
   final filtered = await _filterToTableColumns(db, 'pedidos', map);
@@ -667,6 +687,7 @@ Future<void> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
     whereArgs: [id],
     conflictAlgorithm: sq.ConflictAlgorithm.replace,
   );
+  return id;
 }
 
 Future<List<Map<String, dynamic>>> listarPedidosLocais() async {

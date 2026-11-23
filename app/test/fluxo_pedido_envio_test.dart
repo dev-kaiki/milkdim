@@ -842,6 +842,82 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------- correções (rodada 2)
+
+  group('rodada 2', () {
+    test('eco com o numero antigo nao apaga o pedido novo que usa esse numero', () async {
+      // Pedido 45 (no servidor com numero 20) é renumerado para 21 no aparelho;
+      // um pedido novo L2 pega o 20. O Controle já finalizou o 45: o eco volta
+      // com numero 20.
+      srv.linhas.add({
+        ..._pedido(numero: '20', status: 'finalizado', idAparelho: 'a'),
+        'id': 45,
+        'finalizado_manual': true,
+      });
+      await salvarPedidoLocal(_pedido(id: 45, numero: '20', idAparelho: 'a'));
+      await atualizarPedidoLocal(
+          _pedido(id: 45, numero: '21', datahora: '2026-11-23T11:00:00Z'));
+      final idL2 = await salvarPedidoLocal(_pedido(numero: '20', total: 77.0));
+      final antesL2 = (await _porId(idL2))!;
+
+      final r = await gravarPedidoEEnviar(
+          _pedido(id: 45, numero: '21', datahora: '2026-11-23T11:00:00Z'),
+          novo: false);
+
+      expect(r, ResultadoGravacao.numeroEmUso);
+      expect(await _porId(idL2), antesL2, reason: 'L2 continua igual');
+      final p45 = (await _porId(45))!;
+      expect(p45['numero'], '21');
+      expect(p45['status'], 'salvo');
+      expect(p45['pendente_envio'], 1);
+      expect(p45['erro_envio'], 'numero');
+      expect(await _descartados(), 0);
+      final db = await getDb();
+      expect(await db.query('pedidos'), hasLength(2));
+    });
+
+    test('edicao com id local antigo depois do eco cai na linha do servidor', () async {
+      const idL = kLocalIdBase + 1;
+      final original = _pedido(id: idL, numero: '6', idAparelho: 'a');
+      await salvarPedidoLocal(original);
+      final aberto = Map<String, dynamic>.from((await _porId(idL))!); // tela aberta
+
+      // Envio de pendentes em segundo plano: o eco troca o id local por 41.
+      await aplicarEcoDoServidor(enviado: aberto, remoto: {...original, 'id': 41});
+      expect(await _porId(idL), isNull);
+
+      final enviados = <Map<String, dynamic>>[];
+      final r = await gravarPedidoEEnviar(
+        {...aberto, 'total': 25.0, 'datahora': '2026-11-23T11:00:00Z'},
+        novo: false,
+        enviar: (p) async => enviados.add(p),
+      );
+
+      expect(r, ResultadoGravacao.enviado);
+      final db = await getDb();
+      final rows = await db.query('pedidos');
+      expect(rows, hasLength(1));
+      expect(rows.single['id'], 41);
+      expect(rows.single['total'], 25.0);
+      expect(rows.single['pendente_envio'], 1);
+      expect(enviados.single['id'], 41, reason: 'o envio usa o id do servidor');
+    });
+
+    test('servidor sem a linha (apagada): nao conta como enviado', () async {
+      srv.linhas.clear();
+      await salvarPedidoLocal(_pedido(id: 46, numero: '22', idAparelho: 'a'));
+
+      final r = await gravarPedidoEEnviar(
+          _pedido(id: 46, numero: '22', datahora: '2026-11-23T11:00:00Z'), novo: false);
+      expect(r, ResultadoGravacao.pendente);
+      expect((await _porId(46))!['pendente_envio'], 1);
+
+      final s = await subirPedidosPendentes(vendedorCodigo: '0003');
+      expect(s.enviados, 0);
+      expect(s.falhas, 1);
+    });
+  });
+
   test('montarPayloadPedido tira campos locais e de auditoria', () {
     final p = montarPayloadPedido({
       ..._pedido(id: 40, idAparelho: 'a'),

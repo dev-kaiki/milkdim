@@ -858,12 +858,22 @@ Future<Map<String, dynamic>?> Function(Map<String, dynamic> payload, {int? idSer
 ///   outro pedido, lança [NumeroEmUso] sem enviar nada. Depois, upsert por
 ///   (numero, vendedor_codigo).
 /// - Pedido que já chegou ao servidor: UPDATE pelo id do servidor.
-/// Devolve o [ResultadoEco], ou null se o servidor não devolveu a linha (aí
-/// puxa os pedidos do vendedor). Roda sob [comTravaDePedidos].
-Future<ResultadoEco?> salvarPedidoSupabase(Map<String, dynamic> pedido) =>
+/// Devolve o [ResultadoEco]. Lança [PedidoNaoConfirmado] se o servidor não
+/// devolveu a linha (o pedido continua pendente). Roda sob [comTravaDePedidos].
+Future<ResultadoEco> salvarPedidoSupabase(Map<String, dynamic> pedido) =>
     comTravaDePedidos(() => _salvarPedidoSupabase(pedido));
 
-Future<ResultadoEco?> _salvarPedidoSupabase(Map<String, dynamic> pedidoOriginal) async {
+/// O servidor não devolveu a linha gravada (ex.: pedido apagado no servidor).
+/// O envio não conta como feito: o pedido continua pendente.
+class PedidoNaoConfirmado implements Exception {
+  const PedidoNaoConfirmado(this.numero);
+  final String numero;
+
+  @override
+  String toString() => 'PedidoNaoConfirmado: o servidor não devolveu o pedido $numero';
+}
+
+Future<ResultadoEco> _salvarPedidoSupabase(Map<String, dynamic> pedidoOriginal) async {
   try {
     final pedido = await _garantirIdAparelho(pedidoOriginal);
     final numero = pedido['numero']?.toString() ?? '';
@@ -888,14 +898,13 @@ Future<ResultadoEco?> _salvarPedidoSupabase(Map<String, dynamic> pedidoOriginal)
       idServidor: noServidor ? _idDe(pedido) : null,
     );
 
+    // Sem linha de volta (ex.: o pedido foi apagado no servidor e o UPDATE
+    // por id não achou nada): não conta como enviado; continua pendente.
+    if (remoto == null) throw PedidoNaoConfirmado(numero);
+
     // Aplicar no SQLite e LIMPAR duplicados (se a cópia local não mudou
     // enquanto o envio estava no ar)
-    if (remoto != null) {
-      return await aplicarEcoDoServidor(enviado: pedido, remoto: remoto);
-    }
-    // Último recurso: puxa do servidor os pedidos do vendedor
-    if (vend.isNotEmpty) await sincronizarPedidos(vendedorCodigo: vend);
-    return null;
+    return await aplicarEcoDoServidor(enviado: pedido, remoto: remoto);
   } on NumeroEmUso {
     rethrow; // não é erro de envio: quem chamou marca erro_envio = 'numero'
   } catch (e) {
@@ -999,6 +1008,12 @@ ResultadoEco decidirEco(
 /// - [ResultadoEco.servidorFechou]: a cópia local vai para
 ///   `pedidos_descartados` ('fechado no Controle') ANTES de o eco ser gravado;
 /// - [ResultadoEco.aplicado]: o eco é gravado.
+/// Se o eco traz um (numero, vendedor) que no aparelho é de OUTRO pedido (nem
+/// o enviado nem a mesma linha do servidor; ex.: pedido renumerado e fechado
+/// no Controle volta com o número antigo, já usado por um pedido novo), o eco
+/// NÃO é gravado: gravá-lo apagaria o outro pelo índice único. O pedido
+/// enviado fica como está, pendente com `erro_envio = 'numero'`, e lança
+/// [NumeroEmUso] (o vendedor troca um dos números).
 /// O eco gravado leva id_aparelho (o do servidor; sem um, o local, mas só se
 /// a linha do servidor for o mesmo pedido: mesmo id, ou mesma datahora), as
 /// cópias de auditoria, `so_local = 0` e `erro_envio = null`. Preserva sempre
@@ -1048,7 +1063,7 @@ Future<ResultadoEco> aplicarEcoDoServidor({
   };
 
   final db = await getDb();
-  return db.transaction((txn) async {
+  final resultado = await db.transaction<ResultadoEco?>((txn) async {
     final locais = [
       for (final l in await txn.query(
         'pedidos',
@@ -1067,6 +1082,32 @@ Future<ResultadoEco> aplicarEcoDoServidor({
         return d;
       }
       if (d == ResultadoEco.servidorFechou) resultado = d;
+    }
+
+    // Outro pedido do aparelho com o (numero, vendedor) do eco?
+    final idsDoEnviado = {
+      for (final l in locais) _idDe(l),
+      if (idLocalAntigo != null) idLocalAntigo,
+      _idDe(remoto),
+    };
+    final comONumeroDoEco = await txn.query(
+      'pedidos',
+      columns: ['id'],
+      where: 'numero = ? AND vendedor_codigo = ?',
+      whereArgs: [remoto['numero']?.toString(), remoto['vendedor_codigo']?.toString()],
+    );
+    if (comONumeroDoEco.any((l) => !idsDoEnviado.contains((l['id'] as num?)?.toInt()))) {
+      final valores = {'erro_envio': kErroNumeroEmUso, 'pendente_envio': 1};
+      for (final l in locais.isEmpty ? [enviado] : locais) {
+        final id = _idDe(l);
+        if (id != null) {
+          await txn.update('pedidos', valores, where: 'id = ?', whereArgs: [id]);
+        }
+      }
+      // ignore: avoid_print
+      print('⚠️ Eco do pedido ${numero ?? idLocalAntigo} traz o número ${remoto['numero']}, '
+          'que no aparelho é de outro pedido; eco não gravado.');
+      return null;
     }
 
     if (resultado == ResultadoEco.servidorFechou) {
@@ -1100,6 +1141,11 @@ Future<ResultadoEco> aplicarEcoDoServidor({
     await _limparDuplicadosLocais(txn: txn, remoto: remoto, idLocalAntigo: idLocalAntigo);
     return resultado;
   });
+  if (resultado == null) {
+    throw NumeroEmUso(
+        remoto['numero']?.toString() ?? '', remoto['vendedor_codigo']?.toString() ?? '');
+  }
+  return resultado;
 }
 
 // ---------------------- Gravar e enviar (telas de pedido) ----------------------
@@ -1155,12 +1201,11 @@ Future<ResultadoGravacao> gravarPedidoEEnviar(
   required bool novo,
   Future<void> Function(Map<String, dynamic>) enviar = salvarPedidoSupabase,
 }) async {
-  if (novo) {
-    await salvarPedidoLocal(pedido);
-  } else {
-    await atualizarPedidoLocal(pedido);
-  }
-  final gravado = await _linhaGravada(pedido);
+  // O id gravado pode não ser o do mapa: a edição de um pedido cujo eco
+  // trocou o id local pelo do servidor com a tela aberta cai na linha nova.
+  final idGravado =
+      novo ? await salvarPedidoLocal(pedido) : await atualizarPedidoLocal(pedido);
+  final gravado = await _linhaGravada({...pedido, 'id': idGravado});
   final soLocal = gravado?['so_local'] ?? pedido['so_local'];
   if (soLocal == 1 || soLocal == true || '$soLocal' == '1') {
     return ResultadoGravacao.rascunho;
