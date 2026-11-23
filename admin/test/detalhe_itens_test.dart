@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:milkdim_admin/models/pedido.dart';
 import 'package:milkdim_admin/widgets/detalhe_pedido.dart';
-import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:milkdim_ui/testing/md_visual.dart';
 
 const _itens = [
@@ -17,7 +16,7 @@ const _itens = [
   PedidoItem(nome: '550g pudim Tradicional', preco: 32, quantidade: 1),
 ];
 
-final _pedido = Pedido(
+const _pedido = Pedido(
   id: 7,
   numero: '42',
   status: 'salvo',
