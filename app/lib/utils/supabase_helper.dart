@@ -757,6 +757,7 @@ const List<String> _camposForaDoPayload = [
   'pendente_envio',
   'so_local',
   'erro_envio',
+  kLimparAssinaturaPedido, // pedido de limpeza local, não é coluna
   ..._colunasAuditoria,
 ];
 

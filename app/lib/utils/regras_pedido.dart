@@ -215,21 +215,23 @@ bool temAssinaturaDoPedido(Map p,
 }
 
 /// Salvar [editado] pede a assinatura do pedido de novo?
-/// - [original] é rascunho só do aparelho (`so_local = 1`): o envio pede;
 /// - [original] não tem assinatura do pedido ([temAssinaturaDoPedido]);
 /// - mudaram os itens ou o cliente ([itensOuClienteMudaram]).
+/// Vale igual para o rascunho do aparelho (`so_local = 1`): o rascunho só
+/// guarda a assinatura do pedido quando ela cobre os itens e o cliente dele
+/// ("Salvar rascunho" apaga a que não cobre), então a linha guardada é o que
+/// o cliente assinou.
 bool precisaAssinaturaDoPedido({
   required Map original,
   required Map editado,
   bool Function(String caminho) arquivoExiste = arquivoExisteNoAparelho,
 }) =>
-    _verdadeiro(original['so_local']) ||
     !temAssinaturaDoPedido(original, arquivoExiste: arquivoExiste) ||
     itensOuClienteMudaram(original, editado);
 
 /// O aviso da tela de assinatura ao salvar [editado], ou null quando não
 /// precisa de assinatura nova ([precisaAssinaturaDoPedido]).
-/// Pedido já assinado: [kAvisoAssinarPedidoDeNovo]; rascunho ou pedido sem
+/// Pedido (ou rascunho) já assinado: [kAvisoAssinarPedidoDeNovo]; pedido sem
 /// assinatura: [kAvisoAssinarPedido].
 String? avisoAssinaturaDoPedido({
   required Map original,
@@ -240,7 +242,9 @@ String? avisoAssinaturaDoPedido({
       original: original, editado: editado, arquivoExiste: arquivoExiste)) {
     return null;
   }
-  final jaAssinado = !_verdadeiro(original['so_local']) &&
-      temAssinaturaDoPedido(original, arquivoExiste: arquivoExiste);
+  final jaAssinado = temAssinaturaDoPedido(original, arquivoExiste: arquivoExiste);
   return jaAssinado ? kAvisoAssinarPedidoDeNovo : kAvisoAssinarPedido;
 }
+
+/// Rascunho só do aparelho (`so_local = 1`): nunca foi enviado.
+bool ehRascunhoDoAparelho(Map p) => _verdadeiro(p['so_local']);

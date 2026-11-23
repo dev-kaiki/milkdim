@@ -74,6 +74,14 @@ class _PedidoPageState extends State<PedidoPage> {
     _assinadoSobre = _itensEClienteDaTela();
   }
 
+  /// A [_assinaturaPedido] foi dada para os itens e o cliente que estão na
+  /// tela agora?
+  bool get _assinaturaCobreATela =>
+      _assinaturaPedido != null &&
+      _assinaturaPedido!.isNotEmpty &&
+      _assinadoSobre != null &&
+      !itensOuClienteMudaram(_assinadoSobre!, _itensEClienteDaTela());
+
   // CLIENTE
   int? _clienteId;
   DateTime? _ultimoPedido;
@@ -299,7 +307,9 @@ class _PedidoPageState extends State<PedidoPage> {
   /// antes (desistiu: nada é gravado e o formulário continua); grava `salvo`
   /// com a assinatura e envia.
   /// "Salvar rascunho": grava `salvo` só no aparelho (`so_local = 1`), sem
-  /// assinatura e sem enviar.
+  /// enviar e sem pedir assinatura. A assinatura do pedido já colhida vai
+  /// junto quando ainda cobre os itens e o cliente da tela (a linha gravada é
+  /// o que o cliente assinou); senão não vai.
   /// Gravou: fecha a página devolvendo o `status`.
   Future<void> _salvarPedido({required bool enviar}) async {
     if (carregando) return;
@@ -366,11 +376,15 @@ class _PedidoPageState extends State<PedidoPage> {
           // a entrega é assinada depois, ao registrar a entrega
           assinatura: null,
           assinaturaPath: null,
-          // os bytes vão no SQLite e ao servidor (sem arquivo no aparelho)
-          assinaturaPedido: enviar ? _assinaturaPedido : null,
+          // os bytes vão no SQLite e ao servidor (sem arquivo no aparelho);
+          // no rascunho, só a que cobre a tela
+          assinaturaPedido: _assinaturaCobreATela ? _assinaturaPedido : null,
         ),
-        // rascunho: fica só no aparelho até o cliente assinar e o pedido ir
+        // rascunho: fica só no aparelho até o pedido ser enviado
         if (!enviar) 'so_local': 1,
+        // rascunho sem assinatura que cubra a tela: nada de assinatura velha
+        // de outra linha com o mesmo número
+        if (!enviar && !_assinaturaCobreATela) kLimparAssinaturaPedido: true,
       };
       final status = pedido['status'] as String;
 

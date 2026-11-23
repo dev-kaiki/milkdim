@@ -518,6 +518,13 @@ Future<void> _aplicarCamposLocais(
   // Assinatura do pedido: sem bytes, nunca apaga a guardada (como o servidor,
   // que faz coalesce). O caminho só muda se veio a chave (null limpa: a tela
   // manda null quando colheu bytes novos sem arquivo).
+  // [kLimparAssinaturaPedido]: o rascunho foi salvo com itens ou cliente que
+  // a assinatura guardada não cobre; apaga bytes e caminho.
+  if (pedido[kLimparAssinaturaPedido] == true) {
+    map['assinatura_pedido'] = null;
+    map['assinatura_pedido_path'] = null;
+    return;
+  }
   if (map['assinatura_pedido'] == null) {
     if (replace && antigo != null) {
       map['assinatura_pedido'] = antigo['assinatura_pedido'];
@@ -549,6 +556,12 @@ const List<String> _colunasCopiaDoServidor = [
   'pronto_em',
   'pronto_por',
 ];
+
+/// Chave (não é coluna) do mapa que as telas gravam: `true` apaga a
+/// assinatura do pedido guardada no aparelho (bytes e caminho). Usada pelo
+/// "Salvar rascunho" quando a assinatura não cobre mais os itens ou o cliente
+/// do rascunho. Nunca vai ao servidor.
+const String kLimparAssinaturaPedido = 'limpar_assinatura_pedido';
 
 /// Valor de `erro_envio` quando o número já é de outro pedido no servidor.
 const String kErroNumeroEmUso = 'numero';

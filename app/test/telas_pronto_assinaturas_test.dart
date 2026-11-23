@@ -16,6 +16,7 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:milkdim_app/pages/pedido_edit_page.dart';
 import 'package:milkdim_app/pages/pedido_page.dart';
 import 'package:milkdim_app/pages/pedidos_page.dart';
+import 'package:milkdim_app/utils/db.dart' show kLimparAssinaturaPedido;
 import 'package:milkdim_app/utils/pdf_utils.dart';
 import 'package:milkdim_app/utils/pedido_da_tela.dart';
 import 'package:milkdim_app/utils/produto.dart';
@@ -231,7 +232,12 @@ void main() {
       expect(avisoAssinaturaDoPedido(original: semAss, editado: semAss),
           'O cliente precisa assinar o pedido.');
       final rascunho = {...assinado, 'so_local': 1};
+      expect(avisoAssinaturaDoPedido(original: rascunho, editado: rascunho), isNull,
+          reason: 'rascunho assinado e sem mudança');
       expect(avisoAssinaturaDoPedido(original: rascunho, editado: mudou),
+          'O cliente precisa assinar o pedido de novo, porque os itens mudaram.');
+      final rascunhoSemAss = {...semAss, 'so_local': 1};
+      expect(avisoAssinaturaDoPedido(original: rascunhoSemAss, editado: rascunhoSemAss),
           'O cliente precisa assinar o pedido.');
     });
 
@@ -450,6 +456,191 @@ void main() {
       await _abrirResumoETocar(tester, 'Salvar alterações');
       expect(espiao.pedidos.length, 1);
       expect(espiao.gravados.single['assinatura_pedido'], _png);
+    });
+  });
+
+  group('rascunho', () {
+    /// A linha como o SQLite guarda o que a tela gravou (itens em texto JSON,
+    /// assinatura do pedido em hex "0x...").
+    Map<String, dynamic> comoNoAparelho(Map<String, dynamic> g) => {
+          ...g,
+          'id': 1000000001,
+          'produtos': jsonEncode(g['produtos']),
+          if (g['assinatura_pedido'] is Uint8List)
+            'assinatura_pedido': '0x${cvt.hex.encode(g['assinatura_pedido'] as Uint8List)}',
+          'pendente_envio': 0,
+        }..remove(kLimparAssinaturaPedido);
+
+    PedidoPage pedidoNovo(_Espiao espiao) => PedidoPage(
+          vendedor: _vendedor,
+          dadosParaCaptura: (
+            clientes: const [
+              {'id': 7, 'nome': 'Padaria Central'}
+            ],
+            produtos: _catalogo
+          ),
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        );
+
+    Map<String, dynamic> rascunhoGuardado({bool assinado = true}) =>
+        {..._pedidoGuardado(status: 'salvo', assinado: assinado), 'so_local': 1};
+
+    testWidgets('assinou, Salvar rascunho guarda a assinatura; reabrir e Salvar alteracoes '
+        'envia sem pedir de novo', (tester) async {
+      final espiao = _Espiao()..resposta = _png;
+      await _abrir(tester, pedidoNovo(espiao));
+      await _preencherPedidoNovo(tester);
+      await _assinarNoResumoEFechar(tester);
+      espiao.resultado = ResultadoGravacao.rascunho;
+      await _abrirResumoETocar(tester, 'Salvar rascunho');
+
+      final rascunho = espiao.gravados.single;
+      expect(rascunho['so_local'], 1);
+      expect(rascunho['assinatura_pedido'], _png, reason: 'a assinatura cobre a tela');
+      expect(rascunho.containsKey(kLimparAssinaturaPedido), isFalse);
+
+      // Reabre o rascunho e salva as alterações sem mexer em nada.
+      espiao.resultado = ResultadoGravacao.enviado;
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: comoNoAparelho(rascunho),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        ),
+      );
+      await _abrirResumoETocar(tester, 'Salvar alterações');
+
+      expect(espiao.pedidos, [(TipoAssinatura.pedido, null)],
+          reason: 'só a assinatura colhida antes do rascunho');
+      final enviado = espiao.gravados.last;
+      expect(espiao.gravados.length, 2);
+      expect(enviado['so_local'], 0, reason: 'Salvar alterações envia');
+      expect(enviado['assinatura_pedido'], '0x${cvt.hex.encode(_png)}');
+    });
+
+    testWidgets('assinou e mudou a quantidade: Salvar rascunho nao guarda a assinatura',
+        (tester) async {
+      final espiao = _Espiao()..resposta = _png;
+      await _abrir(tester, pedidoNovo(espiao));
+      await _preencherPedidoNovo(tester);
+      await _assinarNoResumoEFechar(tester);
+      await tester.enterText(find.widgetWithText(TextField, 'Qtd').first, '5');
+      await tester.pumpAndSettle();
+      espiao.resultado = ResultadoGravacao.rascunho;
+      await _abrirResumoETocar(tester, 'Salvar rascunho');
+
+      final g = espiao.gravados.single;
+      expect(g['so_local'], 1);
+      expect(g.containsKey('assinatura_pedido'), isFalse);
+      expect(g[kLimparAssinaturaPedido], isTrue);
+      expect(espiao.pedidos.length, 1, reason: 'rascunho não pede assinatura');
+    });
+
+    testWidgets('rascunho sem assinatura: Salvar alteracoes pede', (tester) async {
+      final espiao = _Espiao();
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: rascunhoGuardado(assinado: false),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        ),
+      );
+      await _abrirResumoETocar(tester, 'Salvar alterações');
+      expect(espiao.pedidos, [(TipoAssinatura.pedido, kAvisoAssinarPedido)]);
+      expect(espiao.gravados, isEmpty);
+    });
+
+    testWidgets('rascunho assinado e editado depois: Salvar alteracoes pede de novo',
+        (tester) async {
+      final espiao = _Espiao();
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: rascunhoGuardado(),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        ),
+      );
+      await tester.enterText(find.widgetWithText(TextField, 'Qtd').first, '4');
+      await tester.pumpAndSettle();
+      await _abrirResumoETocar(tester, 'Salvar alterações');
+      expect(espiao.pedidos, [(TipoAssinatura.pedido, kAvisoAssinarPedidoDeNovo)]);
+      expect(espiao.gravados, isEmpty);
+    });
+
+    testWidgets('Salvar rascunho no rascunho aberto fica no aparelho, sem pedir assinatura',
+        (tester) async {
+      final espiao = _Espiao()..resultado = ResultadoGravacao.rascunho;
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: rascunhoGuardado(assinado: false),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        ),
+      );
+      await tester.enterText(find.widgetWithText(TextField, 'Qtd').first, '4');
+      await tester.pumpAndSettle();
+      await _abrirResumoETocar(tester, 'Salvar rascunho');
+
+      expect(espiao.pedidos, isEmpty);
+      final g = espiao.gravados.single;
+      expect(g['so_local'], 1, reason: 'continua rascunho, não envia');
+      expect(g['status'], 'salvo');
+      expect(find.text('Editar Pedido'), findsNothing, reason: 'gravou e fechou');
+    });
+
+    testWidgets('Salvar rascunho: assinatura guardada fica se nada mudou e sai se mudou',
+        (tester) async {
+      final espiao = _Espiao()..resultado = ResultadoGravacao.rascunho;
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: rascunhoGuardado(),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        ),
+      );
+      await _abrirResumoETocar(tester, 'Salvar rascunho');
+      expect(espiao.gravados.single['assinatura_pedido'], _hex0x);
+      expect(espiao.gravados.single.containsKey(kLimparAssinaturaPedido), isFalse);
+
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: rascunhoGuardado(),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+        ),
+      );
+      await tester.enterText(find.widgetWithText(TextField, 'Qtd').first, '4');
+      await tester.pumpAndSettle();
+      await _abrirResumoETocar(tester, 'Salvar rascunho');
+      final g = espiao.gravados.last;
+      expect(g['assinatura_pedido'], isNull);
+      expect(g[kLimparAssinaturaPedido], isTrue);
+      expect(espiao.pedidos, isEmpty);
+    });
+
+    testWidgets('pedido ja enviado nao oferece Salvar rascunho', (tester) async {
+      await _abrir(
+        tester,
+        PedidoPageEdit(pedido: _pedidoGuardado(status: 'salvo'), produtosParaCaptura: _catalogo),
+      );
+      await tester
+          .tap(find.descendant(of: find.byType(BarraResumo), matching: find.byType(FilledButton)));
+      await tester.pumpAndSettle();
+      expect(find.text('Salvar alterações'), findsOneWidget);
+      expect(find.text('Salvar rascunho'), findsNothing);
     });
   });
 

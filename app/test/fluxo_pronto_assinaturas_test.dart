@@ -286,6 +286,94 @@ void main() {
     });
   });
 
+  group('rascunho com assinatura do pedido', () {
+    Map<String, dynamic> rascunhoDaTela({
+      Uint8List? assinaturaPedido,
+      int qtdPudim = 3,
+      bool limpar = false,
+    }) =>
+        {
+          ...pedidoDaTela(
+            base: {'vendedor_codigo': '0003', 'vendedor_nome': 'Vendedor'},
+            numero: '80',
+            produtos: _itensDaTela(qtdPudim: qtdPudim),
+            total: 33.0,
+            status: 'salvo',
+            datahora: '2026-11-23T10:00:00.000Z',
+            clienteId: 7,
+            cliente: _cliente,
+            assinatura: null,
+            assinaturaPath: null,
+            assinaturaPedido: assinaturaPedido,
+          ),
+          'so_local': 1,
+          if (limpar) kLimparAssinaturaPedido: true,
+        };
+
+    Future<Map<String, dynamic>> linhaDo80() async {
+      final db = await getDb();
+      return Map<String, dynamic>.from(
+          (await db.query('pedidos', where: 'numero = ?', whereArgs: ['80'])).single);
+    }
+
+    test('Salvar rascunho guarda a assinatura; reabrir e enviar nao pede de novo', () async {
+      final r = await gravarPedidoEEnviar(rascunhoDaTela(assinaturaPedido: _pngPedido), novo: true);
+      expect(r, ResultadoGravacao.rascunho);
+      expect(payloads, isEmpty, reason: 'rascunho não vai ao servidor');
+
+      final linha = await linhaDo80();
+      expect(linha['so_local'], 1);
+      expect(linha['assinatura_pedido'], '0x$_hexPedido');
+
+      // Reabre na edição e salva sem mudar nada: a assinatura do rascunho vale.
+      final daTela = pedidoDaTela(
+        base: linha,
+        numero: '80',
+        produtos: _itensDaTela(),
+        total: 33.0,
+        status: 'salvo',
+        datahora: '2026-11-23T11:00:00.000Z',
+        clienteId: 7,
+        cliente: _cliente,
+        assinatura: null,
+        assinaturaPath: null,
+      );
+      expect(precisaAssinaturaDoPedido(original: linha, editado: daTela), isFalse);
+      expect(await gravarPedidoEEnviar(daTela, novo: false), ResultadoGravacao.enviado);
+      expect(payloads.single['assinatura_pedido'], _byteaPedido);
+      expect(payloads.single['status'], 'salvo');
+    });
+
+    test('limpar apaga a assinatura guardada do rascunho e nao vai ao servidor', () async {
+      await gravarPedidoEEnviar(rascunhoDaTela(assinaturaPedido: _pngPedido), novo: true);
+      final linha = await linhaDo80();
+      expect(linha['assinatura_pedido'], isNotNull);
+
+      // Edição: Salvar rascunho com a quantidade mudada e sem assinatura nova.
+      await gravarPedidoEEnviar({
+        ...linha,
+        'produtos': _itensDaTela(qtdPudim: 5),
+        'assinatura_pedido': null,
+        'assinatura_pedido_path': null,
+        kLimparAssinaturaPedido: true,
+        'so_local': 1,
+      }, novo: false);
+      final depois = await linhaDo80();
+      expect(depois['assinatura_pedido'], isNull);
+      expect(depois['so_local'], 1);
+      expect(precisaAssinaturaDoPedido(original: depois, editado: depois), isTrue);
+
+      // Pedido novo com o mesmo número de um rascunho assinado: não herda a
+      // assinatura dele.
+      await gravarPedidoEEnviar(rascunhoDaTela(assinaturaPedido: _pngPedido), novo: true);
+      await gravarPedidoEEnviar(rascunhoDaTela(qtdPudim: 7, limpar: true), novo: true);
+      expect((await linhaDo80())['assinatura_pedido'], isNull);
+
+      expect(montarPayloadPedido({kLimparAssinaturaPedido: true}).containsKey(kLimparAssinaturaPedido),
+          isFalse);
+    });
+  });
+
   group('eco e sincronizacao', () {
     test('eco pronto nao e servidorFechou e grava pronto_em', () async {
       await aplicarPedidosRemotos([_remoto(assinaturaPedido: _byteaPedido)]);
@@ -445,11 +533,29 @@ void main() {
           'cliente_nome': clienteNome,
         };
 
-    test('precisaAssinaturaDoPedido: so_local', () {
+    test('precisaAssinaturaDoPedido: rascunho (so_local) assinado so pede se mudou', () {
+      final rascunho = {...original, 'so_local': 1};
+      expect(precisaAssinaturaDoPedido(original: rascunho, editado: editado()), isFalse,
+          reason: 'rascunho assinado e sem mudança: envia sem pedir de novo');
       expect(
           precisaAssinaturaDoPedido(
-              original: {...original, 'so_local': 1}, editado: editado()),
-          isTrue);
+              original: rascunho, editado: editado(produtos: _itensDaTela(qtdPudim: 2))),
+          isTrue,
+          reason: 'mudou depois de assinado');
+      expect(
+          precisaAssinaturaDoPedido(
+              original: {...rascunho}..remove('assinatura_pedido'), editado: editado()),
+          isTrue,
+          reason: 'rascunho sem assinatura');
+      expect(
+          precisaAssinaturaDoPedido(
+              original: {...rascunho}
+                ..remove('assinatura_pedido')
+                ..['assinatura_pedido_path'] = '/sig/r.png',
+              editado: editado(),
+              arquivoExiste: (_) => false),
+          isTrue,
+          reason: 'caminho sem arquivo não é assinatura, também no rascunho');
     });
     test('precisaAssinaturaDoPedido: sem assinatura do pedido', () {
       final semAss = {...original}..remove('assinatura_pedido');

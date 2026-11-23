@@ -208,8 +208,12 @@ class ResumoPedido extends StatelessWidget {
   /// Botão de destaque (cheio), em cima.
   final BotaoResumo principal;
 
-  /// Botão secundário (contorno), embaixo.
-  final BotaoResumo secundario;
+  /// Botão secundário (contorno), embaixo. Sem ele, só o [principal].
+  final BotaoResumo? secundario;
+
+  /// Mais um botão de contorno, por último (ex.: "Salvar rascunho" na edição
+  /// de um rascunho do aparelho).
+  final BotaoResumo? terciario;
 
   const ResumoPedido({
     super.key,
@@ -225,6 +229,7 @@ class ResumoPedido extends StatelessWidget {
     required this.onAssinar,
     required this.principal,
     required this.secundario,
+    this.terciario,
   });
 
   @override
@@ -359,13 +364,16 @@ class ResumoPedido extends StatelessWidget {
           label: Text(principal.rotulo),
           style: FilledButton.styleFrom(minimumSize: const Size(0, 56)),
         ),
-        const SizedBox(height: MdSpace.md),
-        OutlinedButton.icon(
-          onPressed: ocupado ? null : secundario.onPressed,
-          icon: Icon(secundario.icone),
-          label: Text(secundario.rotulo),
-          style: OutlinedButton.styleFrom(minimumSize: const Size(0, 56)),
-        ),
+        for (final b in [secundario, terciario])
+          if (b != null) ...[
+            const SizedBox(height: MdSpace.md),
+            OutlinedButton.icon(
+              onPressed: ocupado ? null : b.onPressed,
+              icon: Icon(b.icone),
+              label: Text(b.rotulo),
+              style: OutlinedButton.styleFrom(minimumSize: const Size(0, 56)),
+            ),
+          ],
       ],
     );
   }

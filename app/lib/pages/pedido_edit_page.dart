@@ -519,6 +519,41 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     await _gravar(() async => montar());
   }
 
+  /// "Salvar rascunho" (só no rascunho do aparelho, `so_local = 1`): grava
+  /// `salvo` só no aparelho, sem enviar e sem pedir assinatura. A assinatura
+  /// do pedido fica quando ainda cobre os itens e o cliente da tela (a colhida
+  /// agora, se não venceu, ou a guardada, se itens e cliente não mudaram);
+  /// senão é apagada do rascunho, e o envio pede de novo.
+  Future<void> _salvarRascunho() async {
+    if (processando) return;
+    final itens = _itensDaTela();
+    if (itens.isEmpty) {
+      _showSnack('Adicione ao menos um produto ao pedido!');
+      return;
+    }
+    await _gravar(() async {
+      final p = _pedidoDaTela(
+        itens: itens,
+        status: 'salvo',
+        assinaturaEntrega: null,
+        assinaturaEntregaPath: _caminhoAssinaturaEntregaGuardado,
+      );
+      final novaCobre = _assinaturaPedidoNova != null && !_assinaturaNovaVencida;
+      final guardadaCobre =
+          temAssinaturaDoPedido(widget.pedido) && !itensOuClienteMudaram(widget.pedido, p);
+      final cobre = novaCobre || guardadaCobre;
+      return {
+        ...p,
+        if (!cobre) ...{
+          'assinatura_pedido': null,
+          'assinatura_pedido_path': null,
+          kLimparAssinaturaPedido: true,
+        },
+        'so_local': 1,
+      };
+    });
+  }
+
   /// "Registrar entrega": pede só a assinatura da entrega (não exige a do
   /// pedido) e grava `finalizado`. Sem a assinatura, nada é gravado.
   Future<void> _registrarEntrega() async {
@@ -717,6 +752,17 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
                     _salvarAlteracoes();
                   },
                 ),
+                // rascunho do aparelho: pode continuar rascunho (não envia)
+                terciario: ehRascunhoDoAparelho(widget.pedido)
+                    ? (
+                        rotulo: 'Salvar rascunho',
+                        icone: Icons.save_as_outlined,
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          _salvarRascunho();
+                        },
+                      )
+                    : null,
               )),
             ),
           ),
