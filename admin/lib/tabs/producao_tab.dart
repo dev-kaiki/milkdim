@@ -56,6 +56,8 @@ class _ProducaoTabState extends State<ProducaoTab> {
   Timer? _timer;
   bool _primeiraCarga = true;
   bool _emVoo = false;
+  bool _recarregarDepois = false;
+  DateTime? _atualizadoEm;
   List<Pedido> _pedidos = [];
   String? _erro;
   final Set<int> _ocupados = {};
@@ -81,8 +83,13 @@ class _ProducaoTabState extends State<ProducaoTab> {
 
   /// Recarrega a lista. Pula se já houver uma carga em andamento.
   /// [silencioso] (timer): não mostra aviso de erro, mantém a lista anterior.
-  Future<void> _carregar({bool silencioso = false}) async {
-    if (_emVoo) return;
+  /// [garantir] (após Finalizar/Cancelar): se já houver carga em andamento,
+  /// faz mais uma assim que ela terminar, para a lista não ficar velha.
+  Future<void> _carregar({bool silencioso = false, bool garantir = false}) async {
+    if (_emVoo) {
+      if (garantir) _recarregarDepois = true;
+      return;
+    }
     setState(() => _emVoo = true);
     try {
       final lista = await _buscar();
@@ -90,6 +97,7 @@ class _ProducaoTabState extends State<ProducaoTab> {
       setState(() {
         _pedidos = lista;
         _erro = null;
+        _atualizadoEm = DateTime.now();
       });
     } catch (e) {
       if (!mounted) return;
@@ -102,6 +110,10 @@ class _ProducaoTabState extends State<ProducaoTab> {
           _emVoo = false;
           _primeiraCarga = false;
         });
+        if (_recarregarDepois) {
+          _recarregarDepois = false;
+          unawaited(_carregar(silencioso: true));
+        }
       }
     }
   }
@@ -109,6 +121,8 @@ class _ProducaoTabState extends State<ProducaoTab> {
   // -------------------- ações --------------------
 
   Future<void> _confirmarFinalizar(Pedido p) async {
+    if (_ocupados.contains(p.id)) return;
+    setState(() => _ocupados.add(p.id));
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -128,7 +142,10 @@ class _ProducaoTabState extends State<ProducaoTab> {
         ],
       ),
     );
-    if (ok != true) return;
+    if (ok != true) {
+      if (mounted) setState(() => _ocupados.remove(p.id));
+      return;
+    }
     await _executar(
       p,
       widget.finalizar ?? _service.finalizarManual,
@@ -137,6 +154,8 @@ class _ProducaoTabState extends State<ProducaoTab> {
   }
 
   Future<void> _confirmarCancelar(Pedido p) async {
+    if (_ocupados.contains(p.id)) return;
+    setState(() => _ocupados.add(p.id));
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -154,7 +173,10 @@ class _ProducaoTabState extends State<ProducaoTab> {
         ],
       ),
     );
-    if (ok != true) return;
+    if (ok != true) {
+      if (mounted) setState(() => _ocupados.remove(p.id));
+      return;
+    }
     await _executar(
       p,
       widget.cancelar ?? _service.cancelarPedido,
@@ -164,7 +186,7 @@ class _ProducaoTabState extends State<ProducaoTab> {
 
   Future<void> _executar(
       Pedido p, Future<void> Function(int) acao, String sucesso) async {
-    setState(() => _ocupados.add(p.id));
+    // O id já foi marcado como ocupado ao abrir a confirmação.
     try {
       await acao(p.id);
       if (!mounted) return;
@@ -177,7 +199,7 @@ class _ProducaoTabState extends State<ProducaoTab> {
       if (mounted) setState(() => _ocupados.remove(p.id));
     }
     if (!mounted) return;
-    await _carregar(silencioso: true);
+    await _carregar(silencioso: true, garantir: true);
   }
 
   // -------------------- helpers --------------------
@@ -324,15 +346,33 @@ class _ProducaoTabState extends State<ProducaoTab> {
 
   Widget _cabecalhoPedidos() => MdSectionHeader(
         titulo: 'Pedidos em aberto',
-        trailing: OutlinedButton.icon(
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (_atualizadoEm != null)
+              Padding(
+                padding: const EdgeInsets.only(right: MdSpace.md),
+                child: Text(
+                  'Atualizado às ${_horaFmt.format(_atualizadoEm!.toLocal())}',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall!
+                      .copyWith(color: MdColors.textMuted),
+                ),
+              ),
+            _botaoAtualizar(),
+          ],
+        ),
+      );
+
+  Widget _botaoAtualizar() => OutlinedButton.icon(
           onPressed: _emVoo ? null : _carregar,
           icon: _emVoo
               ? const SizedBox(
                   width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
               : const Icon(Icons.refresh),
           label: const Text('Atualizar'),
-        ),
-      );
+        );
 
   @override
   Widget build(BuildContext context) {

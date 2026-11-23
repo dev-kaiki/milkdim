@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:milkdim_admin/models/pedido.dart';
@@ -153,5 +155,66 @@ void main() {
     await tester.pumpWidget(_app(const SizedBox()));
     await tester.pump(const Duration(seconds: 61));
     expect(cargas, 1);
+  });
+
+  testWidgets('ação concluída durante uma carga em andamento recarrega depois', (tester) async {
+    var cargas = 0;
+    var fechado = false;
+    final lenta = Completer<List<Pedido>>();
+    await tester.pumpWidget(_app(ProducaoTab(
+      intervalo: const Duration(seconds: 30),
+      carregar: () {
+        cargas++;
+        if (cargas == 2) return lenta.future; // carga do timer, demorada
+        return Future.value(fechado ? <Pedido>[] : [_ped(7, '318', 3)]);
+      },
+      finalizar: (id) async => fechado = true,
+    )));
+    await tester.pumpAndSettle();
+    expect(cargas, 1);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Finalizar'));
+    await tester.pumpAndSettle();
+    // Um tick do timer começa uma carga que fica pendente...
+    await tester.pump(const Duration(seconds: 31));
+    expect(cargas, 2);
+    // ...e a ação termina enquanto ela está em andamento.
+    await tester.tap(find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.widgetWithText(FilledButton, 'Finalizar'),
+    ));
+    await tester.pump();
+    await tester.pump();
+    lenta.complete([_ped(7, '318', 3)]); // resposta velha, ainda com o pedido
+    await tester.pumpAndSettle();
+
+    expect(cargas, 3);
+    expect(find.text('Nenhum pedido em aberto'), findsOneWidget);
+  });
+
+  testWidgets('mostra "Atualizado às" depois de carregar', (tester) async {
+    await tester.pumpWidget(_app(ProducaoTab(carregar: () async => [_ped(1, '318', 3)])));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Atualizado às'), findsOneWidget);
+  });
+
+  testWidgets('dois toques rápidos em Finalizar chamam finalizar uma vez', (tester) async {
+    final finalizados = <int>[];
+    await tester.pumpWidget(_app(ProducaoTab(
+      carregar: () async => [_ped(7, '318', 3)],
+      finalizar: (id) async => finalizados.add(id),
+    )));
+    await tester.pumpAndSettle();
+    final botao = find.widgetWithText(FilledButton, 'Finalizar');
+    await tester.tap(botao);
+    await tester.tap(botao, warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tap(find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.widgetWithText(FilledButton, 'Finalizar'),
+    ));
+    await tester.pumpAndSettle();
+    expect(finalizados, [7]);
   });
 }

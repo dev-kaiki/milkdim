@@ -738,22 +738,26 @@ class _PedidosTabState extends State<PedidosTab> {
         // Situação
         Padding(
           padding: const EdgeInsets.fromLTRB(MdSpace.lg, 0, MdSpace.lg, MdSpace.sm),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SegmentedButton<String>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(value: 'todos', label: Text('Todos')),
-                ButtonSegment(value: 'salvo', label: Text('Em aberto')),
-                ButtonSegment(value: 'finalizado', label: Text('Finalizados')),
-                ButtonSegment(value: 'cancelado', label: Text('Cancelados')),
-              ],
-              selected: {_situacao ?? 'todos'},
-              onSelectionChanged: (v) {
-                _situacao = v.first == 'todos' ? null : v.first;
-                _aplicarFiltros();
-              },
+          child: SegmentedButton<String>(
+            showSelectedIcon: false,
+            style: SegmentedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: MdSpace.sm),
+              textStyle: Theme.of(context).textTheme.labelLarge,
             ),
+            segments: const [
+              ButtonSegment(value: 'todos', label: Text('Todos', maxLines: 1, softWrap: false)),
+              ButtonSegment(value: 'salvo', label: Text('Em aberto', maxLines: 1, softWrap: false)),
+              ButtonSegment(
+                  value: 'finalizado', label: Text('Finalizados', maxLines: 1, softWrap: false)),
+              ButtonSegment(
+                  value: 'cancelado', label: Text('Cancelados', maxLines: 1, softWrap: false)),
+            ],
+            selected: {_situacao ?? 'todos'},
+            onSelectionChanged: (v) {
+              _situacao = v.first == 'todos' ? null : v.first;
+              _aplicarFiltros();
+            },
           ),
         ),
 
