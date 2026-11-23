@@ -455,6 +455,64 @@ void main() {
           reason: 'nunca duplica');
     });
 
+    test('situacaoGravada: copia salvo, eco pronto -> pronto; copia pronto, eco salvo -> salvo',
+        () async {
+      Map<String, dynamic> daTela(Map<String, dynamic> linha, String datahora) => pedidoDaTela(
+            base: linha,
+            numero: '70',
+            produtos: _itensDaTela(),
+            total: 33.0,
+            status: estaPronto(linha) ? 'pronto' : 'salvo',
+            datahora: datahora,
+            clienteId: 7,
+            cliente: _cliente,
+            assinatura: null,
+            assinaturaPath: null,
+          );
+
+      // 1) O celular diz salvo; a fábrica já marcou pronto no servidor.
+      await aplicarPedidosRemotos([_remoto(assinaturaPedido: _byteaPedido)]);
+      var enviado = daTela(await _linha(42), '2026-11-23T11:00:00.000Z');
+      expect(enviado['status'], 'salvo', reason: 'a tela previu salvo');
+      noServidor = _remoto(
+          status: 'pronto', datahora: '2026-11-23T11:00:00+00:00', assinaturaPedido: _byteaPedido);
+      expect(await gravarPedidoEEnviar(enviado, novo: false), ResultadoGravacao.enviado);
+      expect(await situacaoGravada(enviado), 'pronto');
+      expect(mensagemGravacao(ResultadoGravacao.enviado, (await situacaoGravada(enviado))!),
+          'Pedido salvo.');
+
+      // 2) O celular diz pronto; o servidor tem salvo.
+      enviado = daTela(await _linha(42), '2026-11-23T12:00:00.000Z');
+      expect(enviado['status'], 'pronto', reason: 'a tela previu pronto');
+      noServidor = _remoto(
+          status: 'salvo', datahora: '2026-11-23T12:00:00+00:00', assinaturaPedido: _byteaPedido);
+      expect(await gravarPedidoEEnviar(enviado, novo: false), ResultadoGravacao.enviado);
+      expect(await situacaoGravada(enviado), 'salvo');
+      expect(mensagemGravacao(ResultadoGravacao.enviado, (await situacaoGravada(enviado))!),
+          'Pedido enviado para produção.');
+    });
+
+    test('situacaoGravada acha o pedido quando o eco trocou o id local', () async {
+      final novo = pedidoDaTela(
+        base: {'vendedor_codigo': '0003', 'vendedor_nome': 'Vendedor'},
+        numero: '90',
+        produtos: _itensDaTela(),
+        total: 33.0,
+        status: 'salvo',
+        datahora: '2026-11-23T10:00:00.000Z',
+        clienteId: null,
+        cliente: _cliente,
+        assinatura: null,
+        assinaturaPath: null,
+        assinaturaPedido: _pngPedido,
+      );
+      final idLocal = await salvarPedidoLocal({...novo, 'so_local': 1});
+      final linha = await _linha(idLocal);
+      expect(await gravarPedidoEEnviar({...linha, 'so_local': 0}, novo: false),
+          ResultadoGravacao.enviado);
+      expect(await situacaoGravada(linha), 'salvo', reason: 'agora com o id 100 do servidor');
+    });
+
     test('reenvio sem mudanca leva produtos iguais aos recebidos do servidor', () async {
       await aplicarPedidosRemotos([_remoto(status: 'pronto', assinaturaPedido: _byteaPedido)]);
       final recebido = jsonEncode(_itensDoServidor());

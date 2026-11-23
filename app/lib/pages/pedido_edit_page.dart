@@ -37,6 +37,11 @@ class PedidoPageEdit extends StatefulWidget {
   final Future<String?> Function(Uint8List bytes, {required String numero})?
       gravarArquivoAssinatura;
 
+  /// Para teste: no lugar de `situacaoGravada` (a situação do pedido no
+  /// SQLite depois do eco). Com [gravar] injetado e sem esta, a mensagem usa
+  /// a situação prevista.
+  final Future<String?> Function(Map<String, dynamic> pedido)? lerSituacaoGravada;
+
   const PedidoPageEdit({
     super.key,
     required this.pedido,
@@ -44,6 +49,7 @@ class PedidoPageEdit extends StatefulWidget {
     this.pedirAssinatura,
     this.gravar,
     this.gravarArquivoAssinatura,
+    this.lerSituacaoGravada,
   });
 
   @override
@@ -595,14 +601,28 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
 
       final r = await (widget.gravar ?? gravarPedidoEEnviar)(pedidoAtualizado, novo: false);
 
+      // Enviado: a mensagem segue a situação que ficou no aparelho depois do
+      // eco, não a prevista (a cópia do celular podia estar velha: pronto no
+      // servidor e salvo aqui, ou o contrário).
+      var situacao = status;
+      final ler = widget.lerSituacaoGravada ?? (widget.gravar == null ? situacaoGravada : null);
+      if (r == ResultadoGravacao.enviado && ler != null) {
+        try {
+          situacao = await ler(pedidoAtualizado) ?? status;
+        } catch (e) {
+          // ignore: avoid_print
+          print('[EDIT] não releu a situação gravada: $e');
+        }
+      }
+
       if (!mounted) return;
-      final msg = mensagemGravacao(r, status);
+      final msg = mensagemGravacao(r, situacao);
       if (msg != null) {
         _showSnack(msg, sucesso: !gravacaoEhAviso(r));
       }
       // ignore: avoid_print
-      print('[EDIT] concluído ($r) -> pop("$status")');
-      Navigator.pop(context, status);
+      print('[EDIT] concluído ($r) -> pop("$situacao")');
+      Navigator.pop(context, situacao);
     } on NumeroEmUso catch (e) {
       // Nada foi gravado: o formulário fica aberto para trocar o número.
       if (mounted) _showSnack(kMsgNumeroEmUso);

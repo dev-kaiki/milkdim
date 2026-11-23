@@ -1251,6 +1251,28 @@ Future<Map<String, dynamic>?> _linhaGravada(Map<String, dynamic> pedido) async {
   return r.isEmpty ? null : Map<String, dynamic>.from(r.first);
 }
 
+/// Situação do pedido como ficou no SQLite depois de [gravarPedidoEEnviar]
+/// (com o eco do servidor já aplicado): procura pelo id e, quando o eco
+/// trocou o id local pelo do servidor, por numero+vendedor. null se não achou.
+/// A cópia do celular pode estar velha (ex.: a fábrica marcou pronto e o
+/// celular ainda diz salvo): a tela usa esta, e não a que previu, para dizer
+/// se o pedido foi para a produção.
+Future<String?> situacaoGravada(Map<String, dynamic> pedido) async {
+  final db = await getDb();
+  final id = _idDe(pedido);
+  var r = id == null
+      ? const <Map<String, Object?>>[]
+      : await db.query('pedidos', columns: ['status'], where: 'id = ?', whereArgs: [id], limit: 1);
+  if (r.isEmpty) {
+    r = await db.query('pedidos',
+        columns: ['status'],
+        where: 'numero = ? AND vendedor_codigo = ?',
+        whereArgs: [pedido['numero']?.toString(), pedido['vendedor_codigo']?.toString()],
+        limit: 1);
+  }
+  return r.isEmpty ? null : r.first['status']?.toString();
+}
+
 /// Grava o pedido no SQLite **na hora** (fora da trava: nada espera a rede) e,
 /// se não for rascunho antigo (`so_local`), tenta enviar. Falha de envio não é
 /// erro: o pedido já está salvo com `pendente_envio = 1`. Só lança se a

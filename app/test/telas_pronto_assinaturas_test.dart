@@ -709,6 +709,75 @@ void main() {
     });
   });
 
+  group('mensagem com a situacao gravada depois do eco', () {
+    testWidgets('celular dizia salvo e o servidor tinha pronto: "Pedido salvo."',
+        (tester) async {
+      final espiao = _Espiao();
+      final lidos = <Map<String, dynamic>>[];
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: _pedidoGuardado(status: 'salvo'),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+          // o eco gravou pronto no aparelho
+          lerSituacaoGravada: (p) async {
+            lidos.add(p);
+            return 'pronto';
+          },
+        ),
+      );
+      await _abrirResumoETocar(tester, 'Salvar alterações');
+
+      expect(espiao.gravados.single['status'], 'salvo', reason: 'a tela previu salvo');
+      expect(lidos.single['numero'], '70');
+      expect(find.text('Pedido salvo.'), findsOneWidget);
+      expect(find.text('Pedido enviado para produção.'), findsNothing);
+    });
+
+    testWidgets('celular dizia pronto e o servidor tinha salvo: "Pedido enviado para produção."',
+        (tester) async {
+      final espiao = _Espiao();
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: _pedidoGuardado(status: 'pronto'),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+          lerSituacaoGravada: (p) async => 'salvo',
+        ),
+      );
+      await _abrirResumoETocar(tester, 'Salvar alterações');
+
+      expect(espiao.gravados.single['status'], 'pronto', reason: 'a tela previu pronto');
+      expect(find.text('Pedido enviado para produção.'), findsOneWidget);
+      expect(find.text('Pedido salvo.'), findsNothing);
+    });
+
+    testWidgets('sem envio (pendente) nao rele a situacao', (tester) async {
+      final espiao = _Espiao()..resultado = ResultadoGravacao.pendente;
+      var leu = false;
+      await _abrir(
+        tester,
+        PedidoPageEdit(
+          pedido: _pedidoGuardado(status: 'salvo'),
+          produtosParaCaptura: _catalogo,
+          pedirAssinatura: espiao.pedir,
+          gravar: espiao.gravar,
+          lerSituacaoGravada: (p) async {
+            leu = true;
+            return 'pronto';
+          },
+        ),
+      );
+      await _abrirResumoETocar(tester, 'Salvar alterações');
+      expect(leu, isFalse);
+      expect(find.text('Pedido salvo. Será enviado quando houver internet.'), findsOneWidget);
+    });
+  });
+
   group('entrega', () {
     testWidgets('Registrar entrega so pede a assinatura da entrega', (tester) async {
       final espiao = _Espiao()..resposta = _png;
