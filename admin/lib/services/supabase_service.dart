@@ -44,6 +44,24 @@ String filtroBuscaPedidos(String t) =>
     'vendedor_nome.ilike.%$t%,cliente_nome.ilike.%$t%,'
     'cliente_nome_fantasia.ilike.%$t%,numero.ilike.%$t%';
 
+/// `null`/'todos' = sem filtro (string vazia); senao o proprio status.
+String filtroSituacao(String? s) =>
+    (s == null || s.isEmpty || s == 'todos') ? '' : s;
+
+/// Mensagem em portugues para o erro de uma RPC de pedido.
+String mensagemErroRpcPedido(String? code) {
+  switch (code) {
+    case '42501':
+      return 'Sem permissão para essa ação.';
+    case '55000':
+      return 'Esse pedido não está mais em aberto.';
+    case 'P0002':
+      return 'Pedido não encontrado.';
+    default:
+      return 'Erro ao atualizar pedido.';
+  }
+}
+
 class SupabaseService {
   final SupabaseClient _sb;
   SupabaseService([SupabaseClient? injected]) : _sb = injected ?? Supabase.instance.client;
@@ -122,6 +140,13 @@ class SupabaseService {
     'cliente_cep'           : m['cliente_cep'],
     'cliente_anotacao'      : m['cliente_anotacao'],
     'produtos'              : m['produtos'],
+    'enviado_em'            : m['enviado_em'],
+    'alterado_em'           : m['alterado_em'],
+    'finalizado_em'         : m['finalizado_em'],
+    'finalizado_por'        : m['finalizado_por'],
+    'finalizado_manual'     : m['finalizado_manual'],
+    'cancelado_em'          : m['cancelado_em'],
+    'cancelado_por'         : m['cancelado_por'],
   };
 
   // ----------------- CLIENTES -----------------
@@ -365,6 +390,37 @@ class SupabaseService {
       to: offset + (hasMore ? limit : items.length),
       hasMore: hasMore,
     );
+  }
+
+  /// Pedidos em aberto, do mais antigo enviado para o mais novo.
+  /// (`select()` traz todas as colunas, inclusive as de situacao/auditoria.)
+  Future<List<Pedido>> buscarPedidosEmAberto() async {
+    try {
+      final List<dynamic> raw = await _sb
+          .from('pedidos')
+          .select()
+          .eq('status', 'salvo')
+          .order('enviado_em', ascending: true);
+      return raw
+          .map((e) => Pedido.fromMap(_pedidoDbToModel(JsonMap.from(e as Map))))
+          .toList();
+    } catch (e) {
+      throw RepoFailure('Erro ao buscar pedidos em aberto: $e');
+    }
+  }
+
+  Future<void> finalizarManual(int id) => _rpcPedido('pedido_finalizar_manual', id);
+
+  Future<void> cancelarPedido(int id) => _rpcPedido('pedido_cancelar', id);
+
+  Future<void> _rpcPedido(String fn, int id) async {
+    try {
+      await _sb.rpc(fn, params: {'p_id': id});
+    } on PostgrestException catch (e) {
+      throw RepoFailure(mensagemErroRpcPedido(e.code));
+    } catch (e) {
+      throw RepoFailure('Erro ao atualizar pedido: $e');
+    }
   }
 
   /// Stream realtime (ordenado por datahora desc)

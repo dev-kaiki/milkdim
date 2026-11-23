@@ -96,6 +96,15 @@ class Pedido {
   final String? clienteCep;
   final String? clienteAnotacao;
 
+  // situacao e auditoria (servidor)
+  final DateTime? enviadoEm;
+  final DateTime? alteradoEm;
+  final DateTime? finalizadoEm;
+  final String? finalizadoPor;
+  final bool finalizadoManual;
+  final DateTime? canceladoEm;
+  final String? canceladoPor;
+
   /// Para UI; no Supabase vai texto base64 simples (sem data URI)
   final Uint8List? assinaturaBytes;
 
@@ -120,6 +129,13 @@ class Pedido {
     this.clienteInscEstadual,
     this.clienteCep,
     this.clienteAnotacao,
+    this.enviadoEm,
+    this.alteradoEm,
+    this.finalizadoEm,
+    this.finalizadoPor,
+    this.finalizadoManual = false,
+    this.canceladoEm,
+    this.canceladoPor,
     this.assinaturaBytes,
   });
 
@@ -147,6 +163,20 @@ class Pedido {
 
   static double _toDouble(dynamic v) => PedidoItem._toDouble(v);
   static int _toInt(dynamic v) => PedidoItem._toInt(v);
+
+  static DateTime? _toDate(dynamic v) {
+    if (v == null) return null;
+    if (v is DateTime) return v;
+    if (v is String && v.trim().isNotEmpty) return DateTime.tryParse(v.trim());
+    return null;
+  }
+
+  static bool _toBoolFlag(dynamic v) {
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    final s = v?.toString().trim().toLowerCase();
+    return s == 'true' || s == '1';
+  }
 
   static Uint8List? _decodeBase64(String? s) {
     if (s == null || s.trim().isEmpty) return null;
@@ -200,6 +230,13 @@ class Pedido {
       clienteInscEstadual: _pick(m, 'cliente_insc_estadual', 'clienteInscEstadual'),
       clienteCep: _pick(m, 'cliente_cep', 'clienteCep'),
       clienteAnotacao: _pick(m, 'cliente_anotacao', 'clienteAnotacao'),
+      enviadoEm: _toDate(_pick(m, 'enviado_em', 'enviadoEm')),
+      alteradoEm: _toDate(_pick(m, 'alterado_em', 'alteradoEm')),
+      finalizadoEm: _toDate(_pick(m, 'finalizado_em', 'finalizadoEm')),
+      finalizadoPor: _pick(m, 'finalizado_por', 'finalizadoPor')?.toString(),
+      finalizadoManual: _toBoolFlag(_pick(m, 'finalizado_manual', 'finalizadoManual')),
+      canceladoEm: _toDate(_pick(m, 'cancelado_em', 'canceladoEm')),
+      canceladoPor: _pick(m, 'cancelado_por', 'canceladoPor')?.toString(),
       assinaturaBytes: assinaturaBytes,
     );
   }
@@ -293,6 +330,13 @@ class Pedido {
     String? clienteInscEstadual,
     String? clienteCep,
     String? clienteAnotacao,
+    DateTime? enviadoEm,
+    DateTime? alteradoEm,
+    DateTime? finalizadoEm,
+    String? finalizadoPor,
+    bool? finalizadoManual,
+    DateTime? canceladoEm,
+    String? canceladoPor,
     Uint8List? assinaturaBytes,
   }) {
     final newItens = itens ?? this.itens;
@@ -318,8 +362,32 @@ class Pedido {
       clienteInscEstadual: clienteInscEstadual ?? this.clienteInscEstadual,
       clienteCep: clienteCep ?? this.clienteCep,
       clienteAnotacao: clienteAnotacao ?? this.clienteAnotacao,
+      enviadoEm: enviadoEm ?? this.enviadoEm,
+      alteradoEm: alteradoEm ?? this.alteradoEm,
+      finalizadoEm: finalizadoEm ?? this.finalizadoEm,
+      finalizadoPor: finalizadoPor ?? this.finalizadoPor,
+      finalizadoManual: finalizadoManual ?? this.finalizadoManual,
+      canceladoEm: canceladoEm ?? this.canceladoEm,
+      canceladoPor: canceladoPor ?? this.canceladoPor,
       assinaturaBytes: assinaturaBytes ?? this.assinaturaBytes,
     );
+  }
+
+  /// Foi alterado depois de enviado.
+  bool get alteradoDepoisDeEnviar =>
+      alteradoEm != null && enviadoEm != null && alteradoEm!.isAfter(enviadoEm!);
+
+  String get situacaoTexto {
+    switch (status) {
+      case 'salvo':
+        return 'Em aberto';
+      case 'finalizado':
+        return 'Finalizado';
+      case 'cancelado':
+        return 'Cancelado';
+      default:
+        return status;
+    }
   }
 
   // opcional: utilitários
