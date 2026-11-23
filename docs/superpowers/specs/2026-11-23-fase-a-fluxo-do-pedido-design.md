@@ -17,6 +17,84 @@ Ele quer o pedido como uma **solicitação de venda**:
 O Kaiki aprovou o roteiro em 23/11, e esta é a Fase A. As fases seguintes (etiqueta com QR,
 forma de cobrança, financeiro, emissão fiscal) dependem desta.
 
+## Revisão aprovada em 23/11/2026: "pronto para entrega" e duas assinaturas
+
+O Kaiki corrigiu duas coisas depois da primeira versão. Esta seção **vale mais** que o
+restante do documento quando houver conflito.
+
+**1. A finalização da fábrica não é a entrega.** "Finalizar" na fábrica quer dizer que a
+produção terminou e o pedido está pronto para sair. A entrega é outra finalização, feita
+pelo vendedor.
+
+**2. O cliente assina duas vezes.** A primeira assinatura confirma o pedido: o pedido só vai
+para a fábrica assinado. A segunda confirma a entrega.
+
+Os áudios do dono falavam em assinar só no final. A decisão do Kaiki prevalece.
+
+### Fluxo
+
+| Situação | Valor gravado | Quem leva até ela |
+|---|---|---|
+| Em aberto | `salvo` | vendedor: **Enviar pedido**, com a assinatura do pedido |
+| Pronto para entrega | `pronto` (novo) | fábrica: **Produção concluída** (só pelo Controle) |
+| Entregue | `finalizado` | vendedor: **Registrar entrega**, com a assinatura da entrega; ou Controle: **Marcar como entregue** (manual) |
+| Cancelado | `cancelado` | vendedor ou Controle, antes da entrega |
+
+As regras de cada etapa:
+
+- **Rascunho:** o pedido sem a assinatura do pedido fica só no celular (`so_local = 1`) e não
+  vai para a fábrica. Para enviar, o cliente assina. *(Decisão do Claude, aprovada.)*
+- **Alteração depois de enviado:**
+  - Se mudarem os itens ou o cliente, o cliente **assina o pedido de novo**. O app exige isso
+    antes de salvar. *(Aprovado.)*
+  - Se o pedido estava **Pronto**, a alteração o devolve para **Em aberto**. O Controle mostra
+    "alterado depois de pronto". *(Aprovado.)*
+  - Reenviar sem mudar itens nem cliente não tira o pedido de Pronto. Uma cópia velha do
+    celular que ainda diz `salvo` também não tira.
+- **A entrega assinada vence:**
+  - Ela vale contra "Marcar como entregue" e contra o cancelamento, como antes.
+  - A regra do servidor usa a assinatura **da entrega** (`assinatura`).
+- **Total a fabricar:** conta só os pedidos `salvo` (Em aberto). Pronto já foi fabricado.
+- **PDF do pedido:** mostra as duas assinaturas, quando existirem, com os rótulos
+  "Assinatura do pedido" e "Assinatura da entrega". *(Aprovado.)*
+
+### Banco
+
+Uma segunda migração. O SQL é mostrado ao Kaiki antes de aplicar.
+
+- **`status`:** passa a aceitar `pronto`.
+- **Colunas novas:** `assinatura_pedido bytea`, `pronto_em timestamptz`, `pronto_por text`.
+- **RPC nova:** `pedido_marcar_pronto(p_id)`, só para admin e só para pedido `salvo`.
+- **`pedido_finalizar_manual`:** passa a aceitar `salvo` ou `pronto`. Na tela, o botão vira
+  "Marcar como entregue".
+- **`pedido_cancelar`:** aceita `salvo` ou `pronto`.
+- **Gatilho:**
+  - O vendedor não consegue gravar `pronto`: só a RPC grava.
+  - Quando o pedido está `pronto`, uma alteração do vendedor nos itens ou no cliente volta o
+    pedido para `salvo`. `pronto_em`/`pronto_por` ficam guardados como histórico, e
+    `alterado_em` > `pronto_em` sinaliza "alterado depois de pronto".
+  - Qualquer outro envio mantém `pronto`.
+  - A exigência da nova assinatura do pedido fica **no app**, não no servidor. Uma recusa do
+    servidor deixaria pedidos presos no celular.
+
+### Telas
+
+- **Pedido novo, no vendedor:**
+  - **Salvar rascunho:** fica só no celular.
+  - **Enviar pedido:** pede a assinatura do pedido.
+  - O pedido novo não tem mais "Finalizar". A entrega é feita depois, abrindo o pedido.
+- **Pedido aberto ou pronto, no vendedor:**
+  - **Salvar alterações:** se mudaram os itens ou o cliente, pede a assinatura do pedido de
+    novo.
+  - **Registrar entrega:** pede a assinatura da entrega e finaliza.
+  - O selo **Pronto** aparece em Meus pedidos.
+- **Controle, Produção:**
+  - **Em aberto:** os totais e os cartões, com o botão **Produção concluída** e o selo
+    "alterado depois de pronto".
+  - **Prontos para entrega:** lista própria, com **Marcar como entregue** e **Cancelar**.
+- **Controle, Pedidos:** o filtro ganha **Prontos**. O detalhe mostra pronto em/por e as duas
+  assinaturas.
+
 ## Decisões do Kaiki
 
 - **Total a fabricar:** é por produto, em unidades ("15 Pudim tradicional, 10 Leite ninho").
