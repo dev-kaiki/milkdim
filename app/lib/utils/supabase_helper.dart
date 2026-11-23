@@ -13,12 +13,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show InternetAddress;
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'convert.dart'; // assinaturaToBytes(), bytesToHex0x()
 import 'db.dart';      // getDb()
+import 'id_aparelho.dart'; // novoIdAparelho()
 
 final supabase = Supabase.instance.client;
 
@@ -118,7 +120,8 @@ Future<bool> sincronizarTudo({required String vendedorCodigo}) async {
   try {
     final r = await subirPedidosPendentes(vendedorCodigo: vendedorCodigo);
     // ignore: avoid_print
-    print('📤 Pendentes: ${r.enviados} enviados, ${r.falhas} falhas');
+    print('📤 Pendentes: ${r.enviados} enviados, ${r.falhas} falhas, '
+        '${r.numeroEmUso} com número em uso');
   } catch (e) {
     // ignore: avoid_print
     print('❌ Erro ao subir pendentes: $e');
@@ -253,55 +256,120 @@ Future<void> _sincronizarPedidos(String vendedorCodigo) async {
   }
 }
 
+//// Colunas de auditoria que só o servidor preenche. O app guarda uma cópia em
+/// texto (vinda do eco/sync) e nunca as envia.
+const List<String> _colunasAuditoria = [
+  'enviado_em',
+  'alterado_em',
+  'finalizado_em',
+  'finalizado_por',
+  'finalizado_manual',
+  'cancelado_em',
+  'cancelado_por',
+];
+
+/// `finalizado_manual` guardado como texto: 'true' / 'false' (ou null).
+String? _boolComoTexto(dynamic v) {
+  if (v == null) return null;
+  if (v is bool) return v.toString();
+  final s = '$v'.trim().toLowerCase();
+  if (s == 'true' || s == 't' || s == '1') return 'true';
+  if (s == 'false' || s == 'f' || s == '0') return 'false';
+  return '$v';
+}
+
+String? _texto(dynamic v) {
+  final s = v?.toString();
+  return (s == null || s.isEmpty) ? null : s;
+}
+
+/// id_aparelho e cópias de auditoria de uma linha do servidor, para o SQLite.
+/// Sem id_aparelho no servidor, fica [idAparelhoLocal] (o que o aparelho já
+/// tinha). Linha do servidor nunca é rascunho local nem tem erro de envio.
+Map<String, dynamic> _camposDoServidor(
+        Map<String, dynamic> remoto, String? idAparelhoLocal) =>
+    {
+      'id_aparelho': _texto(remoto['id_aparelho']) ?? _texto(idAparelhoLocal),
+      'so_local': 0,
+      'erro_envio': null,
+      for (final c in _colunasAuditoria)
+        c: c == 'finalizado_manual' ? _boolComoTexto(remoto[c]) : _texto(remoto[c]),
+    };
+
 /// Aplica no SQLite os pedidos vindos do servidor.
 /// - Pula o remoto se há pedido local aguardando envio (`pendente_envio = 1`)
-///   com o mesmo `id` ou o mesmo `(numero, vendedor_codigo)`: a edição local
-///   vence, e o índice único (numero, vendedor_codigo) não pode apagá-la no
-///   `INSERT OR REPLACE`.
-/// - Protege rascunhos (status='salvo') cujo id colide com um remoto,
-///   realocando-os para a faixa local segura antes do `INSERT OR REPLACE`.
+///   ou rascunho antigo só do aparelho (`so_local = 1`) com o mesmo `id` ou o
+///   mesmo `(numero, vendedor_codigo)`: a versão local vence, e o índice único
+///   (numero, vendedor_codigo) não pode apagá-la no `INSERT OR REPLACE`.
+/// - Um local `salvo` com o mesmo id **e** o mesmo (numero, vendedor_codigo)
+///   é o próprio pedido (aberto, já enviado) e é substituído pela versão do
+///   servidor. Com o mesmo id e outro (numero, vendedor_codigo) é outro
+///   pedido: é realocado para a faixa local segura antes do `INSERT OR REPLACE`.
+/// - Mantém o `id_aparelho` local quando o servidor não tem um.
 Future<void> aplicarPedidosRemotos(List<Map<String, dynamic>> remotos) async {
   final db = await getDb();
   await db.transaction((txn) async {
-    final aplicar = <Map<String, dynamic>>[];
+    final aplicar = <(Map<String, dynamic>, String?)>[];
     for (final m in remotos) {
       final rid =
           (m['id'] is int) ? m['id'] as int : int.tryParse('${m['id'] ?? ''}');
       final numero = m['numero']?.toString();
       final vend = m['vendedor_codigo']?.toString();
 
-      final pendente = await txn.query(
+      final protegido = await txn.query(
         'pedidos',
         columns: ['id'],
-        where: 'pendente_envio = 1 AND (id = ? OR (numero = ? AND vendedor_codigo = ?))',
+        where: '(pendente_envio = 1 OR so_local = 1) '
+            'AND (id = ? OR (numero = ? AND vendedor_codigo = ?))',
         whereArgs: [rid, numero, vend],
         limit: 1,
       );
-      if (pendente.isNotEmpty) continue;
+      if (protegido.isNotEmpty) continue;
+
+      String? idAparelhoLocal;
 
       // 🛡️ Protege rascunhos locais: se o remoto traz um id que colide com um
-      // rascunho local (status='salvo'), realoca o rascunho para a faixa de id
-      // local segura ANTES de aplicar. Sem isso, o `INSERT OR REPLACE` abaixo
-      // apagaria o rascunho.
+      // `salvo` local de OUTRO pedido (outro numero/vendedor), realoca o local
+      // para a faixa de id segura ANTES de aplicar. Sem isso, o
+      // `INSERT OR REPLACE` abaixo o apagaria.
       if (rid != null) {
         final col = await txn.query(
           'pedidos',
-          columns: ['id', 'status'],
+          columns: ['id', 'status', 'numero', 'vendedor_codigo', 'id_aparelho'],
           where: 'id = ?',
           whereArgs: [rid],
           limit: 1,
         );
-        if (col.isNotEmpty && col.first['status']?.toString() == 'salvo') {
-          final novoId = await proximoIdLocalSeguro(txn);
-          await txn.update('pedidos', {'id': novoId},
-              where: 'id = ?', whereArgs: [rid]);
+        if (col.isNotEmpty) {
+          final l = col.first;
+          final mesmoPedido = l['numero']?.toString() == numero &&
+              l['vendedor_codigo']?.toString() == vend;
+          if (l['status']?.toString() == 'salvo' && !mesmoPedido) {
+            final novoId = await proximoIdLocalSeguro(txn);
+            await txn.update('pedidos', {'id': novoId},
+                where: 'id = ?', whereArgs: [rid]);
+          } else {
+            idAparelhoLocal = _texto(l['id_aparelho']);
+          }
         }
       }
-      aplicar.add(m);
+      if (idAparelhoLocal == null && numero != null && vend != null) {
+        final porNumero = await txn.query(
+          'pedidos',
+          columns: ['id_aparelho'],
+          where: 'numero = ? AND vendedor_codigo = ?',
+          whereArgs: [numero, vend],
+          limit: 1,
+        );
+        if (porNumero.isNotEmpty) {
+          idAparelhoLocal = _texto(porNumero.first['id_aparelho']);
+        }
+      }
+      aplicar.add((m, idAparelhoLocal));
     }
 
     final batch = txn.batch();
-    for (final ped in aplicar) {
+    for (final (ped, idAparelhoLocal) in aplicar) {
       final produtosLocal = (ped['produtos'] is String)
           ? ped['produtos']
           : jsonEncode(ped['produtos'] ?? []);
@@ -335,6 +403,8 @@ Future<void> aplicarPedidosRemotos(List<Map<String, dynamic>> remotos) async {
         'cliente_email': ped['cliente_email']?.toString(),
         // Veio do servidor: não está aguardando envio.
         'pendente_envio': 0,
+        // id_aparelho, so_local = 0, erro_envio = null e cópias de auditoria.
+        ..._camposDoServidor(ped, idAparelhoLocal),
         // `assinatura_path` não existe no servidor; ficará null ao sincronizar tudo.
       };
 
@@ -344,38 +414,48 @@ Future<void> aplicarPedidosRemotos(List<Map<String, dynamic>> remotos) async {
   });
 }
 
-/// Sobe os pedidos finalizados do vendedor que ainda aguardam envio
-/// (`pendente_envio = 1`). Cada falha deixa o pedido pendente e segue para o
-/// próximo. Chamar ao abrir com internet, depois do login e depois da sync.
-/// Roda sob [comTravaDePedidos].
-Future<({int enviados, int falhas})> subirPedidosPendentes({
+/// Sobe os pedidos do vendedor que ainda aguardam envio (`pendente_envio = 1`,
+/// qualquer situação). Cada falha deixa o pedido pendente e segue para o
+/// próximo. Pedido com `erro_envio = 'numero'` (o número já é de outro pedido
+/// no servidor) não é tentado: continua pendente e conta em `numeroEmUso` até
+/// o vendedor trocar o número. Chamar ao abrir com internet, depois do login e
+/// depois da sync. Roda sob [comTravaDePedidos].
+Future<({int enviados, int falhas, int numeroEmUso})> subirPedidosPendentes({
   required String vendedorCodigo,
   Future<void> Function(Map<String, dynamic>) enviar = salvarPedidoSupabase,
 }) =>
     comTravaDePedidos(() => _subirPedidosPendentes(vendedorCodigo, enviar));
 
-Future<({int enviados, int falhas})> _subirPedidosPendentes(
+Future<({int enviados, int falhas, int numeroEmUso})> _subirPedidosPendentes(
   String vendedorCodigo,
   Future<void> Function(Map<String, dynamic>) enviar,
 ) async {
   final rows = await listarPedidosPendentesEnvio(vendedorCodigo);
   var enviados = 0;
   var falhas = 0;
+  var numeroEmUso = 0;
   for (final row in rows) {
     if (row['vendedor_codigo']?.toString() != vendedorCodigo) continue;
+    if (row['erro_envio']?.toString() == kErroNumeroEmUso) {
+      numeroEmUso++;
+      continue;
+    }
     try {
       await enviar(Map<String, dynamic>.from(row));
       enviados++;
+    } on NumeroEmUso {
+      numeroEmUso++;
+      await _marcarNumeroEmUso(row);
     } catch (e) {
       falhas++;
       // ignore: avoid_print
       print('⚠️ Falha ao subir pendente ${row['numero'] ?? row['id']}: $e');
     }
   }
-  return (enviados: enviados, falhas: falhas);
+  return (enviados: enviados, falhas: falhas, numeroEmUso: numeroEmUso);
 }
 
-/// Apaga duplicados locais após salvar no servidor:
+// Apaga duplicados locais após salvar no servidor:
 /// - Remove o registro local antigo (idLocalAntigo)
 /// - Remove qualquer outro com o mesmo (numero, vendedor_codigo) e id != idNovo
 Future<void> _limparDuplicadosLocais({
@@ -482,112 +562,272 @@ Future<int> ensureClienteSupabaseId(Map<String, dynamic> pedido) async {
   return (inserted['id'] as num).toInt();
 }
 
+/// ---------------------- Conflito de número ----------------------
+
+/// Valor de `erro_envio` quando o número já é de outro pedido no servidor.
+const String kErroNumeroEmUso = 'numero';
+
+/// O servidor já tem o mesmo `(numero, vendedor_codigo)` com outro
+/// `id_aparelho`: é outro pedido (de outro aparelho do mesmo vendedor). O
+/// envio não acontece; o pedido fica pendente até o vendedor trocar o número.
+class NumeroEmUso implements Exception {
+  const NumeroEmUso(this.numero, this.vendedorCodigo);
+  final String numero;
+  final String vendedorCodigo;
+
+  @override
+  String toString() => 'NumeroEmUso: o pedido $numero do vendedor $vendedorCodigo '
+      'já existe no servidor com outro id_aparelho';
+}
+
+/// `true` só quando os dois id_aparelho existem e são diferentes.
+/// - Local sem id_aparelho (pedido legado): comportamento de hoje, sem conflito.
+/// - Remoto sem id_aparelho (pedido antigo, ou o próprio pedido enviado pelo
+///   APK antigo): segue o upsert como hoje.
+bool conflitoDeNumero(String? idAparelhoLocal, String? idAparelhoRemoto) {
+  final l = idAparelhoLocal?.trim() ?? '';
+  final r = idAparelhoRemoto?.trim() ?? '';
+  if (l.isEmpty || r.isEmpty) return false;
+  return l != r;
+}
+
+Future<Map<String, dynamic>?> _buscarRemotoPorNumeroSupabase(
+    String numero, String vendedorCodigo) async {
+  final r = await supabase
+      .from('pedidos')
+      .select('id, id_aparelho')
+      .eq('numero', numero)
+      .eq('vendedor_codigo', vendedorCodigo)
+      .maybeSingle();
+  return r == null ? null : Map<String, dynamic>.from(r);
+}
+
+/// Busca `id, id_aparelho` do pedido do servidor com esse
+/// `(numero, vendedor_codigo)`, ou null se não existe. Lança se não houver
+/// rede. Trocável nos testes.
+@visibleForTesting
+Future<Map<String, dynamic>?> Function(String numero, String vendedorCodigo)
+    buscarRemotoPorNumero = _buscarRemotoPorNumeroSupabase;
+
+/// `true` se nenhum pedido do servidor tem esse `(numero, vendedor_codigo)`.
+/// Sem rede (ou qualquer erro) devolve `true`: offline não bloqueia salvar; o
+/// conflito, se houver, aparece no envio ([NumeroEmUso]).
+Future<bool> numeroLivreNoServidor(String numero, String vendedorCodigo) async {
+  try {
+    return await buscarRemotoPorNumero(numero, vendedorCodigo) == null;
+  } catch (e) {
+    // ignore: avoid_print
+    print('⚠️ Não deu para conferir o número $numero no servidor: $e');
+    return true;
+  }
+}
+
+/// Persiste `erro_envio = 'numero'` (e mantém pendente) na linha local do
+/// pedido, desde que o número ainda seja o que foi enviado.
+Future<void> _marcarNumeroEmUso(Map<String, dynamic> pedido) async {
+  final db = await getDb();
+  final id = _idDe(pedido);
+  final numero = pedido['numero']?.toString();
+  final vend = pedido['vendedor_codigo']?.toString();
+  final valores = {'erro_envio': kErroNumeroEmUso, 'pendente_envio': 1};
+  if (id != null) {
+    await db.update('pedidos', valores,
+        where: 'id = ? AND numero = ?', whereArgs: [id, numero]);
+  } else {
+    await db.update('pedidos', valores,
+        where: 'numero = ? AND vendedor_codigo = ?', whereArgs: [numero, vend]);
+  }
+}
+
+int? _idDe(Map<String, dynamic> pedido) {
+  final raw = pedido['id'];
+  return raw is int ? raw : int.tryParse('${raw ?? ''}');
+}
+
+/// Pedido sem id_aparelho (pendente da v16): gera um, grava no SQLite e só
+/// então devolve o pedido com ele, para o envio levar o mesmo valor que fica
+/// no aparelho. Se o SQLite já tinha um, usa o guardado.
+Future<Map<String, dynamic>> _garantirIdAparelho(Map<String, dynamic> pedido) async {
+  if (_texto(pedido['id_aparelho']) != null) return pedido;
+  final db = await getDb();
+  final novo = novoIdAparelho();
+  final id = _idDe(pedido);
+  final String where;
+  final List<Object?> args;
+  if (id != null) {
+    where = 'id = ?';
+    args = [id];
+  } else {
+    where = 'numero = ? AND vendedor_codigo = ?';
+    args = [pedido['numero']?.toString(), pedido['vendedor_codigo']?.toString()];
+  }
+  await db.update('pedidos', {'id_aparelho': novo},
+      where: "$where AND (id_aparelho IS NULL OR id_aparelho = '')", whereArgs: args);
+  final r = await db.query('pedidos',
+      columns: ['id_aparelho'], where: where, whereArgs: args, limit: 1);
+  final guardado = r.isEmpty ? null : _texto(r.first['id_aparelho']);
+  return {...pedido, 'id_aparelho': guardado ?? novo};
+}
+
 // ---------------------- Salvar pedido (com FK garantida) ----------------------
 
-/// Salva/atualiza um pedido no Supabase.
-/// - Se o Supabase tiver `numero` + índice único com `vendedor_codigo`, usa UPSERT
-/// - Se NÃO tiver, tenta localizar por (numero,vendedor_codigo) e faz UPDATE por id; se não achar, INSERT
-/// Em todos os casos, aplica o retorno no SQLite e LIMPA duplicados locais.
-/// ***E preserva sempre o `assinatura_path` local***.
-/// Roda sob [comTravaDePedidos].
-Future<void> salvarPedidoSupabase(Map<String, dynamic> pedido) =>
-    comTravaDePedidos(() => _salvarPedidoSupabase(pedido));
+/// Campos que nunca vão ao servidor: controle local, colunas que o servidor
+/// não tem, e as de auditoria (o servidor é quem preenche).
+const List<String> _camposForaDoPayload = [
+  'id', // id é do servidor
+  'cliente_nome_fantasia',
+  'cliente_whatsapp',
+  'cliente_email',
+  'assinatura_path', // caminho local da assinatura
+  'pendente_envio',
+  'so_local',
+  'erro_envio',
+  ..._colunasAuditoria,
+];
 
-Future<void> _salvarPedidoSupabase(Map<String, dynamic> pedido) async {
-  try {
-    // 🔴 GARANTE O CLIENTE NO SUPABASE E USA O ID REMOTO
-    final int clienteIdRemoto = await ensureClienteSupabaseId(pedido);
+/// Monta o payload do pedido para o servidor a partir do mapa local (tela ou
+/// linha do SQLite). Leva `id_aparelho` e `status` como estão (salvo,
+/// cancelado ou finalizado). `cliente_id` é trocado pelo id remoto no envio.
+Map<String, dynamic> montarPayloadPedido(Map<String, dynamic> pedido) {
+  final ped = <String, dynamic>{...pedido};
+  for (final c in _camposForaDoPayload) {
+    ped.remove(c);
+  }
 
-    // Clona e limpa campos não enviados ao Supabase (pois não existem no seu schema)
-    final ped = <String, dynamic>{...pedido};
-    ped.remove('id'); // id é do servidor
-    ped.remove('cliente_nome_fantasia');
-    ped.remove('cliente_whatsapp');
-    ped.remove('cliente_email');
-    ped.remove('assinatura_path'); // 👈 NÃO enviar essa coluna ao servidor
-    ped.remove('pendente_envio'); // controle local, não existe no servidor
-
-    // Força usar o id remoto válido (evita 23503)
-    ped['cliente_id'] = clienteIdRemoto;
-
-    // produtos: aceita String (JSON) ou List
-    if (ped['produtos'] is! String && ped['produtos'] is! List) {
+  // produtos: lista JSON (jsonb). A linha do SQLite guarda texto JSON.
+  final produtos = ped['produtos'];
+  if (produtos is String) {
+    try {
+      final d = jsonDecode(produtos);
+      ped['produtos'] = d is List ? d : [];
+    } catch (_) {
       ped['produtos'] = [];
     }
+  } else if (produtos is! List) {
+    ped['produtos'] = [];
+  }
 
-    // assinatura → base64 (bytea) se houver
-    final assinaturaB64 = _toBase64(ped['assinatura']);
-    if (assinaturaB64 != null) {
-      ped['assinatura'] = assinaturaB64;
-    } else {
-      ped.remove('assinatura');
+  // assinatura → base64 (bytea) se houver
+  final assinaturaB64 = _toBase64(ped['assinatura']);
+  if (assinaturaB64 != null) {
+    ped['assinatura'] = assinaturaB64;
+  } else {
+    ped.remove('assinatura');
+  }
+
+  // datahora ISO-8601 UTC
+  if (ped['datahora'] is DateTime) {
+    ped['datahora'] = (ped['datahora'] as DateTime).toUtc().toIso8601String();
+  }
+  return ped;
+}
+
+/// Grava o payload no Supabase e devolve a linha resultante (o eco), ou null.
+/// - Garante o cliente (FK) e usa o id remoto dele.
+/// - Se o Supabase tiver `numero` + índice único com `vendedor_codigo`, usa UPSERT
+/// - Se NÃO tiver, tenta localizar por (numero,vendedor_codigo) e faz UPDATE por id; se não achar, INSERT
+Future<Map<String, dynamic>?> _gravarPedidoNoSupabase(Map<String, dynamic> payload) async {
+  final ped = <String, dynamic>{...payload};
+
+  // 🔴 GARANTE O CLIENTE NO SUPABASE E USA O ID REMOTO (evita 23503)
+  ped['cliente_id'] = await ensureClienteSupabaseId(ped);
+
+  Map<String, dynamic>? remoto; // linha resultante (insert/update/upsert)
+
+  // -------- Tentativa A: UPSERT por (numero,vendedor_codigo)
+  final temNumero = (ped['numero'] != null && '${ped['numero']}'.isNotEmpty);
+  final temVend = (ped['vendedor_codigo'] != null && '${ped['vendedor_codigo']}'.isNotEmpty);
+
+  if (temNumero && temVend) {
+    try {
+      remoto = await supabase
+          .from('pedidos')
+          .upsert(_stripNulls(ped), onConflict: 'numero,vendedor_codigo')
+          .select()
+          .maybeSingle();
+    } catch (e) {
+      final msg = e.toString();
+      final noConstraint = msg.contains('no unique or exclusion constraint') ||
+          (msg.contains('does not exist') && (msg.contains('numero') || msg.contains('vendedor_codigo')));
+      if (!noConstraint) {
+        rethrow; // erro real de rede ou validação
+      }
+      // vai para Tentativa B
     }
+  }
 
-    // datahora ISO-8601 UTC
-    if (ped['datahora'] is DateTime) {
-      ped['datahora'] = (ped['datahora'] as DateTime).toUtc().toIso8601String();
-    }
+  // -------- Tentativa B: procurar por (numero,vendedor_codigo) e UPDATE
+  if (remoto == null && temNumero && temVend) {
+    try {
+      final existente = await supabase
+          .from('pedidos')
+          .select('id')
+          .eq('numero', ped['numero'])
+          .eq('vendedor_codigo', ped['vendedor_codigo'])
+          .maybeSingle();
 
-    Map<String, dynamic>? remoto; // linha resultante (insert/update/upsert)
-
-    // -------- Tentativa A: UPSERT por (numero,vendedor_codigo)
-    final temNumero = (ped['numero'] != null && '${ped['numero']}'.isNotEmpty);
-    final temVend = (ped['vendedor_codigo'] != null && '${ped['vendedor_codigo']}'.isNotEmpty);
-
-    if (temNumero && temVend) {
-      try {
+      if (existente != null && existente['id'] != null) {
+        final idSrv = existente['id'];
         remoto = await supabase
             .from('pedidos')
-            .upsert(_stripNulls(ped), onConflict: 'numero,vendedor_codigo')
+            .update(_stripNulls(ped))
+            .eq('id', idSrv)
             .select()
             .maybeSingle();
-      } catch (e) {
-        final msg = e.toString();
-        final noConstraint = msg.contains('no unique or exclusion constraint') ||
-            (msg.contains('does not exist') && (msg.contains('numero') || msg.contains('vendedor_codigo')));
-        if (!noConstraint) {
-          rethrow; // erro real de rede ou validação
-        }
-        // vai para Tentativa B
+      }
+    } catch (_) {
+      // segue para Tentativa C
+    }
+  }
+
+  // -------- Tentativa C: INSERT normal
+  remoto ??= await supabase.from('pedidos').insert(_stripNulls(ped)).select().maybeSingle();
+  return remoto;
+}
+
+/// Grava o payload no servidor e devolve o eco. Trocável nos testes.
+@visibleForTesting
+Future<Map<String, dynamic>?> Function(Map<String, dynamic> payload)
+    gravarPedidoNoServidor = _gravarPedidoNoSupabase;
+
+/// Salva/atualiza um pedido no Supabase (qualquer situação) e aplica o eco no
+/// SQLite, limpando duplicados locais. ***Preserva sempre o `assinatura_path`
+/// local***.
+/// - Sem id_aparelho (pendente da v16): ganha um, gravado antes do envio.
+/// - Pedido que ainda não chegou ao servidor: confere o número antes; se o
+///   servidor tem esse (numero, vendedor) com outro id_aparelho, lança
+///   [NumeroEmUso] sem enviar nada.
+/// Devolve o [ResultadoEco], ou null se o servidor não devolveu a linha (aí
+/// puxa os pedidos do vendedor). Roda sob [comTravaDePedidos].
+Future<ResultadoEco?> salvarPedidoSupabase(Map<String, dynamic> pedido) =>
+    comTravaDePedidos(() => _salvarPedidoSupabase(pedido));
+
+Future<ResultadoEco?> _salvarPedidoSupabase(Map<String, dynamic> pedidoOriginal) async {
+  try {
+    final pedido = await _garantirIdAparelho(pedidoOriginal);
+    final numero = pedido['numero']?.toString() ?? '';
+    final vend = pedido['vendedor_codigo']?.toString() ?? '';
+
+    if (!jaChegouAoServidor(pedido) && numero.isNotEmpty && vend.isNotEmpty) {
+      final existente = await buscarRemotoPorNumero(numero, vend);
+      if (existente != null &&
+          conflitoDeNumero(_texto(pedido['id_aparelho']), _texto(existente['id_aparelho']))) {
+        throw NumeroEmUso(numero, vend);
       }
     }
 
-    // -------- Tentativa B: procurar por (numero,vendedor_codigo) e UPDATE
-    if (remoto == null && temNumero && temVend) {
-      try {
-        final existente = await supabase
-            .from('pedidos')
-            .select('id')
-            .eq('numero', ped['numero'])
-            .eq('vendedor_codigo', ped['vendedor_codigo'])
-            .maybeSingle();
-
-        if (existente != null && existente['id'] != null) {
-          final idSrv = existente['id'];
-          remoto = await supabase
-              .from('pedidos')
-              .update(_stripNulls(ped))
-              .eq('id', idSrv)
-              .select()
-              .maybeSingle();
-        }
-      } catch (_) {
-        // segue para Tentativa C
-      }
-    }
-
-    // -------- Tentativa C: INSERT normal
-    remoto ??= await supabase.from('pedidos').insert(_stripNulls(ped)).select().maybeSingle();
+    final remoto = await gravarPedidoNoServidor(montarPayloadPedido(pedido));
 
     // Aplicar no SQLite e LIMPAR duplicados (se a cópia local não mudou
     // enquanto o envio estava no ar)
     if (remoto != null) {
-      await aplicarEcoDoServidor(enviado: pedido, remoto: remoto);
-    } else {
-      // Último recurso: puxa do servidor os pedidos do vendedor
-      final vend = (pedido['vendedor_codigo'] ?? '').toString();
-      if (vend.isNotEmpty) await sincronizarPedidos(vendedorCodigo: vend);
+      return await aplicarEcoDoServidor(enviado: pedido, remoto: remoto);
     }
+    // Último recurso: puxa do servidor os pedidos do vendedor
+    if (vend.isNotEmpty) await sincronizarPedidos(vendedorCodigo: vend);
+    return null;
+  } on NumeroEmUso {
+    rethrow; // não é erro de envio: quem chamou marca erro_envio = 'numero'
   } catch (e) {
     // ignore: avoid_print
     print('❌ Erro ao salvar pedido no Supabase: $e');
@@ -596,6 +836,20 @@ Future<void> _salvarPedidoSupabase(Map<String, dynamic> pedido) async {
 }
 
 // ---------------------- Eco do servidor no SQLite ----------------------
+
+enum ResultadoEco {
+  /// O eco foi gravado no SQLite (o servidor aceitou o que foi enviado).
+  aplicado,
+
+  /// A cópia local mudou com o envio no ar: o eco é descartado e a edição
+  /// continua pendente.
+  edicaoLocalMaisNova,
+
+  /// O servidor tem o pedido finalizado/cancelado e diferente do enviado (o
+  /// gatilho de proteção agiu). A versão local vai para `pedidos_descartados`
+  /// e o eco é gravado.
+  servidorFechou,
+}
 
 double _comoDouble(dynamic v) =>
     (v is num) ? v.toDouble() : double.tryParse('${v ?? ''}') ?? 0.0;
@@ -607,17 +861,74 @@ bool _mesmaVersao(Map<String, dynamic> local, Map<String, dynamic> enviado) =>
     '${local['status'] ?? ''}' == '${enviado['status'] ?? ''}' &&
     _comoDouble(local['total']) == _comoDouble(enviado['total']);
 
+/// Itens normalizados (nome + quantidade), em ordem; null se não der para ler.
+List<String>? _itensNormalizados(dynamic produtos) {
+  dynamic lista = produtos;
+  if (lista is String) {
+    try {
+      lista = jsonDecode(lista);
+    } catch (_) {
+      return null;
+    }
+  }
+  if (lista == null) return const [];
+  if (lista is! List) return null;
+  final out = <String>[];
+  for (final it in lista) {
+    if (it is! Map) return null;
+    out.add('${(it['nome'] ?? '').toString().trim()}|${_comoDouble(it['quantidade'])}');
+  }
+  out.sort();
+  return out;
+}
+
+/// O servidor guardou o que foi enviado? Situação, total e itens.
+bool _mesmoConteudo(Map<String, dynamic> enviado, Map<String, dynamic> remoto) {
+  if ('${enviado['status'] ?? ''}' != '${remoto['status'] ?? ''}') return false;
+  if ((_comoDouble(enviado['total']) - _comoDouble(remoto['total'])).abs() > 0.005) {
+    return false;
+  }
+  final a = _itensNormalizados(enviado['produtos']);
+  final b = _itensNormalizados(remoto['produtos']);
+  if (a == null || b == null) return true; // sem como comparar: fica o resto
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// Decide o que fazer com o eco [remoto] do envio de [enviado], dada a cópia
+/// [local] que está no SQLite agora.
+ResultadoEco decidirEco(
+  Map<String, dynamic> local,
+  Map<String, dynamic> enviado,
+  Map<String, dynamic> remoto,
+) {
+  if (!_mesmaVersao(local, enviado)) return ResultadoEco.edicaoLocalMaisNova;
+  final st = '${remoto['status'] ?? ''}';
+  if ((st == 'finalizado' || st == 'cancelado') && !_mesmoConteudo(enviado, remoto)) {
+    return ResultadoEco.servidorFechou;
+  }
+  return ResultadoEco.aplicado;
+}
+
 /// Grava no SQLite a linha devolvida pelo servidor depois de enviar [enviado].
-/// Numa transação, relê a cópia local (mesmo id ou mesmo numero+vendedor): se
-/// ela mudou depois do envio (edição feita com o envio no ar), o eco antigo é
-/// descartado e a edição fica como está, com seu `pendente_envio`.
-/// Devolve `true` se aplicou o eco. Preserva sempre o `assinatura_path` local.
-Future<bool> aplicarEcoDoServidor({
+/// Numa transação, relê a cópia local (mesmo id ou mesmo numero+vendedor) e
+/// decide com [decidirEco]:
+/// - [ResultadoEco.edicaoLocalMaisNova]: o eco é descartado e a edição fica
+///   como está, com seu `pendente_envio`;
+/// - [ResultadoEco.servidorFechou]: a cópia local vai para
+///   `pedidos_descartados` ('fechado no Controle') ANTES de o eco ser gravado;
+/// - [ResultadoEco.aplicado]: o eco é gravado.
+/// O eco gravado leva id_aparelho (o do servidor, senão o local), as cópias
+/// de auditoria, `so_local = 0` e `erro_envio = null`. Preserva sempre o
+/// `assinatura_path` local.
+Future<ResultadoEco> aplicarEcoDoServidor({
   required Map<String, dynamic> enviado,
   required Map<String, dynamic> remoto,
 }) async {
-  final int? idLocalAntigo =
-      (enviado['id'] is int) ? enviado['id'] as int : int.tryParse('${enviado['id'] ?? ''}');
+  final int? idLocalAntigo = _idDe(enviado);
   final String? assinaturaPathLocal = enviado['assinatura_path']?.toString();
   final numero = enviado['numero']?.toString();
   final vend = enviado['vendedor_codigo']?.toString();
@@ -659,40 +970,90 @@ Future<bool> aplicarEcoDoServidor({
 
   final db = await getDb();
   return db.transaction((txn) async {
-    final locais = await txn.query(
-      'pedidos',
-      where: 'id = ? OR (numero = ? AND vendedor_codigo = ?)',
-      whereArgs: [idLocalAntigo ?? -1, numero, vend],
-    );
-    if (locais.any((l) => !_mesmaVersao(Map<String, dynamic>.from(l), enviado))) {
-      // ignore: avoid_print
-      print('⏭️ Pedido ${numero ?? idLocalAntigo} mudou durante o envio; eco do servidor ignorado.');
-      return false;
+    final locais = [
+      for (final l in await txn.query(
+        'pedidos',
+        where: 'id = ? OR (numero = ? AND vendedor_codigo = ?)',
+        whereArgs: [idLocalAntigo ?? -1, numero, vend],
+      ))
+        Map<String, dynamic>.from(l),
+    ];
+
+    var resultado = ResultadoEco.aplicado;
+    for (final l in locais.isEmpty ? [enviado] : locais) {
+      final d = decidirEco(l, enviado, remoto);
+      if (d == ResultadoEco.edicaoLocalMaisNova) {
+        // ignore: avoid_print
+        print('⏭️ Pedido ${numero ?? idLocalAntigo} mudou durante o envio; eco do servidor ignorado.');
+        return d;
+      }
+      if (d == ResultadoEco.servidorFechou) resultado = d;
     }
+
+    if (resultado == ResultadoEco.servidorFechou) {
+      // A versão local perdeu para a do servidor: nunca some sem cópia.
+      for (final l in locais.isEmpty ? [enviado] : locais) {
+        await guardarVersaoDescartada(l, 'fechado no Controle', em: txn);
+      }
+      // ignore: avoid_print
+      print('🔒 Pedido ${numero ?? idLocalAntigo} já fechado no Controle; versão local guardada.');
+    }
+
+    String? idAparelhoLocal = _texto(enviado['id_aparelho']);
+    for (final l in locais) {
+      idAparelhoLocal ??= _texto(l['id_aparelho']);
+    }
+    mapLocal.addAll(_camposDoServidor(remoto, idAparelhoLocal));
 
     await txn.insert('pedidos', mapLocal, conflictAlgorithm: ConflictAlgorithm.replace);
     // Limpa duplicados locais (apaga o antigo e qualquer outro com mesma chave)
     await _limparDuplicadosLocais(txn: txn, remoto: remoto, idLocalAntigo: idLocalAntigo);
-    return true;
+    return resultado;
   });
 }
 
 // ---------------------- Gravar e enviar (telas de pedido) ----------------------
 
 enum ResultadoGravacao {
-  /// Rascunho gravado no aparelho (não vai ao servidor).
+  /// Rascunho antigo só do aparelho (`so_local = 1`): gravado, não enviado.
   rascunho,
 
-  /// Finalizado, gravado e enviado.
+  /// Gravado e enviado (qualquer situação: aberto, finalizado ou cancelado).
   enviado,
 
-  /// Finalizado e gravado no aparelho; o envio falhou e fica pendente.
+  /// Gravado no aparelho; o envio falhou (rede) e fica pendente.
   pendente,
+
+  /// Enviado, mas o pedido já estava fechado (finalizado/cancelado) no
+  /// Controle: vale a versão do servidor; a local foi guardada em
+  /// `pedidos_descartados`.
+  fechadoNoControle,
+
+  /// O número já é de outro pedido no servidor: fica pendente com
+  /// `erro_envio = 'numero'` até o vendedor trocar o número.
+  numeroEmUso,
+}
+
+/// Linha do SQLite do pedido recém-gravado (por id, senão por numero+vendedor).
+Future<Map<String, dynamic>?> _linhaGravada(Map<String, dynamic> pedido) async {
+  final db = await getDb();
+  final id = _idDe(pedido);
+  final r = id != null
+      ? await db.query('pedidos', where: 'id = ?', whereArgs: [id], limit: 1)
+      : await db.query('pedidos',
+          where: 'numero = ? AND vendedor_codigo = ?',
+          whereArgs: [pedido['numero']?.toString(), pedido['vendedor_codigo']?.toString()],
+          limit: 1);
+  return r.isEmpty ? null : Map<String, dynamic>.from(r.first);
 }
 
 /// Grava o pedido no SQLite **na hora** (fora da trava: nada espera a rede) e,
-/// se finalizado, tenta enviar. Falha de envio não é erro: o pedido já está
-/// salvo com `pendente_envio = 1`. Só lança se a gravação local falhar.
+/// se não for rascunho antigo (`so_local`), tenta enviar. Falha de envio não é
+/// erro: o pedido já está salvo com `pendente_envio = 1`. Só lança se a
+/// gravação local falhar.
+///
+/// O valor que [enviar] devolve é lido: [salvarPedidoSupabase] devolve o
+/// [ResultadoEco]; qualquer outro valor (ou nenhum) conta como enviado.
 Future<ResultadoGravacao> gravarPedidoEEnviar(
   Map<String, dynamic> pedido, {
   required bool novo,
@@ -703,10 +1064,30 @@ Future<ResultadoGravacao> gravarPedidoEEnviar(
   } else {
     await atualizarPedidoLocal(pedido);
   }
-  if ((pedido['status'] ?? '').toString() != 'finalizado') return ResultadoGravacao.rascunho;
+  final gravado = await _linhaGravada(pedido);
+  final soLocal = gravado?['so_local'] ?? pedido['so_local'];
+  if (soLocal == 1 || soLocal == true || '$soLocal' == '1') {
+    return ResultadoGravacao.rascunho;
+  }
+
+  // Envia com o id e o id_aparelho que ficaram no aparelho (o mapa da tela
+  // de pedido novo não tem nenhum dos dois).
+  final envio = <String, dynamic>{
+    ...pedido,
+    if (gravado?['id'] != null) 'id': gravado!['id'],
+    if (_texto(gravado?['id_aparelho']) != null) 'id_aparelho': gravado!['id_aparelho'],
+  };
   try {
-    await enviar(pedido);
+    // Future<void> é Future<Object?>: lê o ResultadoEco de salvarPedidoSupabase.
+    final Future<Object?> envioNoAr = enviar(envio);
+    final r = await envioNoAr;
+    if (r == ResultadoEco.servidorFechou) return ResultadoGravacao.fechadoNoControle;
     return ResultadoGravacao.enviado;
+  } on NumeroEmUso catch (e) {
+    // ignore: avoid_print
+    print('⚠️ $e');
+    await _marcarNumeroEmUso(envio);
+    return ResultadoGravacao.numeroEmUso;
   } catch (e) {
     // ignore: avoid_print
     print('⚠️ Pedido ${pedido['numero']} salvo no aparelho; envio pendente: $e');

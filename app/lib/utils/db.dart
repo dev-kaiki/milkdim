@@ -499,8 +499,13 @@ bool jaChegouAoServidor(Map<String, dynamic> pedido) {
 }
 
 /// Guarda uma cópia (JSON) de uma versão local que foi substituída/descartada.
-Future<void> guardarVersaoDescartada(Map<String, dynamic> pedido, String motivo) async {
-  final db = await getDb();
+/// Dentro de uma transação, passe-a em [em] (usar o banco direto travaria).
+Future<void> guardarVersaoDescartada(
+  Map<String, dynamic> pedido,
+  String motivo, {
+  sq.DatabaseExecutor? em,
+}) async {
+  final db = em ?? await getDb();
   await db.insert('pedidos_descartados', {
     'descartado_em': DateTime.now().toUtc().toIso8601String(),
     'motivo': motivo,

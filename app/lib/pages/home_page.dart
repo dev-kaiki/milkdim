@@ -128,7 +128,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _enviarPendentes({bool silencioso = false}) async {
     if (_enviando || _codigo.isEmpty) return;
     setState(() => _enviando = true);
-    ({int enviados, int falhas})? r;
+    ({int enviados, int falhas, int numeroEmUso})? r;
     try {
       r = await subirPedidosPendentes(vendedorCodigo: _codigo);
     } catch (e) {

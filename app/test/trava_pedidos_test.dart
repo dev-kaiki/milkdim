@@ -149,9 +149,9 @@ void main() {
     expect(rows.single['pendente_envio'], 1);
   });
 
-  test('rascunho não é enviado', () async {
+  test('rascunho antigo (so_local) não é enviado', () async {
     var enviou = false;
-    final r = await gravarPedidoEEnviar(pedido(status: 'salvo'),
+    final r = await gravarPedidoEEnviar({...pedido(status: 'salvo'), 'so_local': 1},
         novo: true, enviar: (p) async => enviou = true);
     expect(r, ResultadoGravacao.rascunho);
     expect(enviou, isFalse);
@@ -181,7 +181,7 @@ void main() {
       remoto: {...pedido(), 'id': 55},
     );
 
-    expect(aplicou, isFalse);
+    expect(aplicou, ResultadoEco.edicaoLocalMaisNova);
     final p = await porId(idLocal);
     expect(p, isNotNull, reason: 'a edição local continua lá');
     expect(p!['total'], 25.0);
@@ -199,7 +199,7 @@ void main() {
       remoto: {...pedido(), 'id': 55, 'assinatura_path': null},
     );
 
-    expect(aplicou, isTrue);
+    expect(aplicou, ResultadoEco.aplicado);
     expect(await porId(idLocal), isNull, reason: 'id local antigo sai');
     final p = await porId(55);
     expect(p!['pendente_envio'], 0);
