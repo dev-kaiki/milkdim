@@ -14,6 +14,7 @@ import 'package:milkdim_admin/pages/home_page.dart';
 import 'package:milkdim_admin/pages/login_page.dart';
 import 'package:milkdim_admin/tabs/clientes_tab.dart';
 import 'package:milkdim_admin/tabs/pedidos_tab.dart';
+import 'package:milkdim_admin/tabs/producao_tab.dart';
 import 'package:milkdim_admin/tabs/produtos_tab.dart';
 import 'package:milkdim_admin/tabs/vendedores_tab.dart';
 import 'package:milkdim_ui/testing/md_visual.dart';
@@ -142,7 +143,45 @@ Future<List<Cliente>> _clientes() async => [
       ),
     ];
 
+Future<List<Pedido>> _emAberto() async {
+  final agora = DateTime.now();
+  return [
+    Pedido(
+      id: 1041, numero: '317', status: 'salvo',
+      vendedorCodigo: '0002', vendedorNome: 'Maria Aparecida Santos',
+      clienteNome: 'Mercado Bom Preço',
+      enviadoEm: agora.subtract(const Duration(hours: 5)),
+      itens: const [
+        PedidoItem(nome: 'Requeijão cremoso 200 g', preco: 7.45, quantidade: 20),
+        PedidoItem(nome: 'Doce de leite pastoso 400 g', preco: 12.80, quantidade: 10),
+      ],
+      total: 277.00,
+    ),
+    Pedido(
+      id: 1043, numero: '319', status: 'salvo',
+      vendedorCodigo: '0001', vendedorNome: 'João Pereira',
+      clienteNome: 'Padaria Pão Quente',
+      enviadoEm: agora.subtract(const Duration(hours: 2)),
+      alteradoEm: agora.subtract(const Duration(minutes: 25)),
+      itens: const [
+        PedidoItem(nome: 'Doce de leite pastoso 400 g', preco: 12.80, quantidade: 6),
+        PedidoItem(nome: 'Manteiga com sal 200 g', preco: 11.90, quantidade: 12),
+      ],
+      total: 219.60,
+    ),
+    Pedido(
+      id: 1044, numero: '320', status: 'salvo',
+      vendedorCodigo: '0005', vendedorNome: 'Rafael Souza',
+      clienteNome: 'Lanchonete da Praça',
+      enviadoEm: agora.subtract(const Duration(minutes: 20)),
+      itens: const [PedidoItem(nome: 'Manteiga com sal 200 g', preco: 11.90, quantidade: 8)],
+      total: 95.20,
+    ),
+  ];
+}
+
 List<Widget> _abas() => [
+      const ProducaoTab(carregar: _emAberto),
       const VendedoresTab(carregar: _vendedores),
       const ProdutosTab(carregar: _produtos),
       const PedidosTab(carregar: _pedidos),
@@ -152,7 +191,7 @@ List<Widget> _abas() => [
 Widget _home(int indice) =>
     HomePage(abasDeTeste: _abas(), indiceInicial: indice, key: ValueKey('home$indice'));
 
-const _nomes = ['vendedores', 'produtos', 'pedidos', 'clientes'];
+const _nomes = ['producao', 'vendedores', 'produtos', 'pedidos', 'clientes'];
 
 void main() {
   setUpAll(carregarFontesReais);
@@ -177,20 +216,35 @@ void main() {
   }
 
   testWidgets('home pedidos windows pequeno (trilho recolhido)', (tester) async {
-    await capturar(tester, _home(2), 'home_pedidos_windows_1024', tamanho: _windowsPequeno);
+    await capturar(tester, _home(3), 'home_pedidos_windows_1024', tamanho: _windowsPequeno);
   });
 
   testWidgets('home clientes vazio', (tester) async {
     await capturar(
       tester,
       HomePage(abasDeTeste: [
+        const ProducaoTab(carregar: _emAberto),
         const VendedoresTab(carregar: _vendedores),
         const ProdutosTab(carregar: _produtos),
         const PedidosTab(carregar: _pedidos),
         ClientesTab(carregar: () async => <Cliente>[]),
-      ], indiceInicial: 3),
+      ], indiceInicial: 4),
       'home_clientes_vazio_windows',
       tamanho: _windows,
     );
+  });
+
+  testWidgets('producao estreita', (tester) async {
+    await capturar(tester, const Scaffold(body: ProducaoTab(carregar: _emAberto)), 'producao_estreita',
+        tamanho: _celular);
+  });
+
+  testWidgets('producao larga', (tester) async {
+    await capturar(tester, _home(0), 'producao_larga', tamanho: _windows);
+  });
+
+  testWidgets('pedidos com filtro', (tester) async {
+    await capturar(tester, const Scaffold(body: PedidosTab(carregar: _pedidos)), 'pedidos_filtro',
+        tamanho: _celular);
   });
 }

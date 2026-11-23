@@ -34,6 +34,9 @@ class _PedidosTabState extends State<PedidosTab> {
   List<Pedido> _pedidos = [];
   List<Pedido> _filtered = [];
 
+  /// Situação escolhida no filtro: null = todos; senão o status ('salvo', ...).
+  String? _situacao;
+
   @override
   void initState() {
     super.initState();
@@ -64,7 +67,8 @@ class _PedidosTabState extends State<PedidosTab> {
           'id, cliente_id, cliente_nome, cliente_nome_fantasia, '
               'cliente_cidade, cliente_telefone, cliente_whatsapp, cliente_email, cliente_cpf_cnpj, '
               'status, datahora, total, vendedor_codigo, vendedor_nome, '
-              'numero, produtos',
+              'numero, produtos, enviado_em, alterado_em, finalizado_em, finalizado_por, '
+              'finalizado_manual, cancelado_em, cancelado_por',
         )
             .order('datahora', ascending: false);
 
@@ -76,8 +80,8 @@ class _PedidosTabState extends State<PedidosTab> {
       if (!mounted) return;
       setState(() {
         _pedidos = list;
-        _filtered = list;
       });
+      _aplicarFiltros();
     } catch (e) {
       if (!mounted) return;
       showMdSnack(context, 'Erro ao carregar pedidos: $e', tipo: MdTipo.erro);
@@ -157,18 +161,20 @@ class _PedidosTabState extends State<PedidosTab> {
 
   // -------------------- SEARCH --------------------
 
-  void _onSearch() {
+  void _onSearch() => _aplicarFiltros();
+
+  /// Aplica busca + filtro de situação sobre a lista já carregada.
+  void _aplicarFiltros() {
     final q = _searchCtrl.text.trim().toLowerCase();
-    if (q.isEmpty) {
-      setState(() => _filtered = List.of(_pedidos));
-      return;
-    }
     setState(() {
       _filtered = _pedidos.where((p) {
+        if (_situacao != null && p.status != _situacao) return false;
+        if (q.isEmpty) return true;
         String s(Object? x) => (x ?? '').toString().toLowerCase();
         return s(p.clienteNome).contains(q) ||
             s(p.clienteNomeFantasia).contains(q) ||
             p.status.toLowerCase().contains(q) ||
+            p.situacaoTexto.toLowerCase().contains(q) ||
             s(p.numero).contains(q) ||
             p.id.toString().contains(q) ||
             s(p.vendedorCodigo).contains(q) ||
@@ -198,16 +204,22 @@ class _PedidosTabState extends State<PedidosTab> {
     return 'R\$ $s';
   }
 
-  /// Finalizado = sucesso, cancelado = erro, pendente/aguardando = atenção, demais = info.
+  /// Em aberto = info, finalizado = sucesso, cancelado = neutro, demais = atenção.
   MdTipo _statusTipo(String status) {
-    final s = status.toLowerCase();
-    if (s.contains('final')) return MdTipo.sucesso;
-    if (s.contains('cancel')) return MdTipo.erro;
-    if (s.contains('pend') || s.contains('aguard')) return MdTipo.atencao;
-    return MdTipo.info;
+    switch (status) {
+      case 'salvo':
+        return MdTipo.info;
+      case 'finalizado':
+        return MdTipo.sucesso;
+      case 'cancelado':
+        return MdTipo.neutro;
+      default:
+        return MdTipo.atencao;
+    }
   }
 
-  Widget _statusChip(String status) => MdStatusChip(tipo: _statusTipo(status), texto: status);
+  Widget _statusChip(Pedido p) =>
+      MdStatusChip(tipo: _statusTipo(p.status), texto: p.situacaoTexto);
 
   String _maybeJoin(List<String?> parts) {
     final filt = parts.where((e) => e != null && e.trim().isNotEmpty).cast<String>().toList();
@@ -385,7 +397,7 @@ class _PedidosTabState extends State<PedidosTab> {
                           runSpacing: MdSpace.sm,
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            _statusChip(ped.status),
+                            _statusChip(ped),
                             if ((ped.numero ?? '').isNotEmpty)
                               Chip(label: Text('Nº ${ped.numero}')),
                             Chip(label: Text('ID ${ped.id}')),
@@ -482,6 +494,29 @@ class _PedidosTabState extends State<PedidosTab> {
                         _infoRow('Código', ped.vendedorCodigo),
                         _infoRow('Nome', ped.vendedorNome),
 
+                        // SITUAÇÃO / AUDITORIA
+                        const SizedBox(height: MdSpace.lg),
+                        const Divider(),
+                        const SizedBox(height: MdSpace.md),
+                        const MdSectionHeader(titulo: 'Situação'),
+                        _infoRow('Situação', ped.situacaoTexto),
+                        _infoRow('Enviado em', ped.enviadoEm),
+                        _infoRow('Alterado em', ped.alteradoEm),
+                        _infoRow(
+                          'Finalizado em',
+                          ped.finalizadoEm == null
+                              ? null
+                              : _dateFmt.format(ped.finalizadoEm!.toLocal()),
+                        ),
+                        _infoRow(
+                          'Finalizado por',
+                          ped.finalizadoPor == null
+                              ? null
+                              : '${ped.finalizadoPor}${ped.finalizadoManual ? ' (manual)' : ''}',
+                        ),
+                        _infoRow('Cancelado em', ped.canceladoEm),
+                        _infoRow('Cancelado por', ped.canceladoPor),
+
                         // DADOS BRUTOS / TODAS AS COLUNAS
                         const SizedBox(height: MdSpace.lg),
                         const Divider(),
@@ -518,7 +553,6 @@ class _PedidosTabState extends State<PedidosTab> {
   Widget _cartao(Pedido p, {required bool largo}) {
     final tt = Theme.of(context).textTheme;
     final cliente = (p.clienteNome ?? p.clienteNomeFantasia ?? '—').toString();
-    final status = p.status;
     final numero = (p.numero ?? '').toString();
     final cidade = p.clienteCidade;
     final contatos = _maybeJoin([p.clienteTelefone, p.clienteWhatsapp, p.clienteEmail]);
@@ -550,7 +584,7 @@ class _PedidosTabState extends State<PedidosTab> {
       runSpacing: MdSpace.sm,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        _statusChip(status),
+        _statusChip(p),
         if (numero.isNotEmpty) LinhaInfo(icone: Icons.tag, texto: 'Nº $numero'),
         LinhaInfo(icone: Icons.shopping_basket_outlined, texto: 'Itens: ${p.totalItens}'),
         LinhaInfo(icone: Icons.schedule, texto: _fmtData(p.datahora)),
@@ -699,6 +733,28 @@ class _PedidosTabState extends State<PedidosTab> {
                 icon: iconeAtualizar,
               ),
           ],
+        ),
+
+        // Situação
+        Padding(
+          padding: const EdgeInsets.fromLTRB(MdSpace.lg, 0, MdSpace.lg, MdSpace.sm),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: 'todos', label: Text('Todos')),
+                ButtonSegment(value: 'salvo', label: Text('Em aberto')),
+                ButtonSegment(value: 'finalizado', label: Text('Finalizados')),
+                ButtonSegment(value: 'cancelado', label: Text('Cancelados')),
+              ],
+              selected: {_situacao ?? 'todos'},
+              onSelectionChanged: (v) {
+                _situacao = v.first == 'todos' ? null : v.first;
+                _aplicarFiltros();
+              },
+            ),
+          ),
         ),
 
         // 📋 lista

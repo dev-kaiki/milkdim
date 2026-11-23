@@ -9,6 +9,7 @@ import '../services/auth_admin.dart';
 // Tabs sem conflito
 import '../tabs/vendedores_tab.dart';
 import '../tabs/clientes_tab.dart';
+import '../tabs/producao_tab.dart';
 
 // Use aliases para separar os nomes
 import '../tabs/produtos_tab.dart' as prod;
@@ -21,12 +22,12 @@ const double _larguraTrilho = 900;
 const double _larguraTrilhoEstendido = 1200;
 
 class HomePage extends StatefulWidget {
-  /// Só para captura visual (sem Supabase): troca as quatro abas e desliga as
+  /// Só para captura visual (sem Supabase): troca as cinco abas e desliga as
   /// checagens de sessão. Nulo (padrão) mantém o comportamento normal.
   @visibleForTesting
   final List<Widget>? abasDeTeste;
 
-  /// Aba aberta ao montar (padrão: Vendedores).
+  /// Aba aberta ao montar (padrão: Produção).
   final int indiceInicial;
 
   const HomePage({super.key, this.abasDeTeste, this.indiceInicial = 0});
@@ -43,6 +44,7 @@ class _HomePageState extends State<HomePage> {
 
   late final List<Widget> _tabs = widget.abasDeTeste ??
       [
+        const ProducaoTab(),
         const VendedoresTab(),
         const prod.ProdutosTab(),
         const ped.PedidosTab(),
@@ -50,6 +52,7 @@ class _HomePageState extends State<HomePage> {
       ];
 
   static const List<String> _titles = [
+    'Produção',
     'Vendedores',
     'Produtos',
     'Pedidos',
@@ -57,6 +60,7 @@ class _HomePageState extends State<HomePage> {
   ];
 
   static const List<IconData> _tabIcons = [
+    Icons.factory_rounded,
     Icons.people_alt_rounded,
     Icons.shopping_bag_rounded,
     Icons.receipt_long_rounded,
