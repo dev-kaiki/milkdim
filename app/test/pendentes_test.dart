@@ -64,16 +64,16 @@ void main() {
 
   test('salvar finalizado marca pendente; salvo nao', () async {
     await salvarPedidoLocal({'numero': '10', 'status': 'finalizado', 'vendedor_codigo': '0003'});
-    await salvarPedidoLocal({'numero': '11', 'status': 'salvo', 'vendedor_codigo': '0003'});
+    await salvarPedidoLocal({'numero': '11', 'status': 'salvo', 'vendedor_codigo': '0003', 'so_local': 1});
     final pend = await listarPedidosPendentesEnvio('0003');
     expect(pend.length, 1);
     expect(pend.single['numero'], '10');
 
     final db = await getDb();
     final id11 = (await db.query('pedidos', where: "numero='11'")).single['id'];
-    await atualizarPedidoLocal({'id': id11, 'numero': '11', 'status': 'finalizado', 'vendedor_codigo': '0003'});
+    await atualizarPedidoLocal({'id': id11, 'numero': '11', 'status': 'finalizado', 'vendedor_codigo': '0003', 'so_local': 0});
     expect(await contarPedidosPendentesEnvio('0003'), 2);
-    await atualizarPedidoLocal({'id': id11, 'numero': '11', 'status': 'salvo', 'vendedor_codigo': '0003'});
+    await atualizarPedidoLocal({'id': id11, 'numero': '11', 'status': 'salvo', 'vendedor_codigo': '0003', 'so_local': 1});
     expect(await contarPedidosPendentesEnvio('0003'), 1);
   });
 
@@ -88,7 +88,7 @@ void main() {
 
   test('codigosComPendentesEnvio devolve {0003} quando so 0003 tem pendente', () async {
     await salvarPedidoLocal({'numero': '1', 'status': 'finalizado', 'vendedor_codigo': '0003'});
-    await salvarPedidoLocal({'numero': '2', 'status': 'salvo', 'vendedor_codigo': '0004'});
+    await salvarPedidoLocal({'numero': '2', 'status': 'salvo', 'vendedor_codigo': '0004', 'so_local': 1});
     expect(await codigosComPendentesEnvio(), {'0003'});
   });
 

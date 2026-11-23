@@ -66,7 +66,7 @@ void main() {
     });
 
     test('bloqueioLogin sem pendentes deixa qualquer um entrar', () async {
-      await salvarPedidoLocal({'numero': '1', 'status': 'salvo', 'vendedor_codigo': '0003'});
+      await salvarPedidoLocal({'numero': '1', 'status': 'salvo', 'vendedor_codigo': '0003', 'so_local': 1});
       expect(await bloqueioLogin('0004'), isNull);
     });
 

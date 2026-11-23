@@ -8,10 +8,12 @@ import 'package:sqflite/sqflite.dart' as sq;
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:convert/convert.dart' as hex_conv;
 
+import 'id_aparelho.dart';
+
 sq.Database? _db;
 
 /// ⬆️ aumente quando mudar o schema
-const _dbVersion = 16;
+const _dbVersion = 17;
 
 /// Faixa reservada para IDs de pedidos criados SOMENTE localmente (rascunhos).
 ///
@@ -157,9 +159,20 @@ Future<sq.Database> getDb() async {
           cliente_nome_fantasia TEXT,
           cliente_whatsapp TEXT,
           cliente_email TEXT,
-          pendente_envio INTEGER NOT NULL DEFAULT 0
+          pendente_envio INTEGER NOT NULL DEFAULT 0,
+          id_aparelho TEXT,
+          so_local INTEGER NOT NULL DEFAULT 0,
+          erro_envio TEXT,
+          enviado_em TEXT,
+          alterado_em TEXT,
+          finalizado_em TEXT,
+          finalizado_por TEXT,
+          finalizado_manual TEXT,
+          cancelado_em TEXT,
+          cancelado_por TEXT
         );
       ''');
+      await _criarTabelaDescartados(db);
 
       // Índices úteis
       await db.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_cliente_data ON pedidos(cliente_id, datahora);');
@@ -203,6 +216,15 @@ Future<sq.Database> getDb() async {
         );
         await _recriarVendedoresSemSenha(db);
       }
+      if (oldV < 17) {
+        // v17: pedido aberto/cancelado também sobe ao servidor; todo pedido
+        // ganha id_aparelho. Rascunhos antigos (nunca enviados) ficam so_local.
+        await _garantirSchemaV17(db);
+        await db.execute(
+          "UPDATE pedidos SET so_local = 1 "
+          "WHERE status = 'salvo' AND id >= $kLocalIdBase AND pendente_envio = 0",
+        );
+      }
     },
     onOpen: (db) async {
       await _ensureColumn(db, 'produtos', 'codigo', 'TEXT');
@@ -220,6 +242,7 @@ Future<sq.Database> getDb() async {
       // Garante coluna nova mesmo se a base já existia (idempotente)
       await _ensureColumn(db, 'pedidos', 'assinatura_path', 'TEXT');
       await _ensureColumn(db, 'pedidos', 'pendente_envio', 'INTEGER NOT NULL DEFAULT 0');
+      await _garantirSchemaV17(db);
 
       // Segurança extra: garante que rascunhos antigos estejam na faixa de id
       // reservada (caso o app tenha pulado o onUpgrade por algum motivo).
@@ -230,6 +253,36 @@ Future<sq.Database> getDb() async {
 }
 
 /// ---------- Utils de migração/colunas ----------
+
+Future<void> _criarTabelaDescartados(sq.DatabaseExecutor db) async {
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS pedidos_descartados (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      descartado_em TEXT,
+      motivo TEXT,
+      pedido_json TEXT
+    );
+  ''');
+}
+
+/// Colunas e tabela da v17 (idempotente).
+Future<void> _garantirSchemaV17(sq.Database db) async {
+  await _ensureColumn(db, 'pedidos', 'id_aparelho', 'TEXT');
+  await _ensureColumn(db, 'pedidos', 'so_local', 'INTEGER NOT NULL DEFAULT 0');
+  await _ensureColumn(db, 'pedidos', 'erro_envio', 'TEXT');
+  for (final c in const [
+    'enviado_em',
+    'alterado_em',
+    'finalizado_em',
+    'finalizado_por',
+    'finalizado_manual',
+    'cancelado_em',
+    'cancelado_por',
+  ]) {
+    await _ensureColumn(db, 'pedidos', c, 'TEXT');
+  }
+  await _criarTabelaDescartados(db);
+}
 
 Future<Set<String>> _getTableColumns(sq.Database db, String table) async {
   final info = await db.rawQuery('PRAGMA table_info($table)');
@@ -376,6 +429,85 @@ Future<void> salvarProdutoLocal(Map<String, dynamic> produto) async {
 
 /// -------- PEDIDOS --------
 
+/// Campos que só o app local controla: so_local, pendente_envio, id_aparelho
+/// (e, no REPLACE, os campos locais/cópias do servidor que não vieram no mapa).
+/// [map] precisa ter 'id'.
+Future<void> _aplicarCamposLocais(
+  sq.Database db,
+  Map<String, dynamic> map,
+  Map<String, dynamic> pedido, {
+  required bool replace,
+}) async {
+  final ex = await db.query('pedidos', where: 'id = ?', whereArgs: [map['id']], limit: 1);
+  final antigo = ex.isEmpty ? null : ex.first;
+
+  int soLocal;
+  if (pedido.containsKey('so_local') && pedido['so_local'] != null) {
+    final v = pedido['so_local'];
+    soLocal = (v == true || v == 1 || '$v' == '1') ? 1 : 0;
+  } else {
+    soLocal = (antigo?['so_local'] as num?)?.toInt() ?? 0;
+  }
+  map['so_local'] = soLocal;
+  map['pendente_envio'] = soLocal == 1 ? 0 : 1;
+
+  final guardado = antigo?['id_aparelho']?.toString() ?? '';
+  final vindo = pedido['id_aparelho']?.toString() ?? '';
+  map['id_aparelho'] = guardado.isNotEmpty
+      ? guardado
+      : (vindo.isNotEmpty ? vindo : novoIdAparelho());
+
+  if (replace && antigo != null) {
+    // INSERT OR REPLACE apagaria o que não está no mapa: preserva.
+    for (final c in const [
+      'erro_envio',
+      'enviado_em',
+      'alterado_em',
+      'finalizado_em',
+      'finalizado_por',
+      'finalizado_manual',
+      'cancelado_em',
+      'cancelado_por',
+    ]) {
+      if (pedido.containsKey(c)) {
+        map[c] = pedido[c]?.toString();
+      } else {
+        map[c] = antigo[c];
+      }
+    }
+  } else {
+    for (final c in const [
+      'erro_envio',
+      'enviado_em',
+      'alterado_em',
+      'finalizado_em',
+      'finalizado_por',
+      'finalizado_manual',
+      'cancelado_em',
+      'cancelado_por',
+    ]) {
+      if (pedido.containsKey(c)) map[c] = pedido[c]?.toString();
+    }
+  }
+}
+
+/// O pedido já existe no servidor (id serial baixo, fora da faixa local).
+bool jaChegouAoServidor(Map<String, dynamic> pedido) {
+  final raw = pedido['id'];
+  final id = raw is int ? raw : int.tryParse('${raw ?? ''}');
+  return id != null && id < kLocalIdBase;
+}
+
+/// Guarda uma cópia (JSON) de uma versão local que foi substituída/descartada.
+Future<void> guardarVersaoDescartada(Map<String, dynamic> pedido, String motivo) async {
+  final db = await getDb();
+  await db.insert('pedidos_descartados', {
+    'descartado_em': DateTime.now().toUtc().toIso8601String(),
+    'motivo': motivo,
+    'pedido_json': jsonEncode(pedido, toEncodable: (o) => o.toString()),
+  });
+}
+
 Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
   final db = await getDb();
   final map = <String, dynamic>{
@@ -403,7 +535,6 @@ Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
     'cliente_nome_fantasia': pedido['cliente_nome_fantasia']?.toString(),
     'cliente_whatsapp': pedido['cliente_whatsapp']?.toString(),
     'cliente_email': pedido['cliente_email']?.toString(),
-    'pendente_envio': ((pedido['status'] ?? 'salvo').toString() == 'finalizado') ? 1 : 0,
   };
 
   // Define o id do registro local.
@@ -439,6 +570,7 @@ Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
     map['id'] = reusar ?? await proximoIdLocalSeguro(db);
   }
 
+  await _aplicarCamposLocais(db, map, pedido, replace: true);
   await _insertOrReplaceFiltered(db, 'pedidos', map);
 }
 
@@ -471,9 +603,11 @@ Future<void> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
     'cliente_nome_fantasia': pedido['cliente_nome_fantasia']?.toString(),
     'cliente_whatsapp': pedido['cliente_whatsapp']?.toString(),
     'cliente_email': pedido['cliente_email']?.toString(),
-    'pendente_envio': ((pedido['status'] ?? 'salvo').toString() == 'finalizado') ? 1 : 0,
   };
 
+  map['id'] = id;
+  await _aplicarCamposLocais(db, map, pedido, replace: false);
+  map.remove('id');
   final filtered = await _filterToTableColumns(db, 'pedidos', map);
   await db.update(
     'pedidos',
@@ -512,7 +646,13 @@ Future<List<Map<String, dynamic>>> listarPedidosLocaisPorVendedor(
   }
 }
 
-/// Pedidos finalizados que ainda precisam ser enviados ao servidor.
+/// Pedidos do vendedor com um status exato ('salvo' | 'finalizado' | 'cancelado').
+Future<List<Map<String, dynamic>>> listarPedidosLocaisPorStatus(
+    String vendedorCodigo, String status) {
+  return listarPedidosLocaisPorVendedor(vendedorCodigo, status: status);
+}
+
+/// Pedidos que ainda precisam ser enviados ao servidor.
 Future<List<Map<String, dynamic>>> listarPedidosPendentesEnvio(String vendedorCodigo) async {
   final db = await getDb();
   return db.query(
