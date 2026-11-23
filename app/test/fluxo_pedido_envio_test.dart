@@ -918,6 +918,77 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------- correções (rodada 3)
+
+  group('rodada 3', () {
+    const idL = kLocalIdBase + 1;
+
+    /// Linha L enviada; o eco (em segundo plano) troca o id L por 41 enquanto
+    /// a tela de edição guarda o mapa antigo. Devolve o mapa da tela.
+    Future<Map<String, dynamic>> telaAbertaDuranteOEco() async {
+      final original = _pedido(id: idL, numero: '6', idAparelho: 'a');
+      await salvarPedidoLocal(original);
+      final aberto = Map<String, dynamic>.from((await _porId(idL))!);
+      await aplicarEcoDoServidor(enviado: aberto, remoto: {...original, 'id': 41});
+      expect(await _porId(idL), isNull);
+      return aberto;
+    }
+
+    test('id local antigo e numero trocado na tela: grava na linha 41', () async {
+      final aberto = await telaAbertaDuranteOEco();
+
+      final enviados = <Map<String, dynamic>>[];
+      final r = await gravarPedidoEEnviar(
+        {...aberto, 'numero': '26', 'total': 25.0, 'datahora': '2026-11-23T11:00:00Z'},
+        novo: false,
+        enviar: (p) async => enviados.add(p),
+      );
+
+      expect(r, ResultadoGravacao.enviado);
+      final db = await getDb();
+      final rows = await db.query('pedidos');
+      expect(rows, hasLength(1));
+      expect(rows.single['id'], 41);
+      expect(rows.single['numero'], '26');
+      expect(rows.single['total'], 25.0);
+      expect(rows.single['pendente_envio'], 1);
+      expect(rows.single['id_aparelho'], 'a');
+      expect(enviados.single['id'], 41);
+      expect(enviados.single['numero'], '26');
+    });
+
+    test('salvarPedidoLocal com id antigo nao cria segunda linha do mesmo pedido',
+        () async {
+      final aberto = await telaAbertaDuranteOEco();
+
+      final id = await salvarPedidoLocal(
+          {...aberto, 'numero': '27', 'datahora': '2026-11-23T11:00:00Z'});
+
+      expect(id, 41);
+      final db = await getDb();
+      final rows = await db.query('pedidos');
+      expect(rows, hasLength(1));
+      expect(rows.single['id'], 41);
+      expect(rows.single['numero'], '27');
+    });
+
+    test('atualizar um pedido que nao existe mais lanca (nada foi gravado)', () async {
+      await expectLater(
+        atualizarPedidoLocal(_pedido(id: idL, numero: '6', idAparelho: 'z')),
+        throwsA(isA<StateError>()),
+      );
+      var envios = 0;
+      await expectLater(
+        gravarPedidoEEnviar(_pedido(id: idL, numero: '6', idAparelho: 'z'),
+            novo: false, enviar: (p) async => envios++),
+        throwsA(isA<StateError>()),
+      );
+      expect(envios, 0, reason: 'nunca envia nem diz "salvo" sem ter gravado');
+      final db = await getDb();
+      expect(await db.query('pedidos'), isEmpty);
+    });
+  });
+
   test('montarPayloadPedido tira campos locais e de auditoria', () {
     final p = montarPayloadPedido({
       ..._pedido(id: 40, idAparelho: 'a'),

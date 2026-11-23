@@ -535,23 +535,28 @@ Future<Map<String, Object?>?> _outraComMesmoNumero(
 }
 
 /// Id em que a gravação de um pedido com [id] deve cair.
-/// - Nenhuma outra linha com o mesmo (numero, vendedor): o próprio [id].
-/// - Não existe mais linha com [id] e a outra linha tem o mesmo id_aparelho:
-///   é o mesmo pedido, cujo eco trocou o id local pelo do servidor enquanto
-///   a tela estava aberta. A gravação vai para o id dessa linha.
-/// - Senão: [NumeroEmUso] (gravar apagaria a outra pelo índice único).
+/// 1. Não existe mais linha com [id] e alguma linha tem o mesmo id_aparelho
+///    (não vazio): é o mesmo pedido, cujo eco trocou o id local pelo do
+///    servidor enquanto a tela estava aberta (o número pode ter mudado na
+///    tela). A gravação vai para o id dessa linha.
+/// 2. Outra linha (fora o alvo) com o mesmo (numero, vendedor):
+///    [NumeroEmUso] (gravar apagaria a outra pelo índice único).
+/// 3. Senão: o alvo.
 Future<int> _idDaGravacao(sq.DatabaseExecutor db, int id, String? numero,
     String? vend, Object? idAparelho) async {
-  final outra = await _outraComMesmoNumero(db, numero, vend, id);
-  if (outra == null) return id;
+  var alvo = id;
+  final existe = await db.query('pedidos',
+      columns: ['id'], where: 'id = ?', whereArgs: [id], limit: 1);
   final meu = idAparelho?.toString().trim() ?? '';
-  final dela = outra['id_aparelho']?.toString().trim() ?? '';
-  if (meu.isNotEmpty && meu == dela) {
-    final existe = await db.query('pedidos',
-        columns: ['id'], where: 'id = ?', whereArgs: [id], limit: 1);
-    if (existe.isEmpty) return (outra['id'] as num).toInt();
+  if (existe.isEmpty && meu.isNotEmpty) {
+    final mesmo = await db.query('pedidos',
+        columns: ['id'], where: 'id_aparelho = ?', whereArgs: [meu], limit: 1);
+    if (mesmo.isNotEmpty) alvo = (mesmo.first['id'] as num).toInt();
   }
-  throw NumeroEmUso(numero!, vend!);
+  if (await _outraComMesmoNumero(db, numero, vend, alvo) != null) {
+    throw NumeroEmUso(numero!, vend!);
+  }
+  return alvo;
 }
 
 /// O pedido já existe no servidor (id serial baixo, fora da faixa local).
@@ -680,13 +685,15 @@ Future<int> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
   await _aplicarCamposLocais(db, map, pedido, replace: false);
   map.remove('id');
   final filtered = await _filterToTableColumns(db, 'pedidos', map);
-  await db.update(
+  final n = await db.update(
     'pedidos',
     filtered,
     where: 'id = ?',
     whereArgs: [id],
     conflictAlgorithm: sq.ConflictAlgorithm.replace,
   );
+  // Nunca dá a gravação por feita quando nada foi escrito.
+  if (n == 0) throw StateError('Pedido $id não existe mais no aparelho; nada foi gravado.');
   return id;
 }
 
