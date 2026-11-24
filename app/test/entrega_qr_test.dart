@@ -161,6 +161,23 @@ void main() {
     expect((await _linha(42))['codigo_qr'], _qrA);
   });
 
+  test('gravar o pedido no aparelho nunca apaga o codigo_qr guardado', () async {
+    await aplicarPedidosRemotos([_remoto()]);
+    final semQr = Map<String, dynamic>.from(_remoto())..remove('codigo_qr');
+
+    // salvarPedidoLocal (INSERT OR REPLACE) sem a chave e com a chave nula.
+    await salvarPedidoLocal(semQr);
+    expect((await _linha(42))['codigo_qr'], _qrA);
+    await salvarPedidoLocal({...semQr, 'codigo_qr': null});
+    expect((await _linha(42))['codigo_qr'], _qrA);
+
+    // atualizarPedidoLocal com a chave nula (mapa antigo da tela).
+    await atualizarPedidoLocal({...semQr, 'codigo_qr': null, 'total': 12.0});
+    final l = await _linha(42);
+    expect(l['codigo_qr'], _qrA);
+    expect(l['total'], 12.0);
+  });
+
   test('montarPayloadPedido nunca leva codigo_qr', () {
     final payload = montarPayloadPedido({..._remoto(), 'codigo_qr': _qrA});
     expect(payload.containsKey('codigo_qr'), isFalse);

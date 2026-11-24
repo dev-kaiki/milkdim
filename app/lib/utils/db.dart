@@ -191,7 +191,8 @@ Future<sq.Database> getDb() async {
           assinatura_pedido TEXT,      -- hex "0x..." da assinatura do pedido
           assinatura_pedido_path TEXT, -- arquivo local da assinatura do pedido
           pronto_em TEXT,
-          pronto_por TEXT
+          pronto_por TEXT,
+          codigo_qr TEXT
         );
       ''');
       await _criarTabelaDescartados(db);
@@ -543,6 +544,15 @@ Future<void> _aplicarCamposLocais(
     for (final c in _colunasCopiaDoServidor) {
       if (pedido.containsKey(c)) map[c] = pedido[c]?.toString();
     }
+  }
+
+  // codigo_qr: o servidor gera e nunca muda; o app nunca o apaga. O INSERT OR
+  // REPLACE apagaria o guardado quando o mapa não o traz.
+  final qrVindo = pedido['codigo_qr']?.toString() ?? '';
+  if (qrVindo.isNotEmpty) {
+    map['codigo_qr'] = qrVindo;
+  } else if (replace && antigo != null) {
+    map['codigo_qr'] = antigo['codigo_qr'];
   }
 
   // Assinatura do pedido: sem bytes, nunca apaga a guardada (como o servidor,
