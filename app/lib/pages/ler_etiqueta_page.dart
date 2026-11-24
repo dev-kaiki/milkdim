@@ -31,6 +31,9 @@ const String _msgCameraNegada =
 bool get leituraDeEtiquetaDisponivel => defaultTargetPlatform == TargetPlatform.android;
 
 class LerEtiquetaPage extends StatefulWidget {
+  /// Código do vendedor logado: só pedido dele abre como pedido local.
+  final String vendedorCodigo;
+
   /// Para teste: no lugar da câmera.
   final Stream<String>? leituras;
 
@@ -40,7 +43,13 @@ class LerEtiquetaPage extends StatefulWidget {
   /// Para teste: no lugar da tela de edição do pedido local.
   final Widget Function(Map<String, dynamic> pedido)? editor;
 
-  const LerEtiquetaPage({super.key, this.leituras, this.decidir, this.editor});
+  const LerEtiquetaPage({
+    super.key,
+    required this.vendedorCodigo,
+    this.leituras,
+    this.decidir,
+    this.editor,
+  });
 
   @override
   State<LerEtiquetaPage> createState() => _LerEtiquetaPageState();
@@ -124,8 +133,9 @@ class _LerEtiquetaPageState extends State<LerEtiquetaPage> with WidgetsBindingOb
     if (_travada) return;
     _travada = true;
     try {
-      final destino =
-          await (widget.decidir ?? decidirDestinoDaLeitura)(lido);
+      final decidir = widget.decidir ??
+          (String l) => decidirDestinoDaLeitura(l, vendedorCodigo: widget.vendedorCodigo);
+      final destino = await decidir(lido);
       if (!mounted) return;
       await _pararCamera();
       if (!mounted) return;

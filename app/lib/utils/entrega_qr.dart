@@ -38,14 +38,18 @@ class SemInternet extends DestinoLeitura {
   const SemInternet();
 }
 
-/// Ordem: QR inválido, pedido local (mesmo aguardando envio), internet ou não.
+/// Ordem: QR inválido, pedido local do vendedor logado (mesmo aguardando
+/// envio), internet ou não. Pedido de outro vendedor guardado no celular não
+/// abre como local: vai pelo servidor, que aplica a regra de "só pronto" e
+/// registra quem entregou.
 Future<DestinoLeitura> decidirDestinoDaLeitura(
   String lido, {
+  required String vendedorCodigo,
   Future<bool> Function()? internet,
 }) async {
   final codigo = codigoDoQrEntrega(lido);
   if (codigo == null) return const QrInvalido();
-  final local = await buscarPedidoLocalPorCodigoQr(codigo);
+  final local = await buscarPedidoLocalPorCodigoQr(codigo, vendedorCodigo);
   if (local != null) return AbrirPedidoLocal(local);
   if (await (internet ?? temInternet)()) return AbrirEntregaServidor(codigo);
   return const SemInternet();

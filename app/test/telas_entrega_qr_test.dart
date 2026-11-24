@@ -36,8 +36,8 @@ Map<String, dynamic> _json({
             'status': status,
             'vendedor_codigo': '0002',
             'vendedor_nome': 'Outro Vendedor',
-            'cliente_nome': 'Maria Souza',
-            'cliente_nome_fantasia': 'Padaria Central',
+            'cliente_nome': 'Cliente Teste',
+            'cliente_nome_fantasia': 'Padaria Teste',
             'cliente_cidade': 'Campinas',
             'itens': [
               {'nome': 'Leite ninho', 'quantidade': 3},
@@ -96,7 +96,7 @@ void main() {
     testWidgets('três leituras iguais em sequência abrem uma tela só', (tester) async {
       final ctrl = StreamController<String>();
       addTearDown(ctrl.close);
-      await _abrir(tester, LerEtiquetaPage(leituras: ctrl.stream, decidir: servidor));
+      await _abrir(tester, LerEtiquetaPage(vendedorCodigo: '0003', leituras: ctrl.stream, decidir: servidor));
 
       ctrl.add(_lido);
       ctrl.add(_lido);
@@ -119,7 +119,7 @@ void main() {
     testWidgets('QR inválido mostra a mensagem e continua lendo', (tester) async {
       final ctrl = StreamController<String>();
       addTearDown(ctrl.close);
-      await _abrir(tester, LerEtiquetaPage(leituras: ctrl.stream, decidir: servidor));
+      await _abrir(tester, LerEtiquetaPage(vendedorCodigo: '0003', leituras: ctrl.stream, decidir: servidor));
 
       ctrl.add('https://exemplo.com');
       await tester.pump();
@@ -140,6 +140,7 @@ void main() {
       await _abrir(
           tester,
           LerEtiquetaPage(
+              vendedorCodigo: '0003',
               leituras: ctrl.stream, decidir: (_) async => const SemInternet()));
       ctrl.add(_lido);
       await tester.pump();
@@ -175,6 +176,7 @@ void main() {
         await _abrir(
             tester,
             LerEtiquetaPage(
+                vendedorCodigo: '0003',
                 leituras: ctrl.stream, decidir: (_) async => AbrirPedidoLocal(c.$2)));
         ctrl.add(_lido);
         await tester.pump();
@@ -192,6 +194,7 @@ void main() {
       await _abrir(
           tester,
           LerEtiquetaPage(
+              vendedorCodigo: '0003',
               leituras: ctrl.stream,
               editor: (p) => Scaffold(body: Text('editor ${p['numero']}')),
               decidir: (_) async => const AbrirPedidoLocal(
@@ -217,7 +220,7 @@ void main() {
       await _abrir(tester, const EntregaQrPage(codigoQr: _qr));
       expect(find.text('Pedido 70'), findsWidgets);
       expect(find.text('Pedido do vendedor 0002'), findsOneWidget);
-      expect(find.text('Padaria Central'), findsOneWidget);
+      expect(find.text('Padaria Teste'), findsOneWidget);
       expect(find.text('Campinas'), findsOneWidget);
       expect(find.text('3×'), findsOneWidget);
       expect(find.text('Leite ninho'), findsOneWidget);

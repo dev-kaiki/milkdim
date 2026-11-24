@@ -40,7 +40,7 @@ Map<String, dynamic> _remoto({int id = 42, String numero = '70', String? codigoQ
       'datahora': '2026-11-24T09:00:00+00:00',
       'total': 10.0,
       'cliente_id': 7,
-      'cliente_nome': 'Padaria Central',
+      'cliente_nome': 'Padaria Teste',
       'produtos': [
         {'nome': 'Pudim', 'preco': 10.0, 'quantidade': 1, 'subtotal': 10.0},
       ],
@@ -152,7 +152,7 @@ void main() {
       'vendedor_codigo': '0003',
       'datahora': '2026-11-24T09:00:00+00:00',
       'total': 10.0,
-      'cliente_nome': 'Padaria Central',
+      'cliente_nome': 'Padaria Teste',
       'produtos': _remoto()['produtos'],
     };
     await salvarPedidoLocal(enviado);
@@ -170,7 +170,7 @@ void main() {
     test('QR inválido dá QrInvalido', () async {
       var consultou = false;
       final d = await decidirDestinoDaLeitura('http://exemplo.com',
-          internet: () async {
+          vendedorCodigo: '0003', internet: () async {
         consultou = true;
         return true;
       });
@@ -184,7 +184,7 @@ void main() {
       final db = await getDb();
       await db.update('pedidos', {'pendente_envio': 1}, where: 'id = 42');
       final d = await decidirDestinoDaLeitura('MILKDIM:E:${_qrA.toUpperCase()}',
-          internet: () async => false);
+          vendedorCodigo: '0003', internet: () async => false);
       expect(d, isA<AbrirPedidoLocal>());
       expect((d as AbrirPedidoLocal).pedido['id'], 42);
       expect(d.pedido['numero'], '70');
@@ -194,12 +194,38 @@ void main() {
         () async {
       await aplicarPedidosRemotos([_remoto()]);
       final com = await decidirDestinoDaLeitura('MILKDIM:E:$_qrB',
-          internet: () async => true);
+          vendedorCodigo: '0003', internet: () async => true);
       expect(com, isA<AbrirEntregaServidor>());
       expect((com as AbrirEntregaServidor).codigoQr, _qrB);
       final sem = await decidirDestinoDaLeitura('MILKDIM:E:$_qrB',
-          internet: () async => false);
+          vendedorCodigo: '0003', internet: () async => false);
       expect(sem, isA<SemInternet>());
+    });
+
+    test('pedido no celular de outro vendedor vai ao servidor; sem internet dá SemInternet',
+        () async {
+      // O pedido 42 é do vendedor 0003; quem lê é o 0004 no mesmo celular.
+      await aplicarPedidosRemotos([_remoto()]);
+      final com = await decidirDestinoDaLeitura('MILKDIM:E:$_qrA',
+          vendedorCodigo: '0004', internet: () async => true);
+      expect(com, isA<AbrirEntregaServidor>());
+      expect((com as AbrirEntregaServidor).codigoQr, _qrA);
+      final sem = await decidirDestinoDaLeitura('MILKDIM:E:$_qrA',
+          vendedorCodigo: '0004', internet: () async => false);
+      expect(sem, isA<SemInternet>());
+      // O dono continua abrindo o pedido local.
+      final dono = await decidirDestinoDaLeitura('MILKDIM:E:$_qrA',
+          vendedorCodigo: '0003', internet: () async => true);
+      expect(dono, isA<AbrirPedidoLocal>());
+      expect((dono as AbrirPedidoLocal).pedido['id'], 42);
+    });
+
+    test('sem vendedor logado nada abre como local', () async {
+      await aplicarPedidosRemotos([_remoto()]);
+      expect(await buscarPedidoLocalPorCodigoQr(_qrA, ''), isNull);
+      final d = await decidirDestinoDaLeitura('MILKDIM:E:$_qrA',
+          vendedorCodigo: '', internet: () async => true);
+      expect(d, isA<AbrirEntregaServidor>());
     });
   });
 
@@ -221,7 +247,7 @@ void main() {
           'status': status,
           'vendedor_codigo': '0003',
           'vendedor_nome': 'Vendedor',
-          'cliente_nome': 'Padaria Central',
+          'cliente_nome': 'Padaria Teste',
           'cliente_nome_fantasia': null,
           'cliente_cidade': 'Cidade',
           'itens': [
@@ -242,23 +268,23 @@ void main() {
       'id': 1,
       'numero': '70',
       'status': 'pronto',
-      'cliente_nome': 'Fulano',
-      'cliente_nome_fantasia': 'Padaria Central',
+      'cliente_nome': 'Cliente Teste',
+      'cliente_nome_fantasia': 'Padaria Teste',
       'itens': [
         {'nome': 'Pudim', 'quantidade': 2},
       ],
     });
-    expect(a.clienteTitulo, 'Padaria Central');
+    expect(a.clienteTitulo, 'Padaria Teste');
     expect(a.itens.single.nome, 'Pudim');
     expect(a.itens.single.quantidade, 2);
     final b = PedidoQr.fromJson({
       'id': 1,
       'numero': '70',
       'status': 'pronto',
-      'cliente_nome': 'Fulano',
+      'cliente_nome': 'Cliente Teste',
       'cliente_nome_fantasia': ''
     });
-    expect(b.clienteTitulo, 'Fulano');
+    expect(b.clienteTitulo, 'Cliente Teste');
     final c = PedidoQr.fromJson({'numero': '71', 'status': 'finalizado'});
     expect(c.numero, '71');
     expect(c.itens, isEmpty);

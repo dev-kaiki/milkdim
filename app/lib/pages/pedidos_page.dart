@@ -1353,7 +1353,9 @@ class _PedidosPageState extends State<PedidosPage>
             IconButton(
               onPressed: () async {
                 await Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const LerEtiquetaPage()));
+                    MaterialPageRoute(
+                        builder: (_) => LerEtiquetaPage(
+                            vendedorCodigo: widget.vendedorCodigo ?? '')));
                 if (mounted) await _carregar();
               },
               icon: const Icon(Icons.qr_code_scanner),

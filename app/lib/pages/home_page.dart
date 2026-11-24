@@ -335,7 +335,7 @@ class _HomePageState extends State<HomePage> {
                           icone: Icons.qr_code_scanner,
                           titulo: 'Ler etiqueta',
                           subtitulo: 'Registrar a entrega pelo QR',
-                          onTap: () => _abrir(const LerEtiquetaPage()),
+                          onTap: () => _abrir(LerEtiquetaPage(vendedorCodigo: _codigo)),
                         ),
                       ],
                       if (_sincronizando) ...[

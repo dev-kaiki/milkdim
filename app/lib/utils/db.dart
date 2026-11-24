@@ -336,14 +336,20 @@ Future<void> _garantirSchemaV19(sq.Database db) async {
   await db.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_codigo_qr ON pedidos(codigo_qr);');
 }
 
-/// Pedido do celular com esse `codigo_qr` (uuid), ou null.
+/// Pedido do celular com esse `codigo_qr` (uuid) e do vendedor logado, ou null.
+/// O celular guarda pedidos de mais de um vendedor (sair não apaga nada): o
+/// pedido de outro vendedor nunca abre como local, vai pelo servidor.
 /// Não filtra por `pendente_envio`: pedido aguardando envio também é local.
-Future<Map<String, dynamic>?> buscarPedidoLocalPorCodigoQr(String codigoQr) async {
+/// O código chega minúsculo (`codigoDoQrEntrega` e o servidor), então a busca
+/// é por igualdade e usa o índice `idx_pedidos_codigo_qr`.
+Future<Map<String, dynamic>?> buscarPedidoLocalPorCodigoQr(
+    String codigoQr, String vendedorCodigo) async {
+  if (vendedorCodigo.isEmpty) return null;
   final db = await getDb();
   final r = await db.query(
     'pedidos',
-    where: 'LOWER(codigo_qr) = ?',
-    whereArgs: [codigoQr.toLowerCase()],
+    where: 'codigo_qr = ? AND vendedor_codigo = ?',
+    whereArgs: [codigoQr, vendedorCodigo],
     limit: 1,
   );
   return r.isEmpty ? null : Map<String, dynamic>.from(r.first);
