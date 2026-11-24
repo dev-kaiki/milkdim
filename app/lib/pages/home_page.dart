@@ -329,13 +329,15 @@ class _HomePageState extends State<HomePage> {
                         subtitulo: 'Ver, editar e compartilhar',
                         onTap: () => _abrir(PedidosPage(vendedorCodigo: _codigo)),
                       ),
-                      const SizedBox(height: MdSpace.md),
-                      MdActionTile(
-                        icone: Icons.qr_code_scanner,
-                        titulo: 'Ler etiqueta',
-                        subtitulo: 'Registrar a entrega pelo QR',
-                        onTap: () => _abrir(const LerEtiquetaPage()),
-                      ),
+                      if (leituraDeEtiquetaDisponivel) ...[
+                        const SizedBox(height: MdSpace.md),
+                        MdActionTile(
+                          icone: Icons.qr_code_scanner,
+                          titulo: 'Ler etiqueta',
+                          subtitulo: 'Registrar a entrega pelo QR',
+                          onTap: () => _abrir(const LerEtiquetaPage()),
+                        ),
+                      ],
                       if (_sincronizando) ...[
                         const SizedBox(height: MdSpace.xl),
                         _linhaSincronizando(tt),

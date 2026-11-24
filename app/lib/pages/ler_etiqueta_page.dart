@@ -10,11 +10,13 @@
 // mensagens de erro, depois de um intervalo curto.
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show TargetPlatform, debugPrint, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../utils/entrega_qr.dart';
+import '../utils/regras_pedido.dart';
 import 'entrega_qr_page.dart';
 import 'pedido_edit_page.dart';
 
@@ -24,6 +26,10 @@ const String _msgSemInternet =
 const String _msgCameraNegada =
     'Libere a câmera nas configurações do Android para ler etiquetas.';
 
+/// A câmera só está configurada no Android (iOS/macOS não têm a chave de
+/// permissão de câmera); nos outros sistemas o botão não aparece.
+bool get leituraDeEtiquetaDisponivel => defaultTargetPlatform == TargetPlatform.android;
+
 class LerEtiquetaPage extends StatefulWidget {
   /// Para teste: no lugar da câmera.
   final Stream<String>? leituras;
@@ -31,13 +37,16 @@ class LerEtiquetaPage extends StatefulWidget {
   /// Para teste: no lugar de `decidirDestinoDaLeitura`.
   final Future<DestinoLeitura> Function(String lido)? decidir;
 
-  const LerEtiquetaPage({super.key, this.leituras, this.decidir});
+  /// Para teste: no lugar da tela de edição do pedido local.
+  final Widget Function(Map<String, dynamic> pedido)? editor;
+
+  const LerEtiquetaPage({super.key, this.leituras, this.decidir, this.editor});
 
   @override
   State<LerEtiquetaPage> createState() => _LerEtiquetaPageState();
 }
 
-class _LerEtiquetaPageState extends State<LerEtiquetaPage> {
+class _LerEtiquetaPageState extends State<LerEtiquetaPage> with WidgetsBindingObserver {
   MobileScannerController? _camera;
   StreamSubscription<String>? _sub;
   Timer? _intervalo;
@@ -46,6 +55,7 @@ class _LerEtiquetaPageState extends State<LerEtiquetaPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final leituras = widget.leituras;
     if (leituras != null) {
       _sub = leituras.listen(_aoLer);
@@ -59,10 +69,45 @@ class _LerEtiquetaPageState extends State<LerEtiquetaPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     _intervalo?.cancel();
     _camera?.dispose();
     super.dispose();
+  }
+
+  /// Parar e religar a câmera zera a "última leitura" do mobile_scanner (com
+  /// `noDuplicates` ele nunca repetiria a mesma etiqueta) e libera a câmera
+  /// enquanto outra tela está aberta.
+  Future<void> _pararCamera() async {
+    try {
+      await _camera?.stop();
+    } catch (e) {
+      debugPrint('Câmera: erro ao parar: $e');
+    }
+  }
+
+  Future<void> _ligarCamera() async {
+    try {
+      await _camera?.start();
+    } catch (e) {
+      debugPrint('Câmera: erro ao iniciar: $e');
+    }
+  }
+
+  void _liberar() {
+    _travada = false;
+    if (mounted) _ligarCamera();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_camera == null) return;
+    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+      _pararCamera();
+    } else if (state == AppLifecycleState.resumed && !_travada) {
+      _ligarCamera();
+    }
   }
 
   void _aoDetectar(BarcodeCapture captura) {
@@ -82,11 +127,18 @@ class _LerEtiquetaPageState extends State<LerEtiquetaPage> {
       final destino =
           await (widget.decidir ?? decidirDestinoDaLeitura)(lido);
       if (!mounted) return;
+      await _pararCamera();
+      if (!mounted) return;
       switch (destino) {
         case AbrirPedidoLocal(:final pedido):
+          if (!podeAbrirPelaEtiqueta(pedido)) {
+            _avisarELiberar(motivoNaoAbrirPelaEtiqueta(pedido));
+            return;
+          }
           await Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => PedidoPageEdit(pedido: pedido)),
+            MaterialPageRoute(builder: (_) =>
+                (widget.editor ?? (p) => PedidoPageEdit(pedido: p))(pedido)),
           );
         case AbrirEntregaServidor(:final codigoQr):
           await Navigator.push(
@@ -100,13 +152,14 @@ class _LerEtiquetaPageState extends State<LerEtiquetaPage> {
           _avisarELiberar(_msgSemInternet);
           return;
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Ler etiqueta: erro: $e');
       if (mounted) {
         _avisarELiberar('Não deu para ler a etiqueta. Tente de novo.');
         return;
       }
     }
-    _travada = false;
+    _liberar();
   }
 
   /// Mostra a mensagem e só aceita nova leitura depois de um intervalo, para
@@ -114,7 +167,7 @@ class _LerEtiquetaPageState extends State<LerEtiquetaPage> {
   void _avisarELiberar(String msg) {
     showMdSnack(context, msg, tipo: MdTipo.erro);
     _intervalo?.cancel();
-    _intervalo = Timer(const Duration(seconds: 2), () => _travada = false);
+    _intervalo = Timer(const Duration(seconds: 2), _liberar);
   }
 
   Widget _semCamera(BuildContext context, MobileScannerException erro) {

@@ -12,7 +12,9 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:milkdim_app/pages/entrega_qr_page.dart';
 import 'package:milkdim_app/pages/home_page.dart';
 import 'package:milkdim_app/pages/ler_etiqueta_page.dart';
+import 'package:milkdim_app/pages/pedido_edit_page.dart';
 import 'package:milkdim_app/pages/pedidos_page.dart';
+import 'package:milkdim_app/utils/regras_pedido.dart';
 import 'package:milkdim_app/utils/entrega_qr.dart';
 import 'package:milkdim_app/utils/pedido_da_tela.dart';
 
@@ -147,6 +149,64 @@ void main() {
               'conecte e leia de novo.'),
           findsOneWidget);
       await tester.pump(const Duration(seconds: 3));
+    });
+
+    for (final c in <(String, Map<String, dynamic>, String)>[
+      (
+        'pedido local entregue com assinatura',
+        {'status': 'finalizado', 'numero': '70', 'assinatura': '0x89504e47', 'finalizado_manual': 0},
+        'Este pedido já foi entregue.'
+      ),
+      (
+        'pedido local cancelado',
+        {'status': 'cancelado', 'numero': '70'},
+        'Este pedido foi cancelado.'
+      ),
+      (
+        'pedido local apagado no Controle',
+        {'status': 'salvo', 'numero': '70', 'erro_envio': 'apagado'},
+        kMsgApagadoNoControle
+      ),
+    ]) {
+      testWidgets('${c.$1}: mostra a mensagem, não abre o editor e continua lendo',
+          (tester) async {
+        final ctrl = StreamController<String>();
+        addTearDown(ctrl.close);
+        await _abrir(
+            tester,
+            LerEtiquetaPage(
+                leituras: ctrl.stream, decidir: (_) async => AbrirPedidoLocal(c.$2)));
+        ctrl.add(_lido);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text(c.$3), findsOneWidget);
+        expect(find.byType(PedidoPageEdit), findsNothing);
+        expect(find.byType(LerEtiquetaPage), findsOneWidget);
+        await tester.pump(const Duration(seconds: 3));
+      });
+    }
+
+    testWidgets('pedido local em aberto ainda abre o editor', (tester) async {
+      final ctrl = StreamController<String>();
+      addTearDown(ctrl.close);
+      await _abrir(
+          tester,
+          LerEtiquetaPage(
+              leituras: ctrl.stream,
+              editor: (p) => Scaffold(body: Text('editor ${p['numero']}')),
+              decidir: (_) async => const AbrirPedidoLocal(
+                  {'status': 'salvo', 'numero': '70', 'produtos': '[]'})));
+      ctrl.add(_lido);
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(find.text('editor 70'), findsOneWidget);
+    });
+
+    test('regra: entregue pelo Controle sem assinatura da entrega ainda abre', () {
+      expect(
+          podeAbrirPelaEtiqueta({'status': 'finalizado', 'finalizado_manual': 1}), isTrue);
+      expect(podeAbrirPelaEtiqueta({'status': 'pronto'}), isTrue);
+      expect(podeAbrirPelaEtiqueta({'status': 'cancelado'}), isFalse);
     });
   });
 

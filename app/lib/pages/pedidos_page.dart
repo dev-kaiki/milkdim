@@ -860,7 +860,7 @@ class _PedidosPageState extends State<PedidosPage>
         : null;
     // Entregue pelo Controle sem a assinatura da entrega: o vendedor ainda
     // registra a entrega (a dele vale). O resto dos entregues é só leitura.
-    final registrarEntrega = !apagado && podeRegistrarEntregaDepois(p)
+    final registrarEntrega = !estaEmAberto(p) && podeAbrirPelaEtiqueta(p)
         ? _acao(
             label: 'Registrar entrega',
             icon: Icons.local_shipping_outlined,
@@ -1349,6 +1349,7 @@ class _PedidosPageState extends State<PedidosPage>
         appBar: AppBar(
           title: Text(temFiltro ? 'Meus Pedidos' : 'Pedidos'),
           actions: [
+            if (leituraDeEtiquetaDisponivel)
             IconButton(
               onPressed: () async {
                 await Navigator.push(context,
