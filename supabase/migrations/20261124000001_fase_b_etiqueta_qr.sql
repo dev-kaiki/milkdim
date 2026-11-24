@@ -367,8 +367,9 @@ $$;
 --   42501  conta sem codigo de vendedor
 --   22023  assinatura nula ou vazia
 --   P0002  codigo desconhecido
---   MD002  pedido ja entregue (com assinatura, ou qualquer entregue quando
---          quem chama nao e o vendedor do pedido)
+--   MD002  pedido ja entregue: qualquer entregue quando quem chama nao e o
+--          vendedor do pedido; para o vendedor do pedido, entregue com
+--          assinatura ou sem a marca de manual (como os pedidos antigos)
 --   MD003  quem chama nao e o vendedor do pedido e ele nao esta pronto
 --   MD004  quem chama nao e o vendedor do pedido e ele esta cancelado
 --   55000  o gatilho nao aceitou a entrega (nao deveria acontecer depois
@@ -387,6 +388,7 @@ declare
   v_status     text;
   v_vendedor   text;
   v_assinatura bytea;
+  v_manual     boolean;
   v_novo       record;
 begin
   v_meu := public.app_meu_codigo();
@@ -398,8 +400,8 @@ begin
     raise exception 'A assinatura da entrega e obrigatoria.' using errcode = '22023';
   end if;
 
-  select p.id, p.numero, p.status, p.vendedor_codigo, p.assinatura
-    into v_id, v_numero, v_status, v_vendedor, v_assinatura
+  select p.id, p.numero, p.status, p.vendedor_codigo, p.assinatura, p.finalizado_manual
+    into v_id, v_numero, v_status, v_vendedor, v_assinatura, v_manual
     from public.pedidos p
    where p.codigo_qr = p_codigo
      for update;
@@ -420,9 +422,12 @@ begin
       raise exception 'Este pedido ainda nao esta pronto para entrega.' using errcode = 'MD003';
     end if;
   else
-    -- O vendedor do pedido: as regras de hoje, e entrega assinada nao se
-    -- substitui.
-    if v_status = 'finalizado' and v_assinatura is not null then
+    -- O vendedor do pedido: as regras de hoje. Entregue so aceita a
+    -- entrega assinada quando foi o "Marcar como entregue" do Controle sem
+    -- assinatura (a mesma condicao do gatilho); entrega assinada, ou
+    -- entregue sem marca de manual (os pedidos antigos), da MD002.
+    if v_status = 'finalizado'
+       and (v_assinatura is not null or not coalesce(v_manual, false)) then
       raise exception 'Este pedido ja foi entregue.' using errcode = 'MD002';
     end if;
   end if;

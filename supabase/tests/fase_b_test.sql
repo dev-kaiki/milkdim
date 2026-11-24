@@ -32,6 +32,10 @@
 --   p5  salvo: A recebe MD003; depois B entrega pelo QR
 --   p6  cancelado: A recebe MD004; depois B entrega pelo QR
 --   p7  salvo: assinatura vazia da 22023 e nada muda
+--   p8  entregue sem assinatura e sem marca de manual (como os pedidos
+--       antigos de producao): o dono recebe MD002 e nada muda
+--   p9  "Marcar como entregue" pelo Controle (manual, sem assinatura): A
+--       recebe MD002; o dono entrega pelo QR e a entrega assinada vence
 
 -- 0. Preparacao, sem JWT (como o SQL Editor): contas Auth e vendedores.
 --    Ids negativos em vendedores, como nos testes anteriores.
@@ -166,12 +170,30 @@ begin
   perform set_config('teste.fb_p7', v_r.id::text, true);
   perform set_config('teste.fb_qr7', v_r.codigo_qr::text, true);
 
-  -- Sete codigos diferentes, nenhum igual ao falso.
+  insert into public.pedidos (numero, vendedor_codigo, cliente_nome, produtos, total,
+                              status, datahora, codigo_qr)
+  values ('teste-fb-8', '-906', 'Cliente teste',
+          '[{"nome":"Leite","preco":5,"quantidade":1,"subtotal":5}]'::jsonb, 5,
+          'salvo', now(), v_falso)
+  returning id, codigo_qr into v_r;
+  perform set_config('teste.fb_p8', v_r.id::text, true);
+  perform set_config('teste.fb_qr8', v_r.codigo_qr::text, true);
+
+  insert into public.pedidos (numero, vendedor_codigo, cliente_nome, produtos, total,
+                              status, datahora, codigo_qr)
+  values ('teste-fb-9', '-906', 'Cliente teste',
+          '[{"nome":"Leite","preco":5,"quantidade":1,"subtotal":5}]'::jsonb, 5,
+          'salvo', now(), v_falso)
+  returning id, codigo_qr into v_r;
+  perform set_config('teste.fb_p9', v_r.id::text, true);
+  perform set_config('teste.fb_qr9', v_r.codigo_qr::text, true);
+
+  -- Nove codigos diferentes, nenhum igual ao falso.
   select * into v_r from (
     select count(distinct codigo_qr) as n, bool_or(codigo_qr = v_falso) as falso
       from public.pedidos where numero like 'teste-fb-%' and vendedor_codigo = '-906') t;
-  if v_r.n <> 7 or v_r.falso then
-    raise exception 'FALHA: % codigos distintos de 7, algum igual ao do app: %', v_r.n, v_r.falso;
+  if v_r.n <> 9 or v_r.falso then
+    raise exception 'FALHA: % codigos distintos de 9, algum igual ao do app: %', v_r.n, v_r.falso;
   end if;
 end $$;
 reset role;
@@ -285,14 +307,32 @@ select set_config('request.jwt.claims', '', true);
 
 -- 3. pedido_marcar_etiqueta.
 -- 3-preparo. Sem JWT, com a marca: alterado_em de p1 no passado, para ver
---    que a RPC nao re-carimba.
+--    que a RPC nao re-carimba. p8 vira um pedido como os antigos de
+--    producao: entregue, sem assinatura, sem marca de manual
+--    (finalizado_manual e not null desde a fase A: false), de ontem.
 do $$
+declare
+  v_r record;
 begin
   perform set_config('milkdim.acao_controle', '1', true);
   update public.pedidos
      set alterado_em = now() - interval '2 hours'
    where id = current_setting('teste.fb_p1')::bigint;
+  update public.pedidos
+     set status            = 'finalizado',
+         assinatura        = null,
+         finalizado_manual = false,
+         finalizado_em     = now() - interval '1 day',
+         finalizado_por    = '-906'
+   where id = current_setting('teste.fb_p8')::bigint;
   perform set_config('milkdim.acao_controle', '', true);
+
+  select * into v_r from public.pedidos where id = current_setting('teste.fb_p8')::bigint;
+  if v_r.status is distinct from 'finalizado' or v_r.assinatura is not null
+     or v_r.finalizado_manual or v_r.finalizado_em is distinct from now() - interval '1 day' then
+    raise exception 'FALHA: preparo de p8 nao gravou (status %, manual %, em %)',
+      v_r.status, v_r.finalizado_manual, v_r.finalizado_em;
+  end if;
 end $$;
 
 -- 3a. Vendedor comum (A): 42501.
@@ -333,6 +373,15 @@ begin
 
   -- p4 fica pronto (para os blocos 4 a 7).
   perform public.pedido_marcar_pronto(current_setting('teste.fb_p4')::bigint);
+
+  -- p9: "Marcar como entregue" pelo Controle (para os blocos 8 e 10).
+  perform public.pedido_finalizar_manual(current_setting('teste.fb_p9')::bigint);
+  select * into v_r from public.pedidos where id = current_setting('teste.fb_p9')::bigint;
+  if v_r.status is distinct from 'finalizado' or not v_r.finalizado_manual
+     or v_r.assinatura is not null or v_r.finalizado_por is distinct from '-907' then
+    raise exception 'FALHA: preparo de p9: status %, manual %, por %',
+      v_r.status, v_r.finalizado_manual, v_r.finalizado_por;
+  end if;
 
   -- Pedido salvo (p1).
   perform public.pedido_marcar_etiqueta(current_setting('teste.fb_p1')::bigint);
@@ -513,7 +562,8 @@ begin
   end;
 end $$;
 
--- 8. Quem nao e o dono: salvo (p5) da MD003, cancelado (p6) da MD004.
+-- 8. Quem nao e o dono: salvo (p5) da MD003, cancelado (p6) da MD004,
+--    entregue pelo Controle sem assinatura (p9) da MD002.
 do $$
 begin
   begin
@@ -526,6 +576,12 @@ begin
     perform public.pedido_entregar_por_qr(current_setting('teste.fb_qr6')::uuid, decode('0e', 'hex'));
     raise exception 'FALHA: A entregou pedido cancelado de B';
   exception when sqlstate 'MD004' then
+    null;
+  end;
+  begin
+    perform public.pedido_entregar_por_qr(current_setting('teste.fb_qr9')::uuid, decode('1e', 'hex'));
+    raise exception 'FALHA: A entregou pedido de B finalizado manual pelo Controle';
+  exception when sqlstate 'MD002' then
     null;
   end;
 end $$;
@@ -568,6 +624,12 @@ begin
   if v_r.status is distinct from 'cancelado' or v_r.assinatura is not null
      or v_r.finalizado_em is not null or v_r.finalizado_por is not null then
     raise exception 'FALHA: p6 mudou depois do MD004 (status %)', v_r.status;
+  end if;
+  select * into v_r from public.pedidos where id = current_setting('teste.fb_p9')::bigint;
+  if v_r.status is distinct from 'finalizado' or not v_r.finalizado_manual
+     or v_r.assinatura is not null or v_r.finalizado_por is distinct from '-907' then
+    raise exception 'FALHA: p9 mudou depois do MD002 de A (status %, manual %, por %)',
+      v_r.status, v_r.finalizado_manual, v_r.finalizado_por;
   end if;
 end $$;
 
@@ -628,6 +690,51 @@ begin
   if v_r.cancelado_em is distinct from now() or v_r.cancelado_por is distinct from '-906' then
     raise exception 'FALHA: entrega do proprio cancelado apagou o cancelamento (%, %)',
       v_r.cancelado_em, v_r.cancelado_por;
+  end if;
+end $$;
+
+-- 10b. Pedido como os antigos de producao (p8: entregue, sem assinatura,
+--      sem marca de manual): o dono recebe MD002 (nao 55000) e nada muda.
+do $$
+declare
+  v_r record;
+begin
+  begin
+    perform public.pedido_entregar_por_qr(current_setting('teste.fb_qr8')::uuid, decode('18', 'hex'));
+    raise exception 'FALHA: o dono entregou de novo um pedido antigo ja entregue';
+  exception when sqlstate 'MD002' then
+    null;
+  end;
+  select * into v_r from public.pedidos where id = current_setting('teste.fb_p8')::bigint;
+  if v_r.status is distinct from 'finalizado' or v_r.assinatura is not null
+     or v_r.finalizado_manual
+     or v_r.finalizado_em is distinct from now() - interval '1 day'
+     or v_r.finalizado_por is distinct from '-906' then
+    raise exception 'FALHA: p8 mudou depois do MD002 (assinatura %, em %, por %)',
+      v_r.assinatura, v_r.finalizado_em, v_r.finalizado_por;
+  end if;
+end $$;
+
+-- 10c. Entregue pelo Controle sem assinatura (p9): o dono entrega pelo QR
+--      e a entrega assinada vence. finalizado_por passa a ser o dono.
+do $$
+declare
+  v   jsonb;
+  v_r record;
+begin
+  v := public.pedido_entregar_por_qr(current_setting('teste.fb_qr9')::uuid, decode('19', 'hex'));
+  if (v ->> 'id')::bigint is distinct from current_setting('teste.fb_p9')::bigint
+     or (v ->> 'finalizado_em')::timestamptz is distinct from now() then
+    raise exception 'FALHA: entrega do dono sobre manual devolveu %', v;
+  end if;
+  select * into v_r from public.pedidos where id = current_setting('teste.fb_p9')::bigint;
+  if v_r.status is distinct from 'finalizado'
+     or v_r.finalizado_manual
+     or v_r.finalizado_por is distinct from '-906'
+     or v_r.finalizado_em is distinct from now()
+     or v_r.assinatura is distinct from decode('19', 'hex') then
+    raise exception 'FALHA: entrega do dono sobre manual: status %, manual %, por %, em %',
+      v_r.status, v_r.finalizado_manual, v_r.finalizado_por, v_r.finalizado_em;
   end if;
 end $$;
 
