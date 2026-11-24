@@ -67,8 +67,9 @@ A impressão passa pelo driver do Windows. Antes de testar no Controle:
 
 ### Etiqueta de teste
 
-- [ ] No Controle, em **Prontos para entrega** (ou no detalhe de um pedido pronto), tocar em
-      **Imprimir etiqueta** num pedido de teste.
+- [ ] Precisa de um pedido **pronto**: usar um pedido de teste que já esteja em **Prontos para
+      entrega**, ou criar um como nos passos 1 e 2 da seção 5. No Controle, em **Prontos para
+      entrega** (ou no detalhe do pedido pronto), tocar em **Imprimir etiqueta**.
 - [ ] Quando perguntar **"A etiqueta saiu certa?"**: **Sim** (marca como impressa), **Imprimir de
       novo** ou **Cancelar**. Só **Sim** marca a etiqueta como impressa.
 - [ ] Conferir a etiqueta: nada cortado, texto legível.
@@ -92,33 +93,34 @@ Dois vendedores, **A** e **B**, com códigos diferentes e celulares com o APK no
 Controle novo no computador (da fábrica ou do dono) e a impressora funcionando. **Não apagar
 nada no fim**: os pedidos de teste ficam como estão.
 
-- [ ] **1.** **A** cria um pedido e toca **Enviar pedido** (o cliente assina). Cria também um
-      segundo pedido e envia, para usar no passo 3. O pedido aparece em **Pedidos em aberto**
-      no Controle.
-- [ ] **2.** Na fábrica: **Produção concluída** no **primeiro** pedido. Aparece
-      **"Imprimir a etiqueta agora?"**: tocar em sim, imprimir e responder **Sim** em **"A
-      etiqueta saiu certa?"**. O pedido fica em **Prontos para entrega**. O segundo pedido
-      continua em aberto.
-- [ ] **3.** **B** toca **Ler etiqueta** e lê o QR do **segundo** pedido (o que ainda está em
-      aberto). Para isso, imprimir a etiqueta dele pelo detalhe do pedido, sem concluir a
-      produção. Deve aparecer **"Este pedido ainda não está pronto para entrega."**
-- [ ] **4.** **B** (com internet) lê o QR do **primeiro** pedido, o pronto. Abre **Registrar
+- [ ] **1.** **A** cria **dois** pedidos (vamos chamar de P1 e P2) e toca **Enviar pedido** em
+      cada um (o cliente assina). Os dois aparecem em **Pedidos em aberto** no Controle.
+- [ ] **2.** Na fábrica: **Produção concluída** em P1. Aparece **"Imprimir a etiqueta agora?"**:
+      tocar em sim, imprimir e responder **Sim** em **"A etiqueta saiu certa?"**. Fazer o
+      mesmo com P2 (concluir, imprimir, **Sim**). Os dois ficam em **Prontos para entrega**.
+      Guardar as duas etiquetas, cada uma com o nome do pedido anotado.
+- [ ] **3.** **A** abre P2, muda uma quantidade e toca **Salvar alterações** (o cliente assina
+      de novo). P2 volta para **Pedidos em aberto** no Controle. A etiqueta de P2 que já saiu
+      continua existindo: está velha, mas o QR dela ainda abre o pedido. Agora **B** toca **Ler
+      etiqueta** e lê essa etiqueta de P2. Deve aparecer **"Este pedido ainda não está pronto
+      para entrega."**
+- [ ] **4.** **B** (com internet) lê a etiqueta de P1, que está pronto. Abre **Registrar
       entrega**, o cliente assina e aparece **"Entrega registrada."**
-- [ ] **5.** No Controle, atualizar e abrir o pedido: mostra **"Entregue por B (outro
-      vendedor)"**, com o código e o nome de B.
-- [ ] **6.** **A** sincroniza (abre o app com internet). O primeiro pedido aparece como
-      **Entregue**.
-- [ ] **7.** Na fábrica, concluir a produção do segundo pedido. **A** coloca o celular em **modo
-      avião**, toca **Ler etiqueta** e lê o QR desse pedido (que é dele). Abre **Registrar
-      entrega**, o cliente assina e a entrega fica guardada no celular. Desligar o modo avião e
-      tocar **Enviar agora**: a entrega chega ao Controle.
-- [ ] **8.** **Ler de novo** o QR de um pedido já entregue (com **B** ou **A**, com internet):
-      aparece **"Este pedido já foi entregue."**
-- [ ] **9.** Alterar um pedido pronto: com um pedido novo de **A** já pronto, **A** abre o
-      pedido, muda uma quantidade e toca **Salvar alterações** (o cliente assina de novo). No
-      Controle ele volta para **Pedidos em aberto**. Dar **Produção concluída** de novo: a
-      etiqueta que já existe aparece como **"Etiqueta desatualizada"** e precisa ser
-      impressa de novo. A etiqueta velha não vale mais.
+- [ ] **5.** No Controle, atualizar e abrir P1: mostra **"Entregue por B (outro vendedor)"**,
+      com o código e o nome de B.
+- [ ] **6.** **A** sincroniza (abre o app com internet). P1 aparece como **Entregue**.
+- [ ] **7.** Na fábrica, **Produção concluída** em P2 de novo. **A** coloca o celular em **modo
+      avião**, toca **Ler etiqueta** e lê **a mesma etiqueta de P2 que saiu no passo 2** (o
+      pedido é dele). Abre **Registrar entrega**, o cliente assina e a entrega fica guardada
+      no celular. Desligar o modo avião e tocar **Enviar agora**: a entrega chega ao Controle.
+- [ ] **8.** **Ler de novo** a etiqueta de um pedido já entregue (P1, com **B** ou **A**, com
+      internet): aparece **"Este pedido já foi entregue."**
+- [ ] **9.** Etiqueta desatualizada, com um terceiro pedido P3 de **A**: enviar, **Produção
+      concluída**, **Imprimir etiqueta**, **Sim**. Depois **A** abre P3, muda uma quantidade e
+      toca **Salvar alterações**. P3 volta para **Pedidos em aberto**. Na fábrica, **Produção
+      concluída** de novo: no cartão em **Prontos para entrega** e no detalhe de P3 aparece
+      **"Etiqueta desatualizada"**, e é preciso imprimir de novo. A etiqueta velha deixou de
+      refletir o pedido.
 
 ## 6. Mensagens do app e o que fazer
 
