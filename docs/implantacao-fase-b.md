@@ -82,6 +82,9 @@ Para cada vendedor, **com o celular na internet**:
 
 - [ ] Instalar o APK novo do app dos vendedores **por cima** (não desinstalar).
 - [ ] Abrir o app. Ele deve entrar direto, sem pedir login de novo.
+- [ ] Abrir o app uma vez **com internet** depois de instalar: é assim que os pedidos que já
+      estão no celular recebem o código do QR. Pedido que estava aguardando envio na hora da
+      atualização recebe o código no próximo envio.
 - [ ] Esperar a tela inicial mostrar **0 pedidos aguardando envio**. Se mostrar N > 0, tocar
       "Enviar agora" e esperar zerar.
 - [ ] Conferir o botão **Ler etiqueta** na tela inicial e em **Meus pedidos**. No primeiro uso,
@@ -96,8 +99,8 @@ nada no fim**: os pedidos de teste ficam como estão.
 - [ ] **1.** **A** cria **dois** pedidos (vamos chamar de P1 e P2) e toca **Enviar pedido** em
       cada um (o cliente assina). Os dois aparecem em **Pedidos em aberto** no Controle.
 - [ ] **2.** Na fábrica: **Produção concluída** em P1. Aparece **"Imprimir a etiqueta agora?"**:
-      tocar em sim, imprimir e responder **Sim** em **"A etiqueta saiu certa?"**. Fazer o
-      mesmo com P2 (concluir, imprimir, **Sim**). Os dois ficam em **Prontos para entrega**.
+      tocar em **Agora**, imprimir e responder **Sim** em **"A etiqueta saiu certa?"**. Fazer
+      o mesmo com P2 (concluir, **Agora**, imprimir, **Sim**). Os dois ficam em **Prontos para entrega**.
       Guardar as duas etiquetas, cada uma com o nome do pedido anotado.
 - [ ] **3.** **A** abre P2, muda uma quantidade e toca **Salvar alterações** (o cliente assina
       de novo). P2 volta para **Pedidos em aberto** no Controle. A etiqueta de P2 que já saiu
@@ -109,7 +112,8 @@ nada no fim**: os pedidos de teste ficam como estão.
 - [ ] **5.** No Controle, atualizar e abrir P1: mostra **"Entregue por B (outro vendedor)"**,
       com o código e o nome de B.
 - [ ] **6.** **A** sincroniza (abre o app com internet). P1 aparece como **Entregue**.
-- [ ] **7.** Na fábrica, **Produção concluída** em P2 de novo. **A** coloca o celular em **modo
+- [ ] **7.** Na fábrica, **Produção concluída** em P2 de novo e responder **Depois** em
+      **"Imprimir a etiqueta agora?"** (não imprimir etiqueta nova). **A** coloca o celular em **modo
       avião**, toca **Ler etiqueta** e lê **a mesma etiqueta de P2 que saiu no passo 2** (o
       pedido é dele). Abre **Registrar entrega**, o cliente assina e a entrega fica guardada
       no celular. Desligar o modo avião e tocar **Enviar agora**: a entrega chega ao Controle.
@@ -127,11 +131,14 @@ nada no fim**: os pedidos de teste ficam como estão.
 | Mensagem | O que significa / o que fazer |
 |---|---|
 | Esta etiqueta não é de um pedido da MilkDim. | O QR lido é de outra coisa. Ler a etiqueta correta. |
-| Pedido não encontrado. | Etiqueta antiga ou de outro sistema. Imprimir uma nova pelo Controle. |
+| Pedido não encontrado. | O pedido foi apagado (**Apagar**) no Controle, ou a etiqueta não é deste sistema. Conferir no Controle se o pedido ainda existe. Imprimir de novo não resolve: a etiqueta nova sai com o mesmo código. |
 | Este pedido já foi entregue. | Nada a fazer: a entrega já foi registrada. |
 | Este pedido ainda não está pronto para entrega. | Esperar a fábrica dar **Produção concluída**. |
 | Este pedido foi cancelado. | Não entregar. Falar com a fábrica. |
 | Não deu para confirmar a entrega. Leia a etiqueta de novo. | Falha na confirmação. Ler a etiqueta outra vez. |
+| Não deu para ler o pedido. Leia a etiqueta de novo. | O servidor não respondeu (internet fraca ou caiu). Ler a etiqueta outra vez. |
+| Não deu para ler a etiqueta. Tente de novo. | Falha ao tratar a leitura no celular. Ler a etiqueta outra vez. |
+| Este pedido foi apagado no Controle. | Pedido do próprio vendedor que foi apagado no Controle: não entregar por ele. Falar com a fábrica. |
 | Sem internet. Para entregar pedido de outro vendedor, conecte e leia de novo. | Pedido de outro vendedor só com internet. Conectar e ler de novo. |
 | Entrega registrada. | Tudo certo. |
 | Libere a câmera nas configurações do Android para ler etiquetas. | Ver "Câmera negada" abaixo. |
@@ -140,7 +147,8 @@ Regra geral da leitura:
 
 - **Pedido do próprio vendedor:** abre **Registrar entrega** e funciona **sem internet**.
 - **Pedido de outro vendedor:** precisa de internet e só funciona se o pedido estiver **Pronto
-  para entrega**.
+  para entrega**. Vale também para pedido de outro vendedor guardado no mesmo celular: conta o
+  vendedor que está logado.
 
 ## 7. Problemas comuns
 
@@ -156,5 +164,9 @@ Regra geral da leitura:
   driver para o mesmo tamanho e imprimir de novo. Lembrar: a escolha vale por computador.
 - **O QR não lê.** Imprimir de novo, conferir se a etiqueta está limpa e sem dobras. Se a
   impressora borra os pontinhos, avisar para fazer o pequeno ajuste.
+- **"O pedido mudou depois que a tela foi atualizada. Atualize e confira." no Controle**, ao
+  responder **Sim** em "A etiqueta saiu certa?". O vendedor alterou o pedido depois que a tela
+  foi atualizada, então a etiqueta que saiu é de uma versão velha e não fica marcada. Atualizar,
+  conferir o pedido e imprimir de novo.
 - **Aba Produção com erro.** Quase certo que o banco ainda não recebeu a migração da Fase B
   (seção 2). Aplicá-la e abrir o Controle de novo.
