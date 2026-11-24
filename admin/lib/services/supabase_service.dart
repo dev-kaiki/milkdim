@@ -444,7 +444,16 @@ class SupabaseService {
 
   Future<void> cancelarPedido(int id) => _rpcPedido('pedido_cancelar', id);
 
-  Future<void> marcarEtiqueta(int id) => _rpcPedido('pedido_marcar_etiqueta', id);
+  /// Parâmetros da RPC `pedido_marcar_etiqueta`: como em [paramsMarcarPronto],
+  /// o `alterado_em` da linha de onde a etiqueta saiu (MD001 se mudou).
+  static Map<String, dynamic> paramsMarcarEtiqueta(int id, String? alteradoEmBruto) =>
+      {'p_id': id, 'p_alterado_em': alteradoEmBruto};
+
+  Future<void> marcarEtiqueta(int id, {String? alteradoEmBruto}) => _rpcPedido(
+        'pedido_marcar_etiqueta',
+        id,
+        params: paramsMarcarEtiqueta(id, alteradoEmBruto),
+      );
 
   Future<void> _rpcPedido(String fn, int id, {Map<String, dynamic>? params}) async {
     try {

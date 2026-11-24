@@ -102,7 +102,7 @@ void abrirDetalhesPedido(
   Future<DetalheDoPedido> Function(int id)? buscar,
   Future<bool> Function(Pedido p)? apagar,
   Map<String, String> nomesPorCodigo = const {},
-  Future<void> Function(int id)? marcarEtiqueta,
+  Future<void> Function(int id, String? alteradoEmBruto)? marcarEtiqueta,
   EnviarParaImpressora? enviarParaImpressora,
 }) {
   Future<DetalheDoPedido?> carregar() async {
@@ -178,7 +178,7 @@ class _FolhaDetalhe extends StatefulWidget {
   final BuildContext contextoDaAba;
   final Future<bool> Function(Pedido p)? apagar;
   final Map<String, String> nomesPorCodigo;
-  final Future<void> Function(int id)? marcarEtiqueta;
+  final Future<void> Function(int id, String? alteradoEmBruto)? marcarEtiqueta;
   final EnviarParaImpressora? enviarParaImpressora;
 
   /// Busca o detalhe de novo (para mostrar a etiqueta recém-impressa).
@@ -203,7 +203,8 @@ class _FolhaDetalheState extends State<_FolhaDetalhe> {
       await imprimirEtiquetaComConfirmacao(
         context,
         ped,
-        marcar: widget.marcarEtiqueta ?? SupabaseService().marcarEtiqueta,
+        marcar: widget.marcarEtiqueta ??
+            (id, bruto) => SupabaseService().marcarEtiqueta(id, alteradoEmBruto: bruto),
         enviar: widget.enviarParaImpressora,
       );
     } catch (e) {

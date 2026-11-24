@@ -44,11 +44,13 @@ EtiquetaDados etiquetaDoPedido(Pedido p) {
 enum _Resposta { sim, denovo, cancelar }
 
 /// Gera a etiqueta, envia para a impressora e pergunta se saiu certa. Só o
-/// "Sim" chama [marcar]. Devolve true se marcou.
+/// "Sim" chama [marcar], com o `alterado_em` (texto bruto) do pedido de onde
+/// a etiqueta saiu: o servidor recusa se o pedido mudou depois. Devolve true
+/// se marcou.
 Future<bool> imprimirEtiquetaComConfirmacao(
   BuildContext context,
   Pedido p, {
-  required Future<void> Function(int id) marcar,
+  required Future<void> Function(int id, String? alteradoEmBruto) marcar,
   EnviarParaImpressora? enviar,
 }) async {
   TamanhoEtiqueta tamanho;
@@ -89,7 +91,7 @@ Future<bool> imprimirEtiquetaComConfirmacao(
     );
     switch (r) {
       case _Resposta.sim:
-        await marcar(p.id);
+        await marcar(p.id, p.alteradoEmBruto);
         return true;
       case _Resposta.denovo:
         continue;

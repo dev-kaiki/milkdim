@@ -12,6 +12,7 @@ Pedido _pronto({
   String? codigoQr = '11111111-1111-1111-1111-111111111111',
   DateTime? impressaEm,
   DateTime? alteradoEm,
+  String? alteradoEmBruto,
 }) =>
     Pedido(
       id: id,
@@ -25,6 +26,7 @@ Pedido _pronto({
       enviadoEm: DateTime.now().subtract(const Duration(hours: 5)),
       prontoEm: DateTime.now().subtract(const Duration(hours: 1)),
       alteradoEm: alteradoEm,
+      alteradoEmBruto: alteradoEmBruto,
       codigoQr: codigoQr,
       etiquetaImpressaEm: impressaEm,
       itens: const [PedidoItem(nome: 'Pudim tradicional', preco: 1, quantidade: 3)],
@@ -37,6 +39,7 @@ Future<void> _abrir(
   List<Pedido> Function() lista, {
   required List<int> marcadas,
   required List<int> envios,
+  List<String?>? brutos,
   bool envioOk = true,
   Future<void> Function(int, String?)? marcarPronto,
 }) async {
@@ -46,7 +49,10 @@ Future<void> _abrir(
   await tester.pumpWidget(_app(ProducaoTab(
     carregar: () async => lista(),
     marcarPronto: marcarPronto,
-    marcarEtiqueta: (id) async => marcadas.add(id),
+    marcarEtiqueta: (id, bruto) async {
+      marcadas.add(id);
+      brutos?.add(bruto);
+    },
     enviarParaImpressora: (Uint8List pdf, TamanhoEtiqueta t) async {
       envios.add(pdf.length);
       return envioOk;
@@ -82,6 +88,21 @@ void main() {
     await tester.pumpAndSettle();
     expect(envios.length, 1);
     expect(marcadas, [7]);
+  });
+
+  testWidgets('o Sim marca com o alterado_em (bruto) do pedido de onde a etiqueta saiu',
+      (tester) async {
+    const bruto = '2026-11-24T10:00:00.123456+00:00';
+    final marcadas = <int>[], envios = <int>[];
+    final brutos = <String?>[];
+    await _abrir(tester, () => [_pronto(alteradoEmBruto: bruto)],
+        marcadas: marcadas, envios: envios, brutos: brutos);
+    await tester.tap(find.text('Imprimir etiqueta'));
+    await _esperar(tester, () => envios.isNotEmpty);
+    await tester.tap(find.text('Sim'));
+    await tester.pumpAndSettle();
+    expect(marcadas, [7]);
+    expect(brutos, [bruto]);
   });
 
   testWidgets('Imprimir de novo envia outra vez e só marca no Sim', (tester) async {

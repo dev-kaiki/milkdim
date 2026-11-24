@@ -18,7 +18,7 @@
 -- So as RPCs desta fase mudam essas colunas.
 --
 -- RPCs novas (security definer, search_path vazio, so authenticated):
---   pedido_marcar_etiqueta(p_id)              Controle (admin): etiqueta impressa
+--   pedido_marcar_etiqueta(p_id, p_alt_em)    Controle (admin): etiqueta impressa
 --   pedido_por_qr(p_codigo)                   qualquer vendedor: o que a
 --                                             entrega precisa, sem precos
 --   pedido_entregar_por_qr(p_codigo, p_assin) qualquer vendedor: registra a
@@ -230,26 +230,47 @@ revoke execute on function public.pedidos_antes_alterar() from public, anon, aut
 -- aceita a linha como veio, entao status e alterado_em nao mudam (o UPDATE
 -- so toca as duas colunas da etiqueta).
 --
--- Erros: 42501 sem permissao; P0002 pedido inexistente.
+-- p_alterado_em: o alterado_em do pedido de onde a etiqueta foi gerada (a
+-- tela do Controle atualiza de tempos em tempos). Se o vendedor mudou o
+-- pedido depois disso, a etiqueta impressa e de uma versao velha: a RPC
+-- recusa com MD001 em vez de gravar etiqueta_impressa_em = now(), que
+-- esconderia o aviso "Etiqueta desatualizada". Nulo = nulo conta como
+-- igual (pedido nunca alterado), como em pedido_marcar_pronto.
+--
+-- Erros: 42501 sem permissao; P0002 pedido inexistente; MD001 pedido
+-- mudou depois que a tela foi atualizada.
+--
+-- A versao de um argumento so nao fica ao lado desta (deixaria a chamada
+-- com um argumento ambigua); o drop cobre um banco onde ela exista.
+drop function if exists public.pedido_marcar_etiqueta(bigint);
 
-create or replace function public.pedido_marcar_etiqueta(p_id bigint)
+create or replace function public.pedido_marcar_etiqueta(
+  p_id bigint,
+  p_alterado_em timestamptz default null)
 returns void
 language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_alterado timestamptz;
 begin
   if not public.app_is_admin() then
     raise exception 'Sem permissao para marcar a etiqueta do pedido.' using errcode = '42501';
   end if;
 
-  perform 1
+  select p.alterado_em into v_alterado
     from public.pedidos p
    where p.id = p_id
      for update;
 
   if not found then
     raise exception 'Nao ha pedido com id %.', p_id using errcode = 'P0002';
+  end if;
+
+  if v_alterado is distinct from p_alterado_em then
+    raise exception 'O pedido mudou depois que a tela foi atualizada. Atualize e confira.'
+      using errcode = 'MD001';
   end if;
 
   perform set_config('milkdim.acao_controle', '1', true);
@@ -455,10 +476,10 @@ $$;
 -- Permissoes: so authenticated
 -- ---------------------------------------------------------------------------
 
-revoke execute on function public.pedido_marcar_etiqueta(bigint) from public, anon;
+revoke execute on function public.pedido_marcar_etiqueta(bigint, timestamptz) from public, anon;
 revoke execute on function public.pedido_por_qr(uuid) from public, anon;
 revoke execute on function public.pedido_entregar_por_qr(uuid, bytea) from public, anon;
 
-grant execute on function public.pedido_marcar_etiqueta(bigint) to authenticated;
+grant execute on function public.pedido_marcar_etiqueta(bigint, timestamptz) to authenticated;
 grant execute on function public.pedido_por_qr(uuid) to authenticated;
 grant execute on function public.pedido_entregar_por_qr(uuid, bytea) to authenticated;

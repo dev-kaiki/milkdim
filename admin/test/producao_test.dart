@@ -122,6 +122,14 @@ void main() {
     expect(m['p_alterado_em'], isNull);
   });
 
+  test('paramsMarcarEtiqueta leva o alterado_em exatamente como veio (ou null)', () {
+    const bruto = '2026-11-24T10:00:00.123456+00:00';
+    expect(SupabaseService.paramsMarcarEtiqueta(5, bruto), {'p_id': 5, 'p_alterado_em': bruto});
+    final m = SupabaseService.paramsMarcarEtiqueta(5, null);
+    expect(m.containsKey('p_alterado_em'), isTrue);
+    expect(m['p_alterado_em'], isNull);
+  });
+
   test('fromMap le campos de auditoria', () {
     final p = Pedido.fromMap({
       'id': 1,

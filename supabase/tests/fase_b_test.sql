@@ -335,7 +335,8 @@ begin
   end if;
 end $$;
 
--- 3a. Vendedor comum (A): 42501.
+-- 3a. Vendedor comum (A): 42501, antes de olhar o alterado_em (o nulo
+--     aqui nao bate com o de p1, entao a ordem dos testes aparece).
 select set_config('request.jwt.claims',
   json_build_object('sub', current_setting('teste.fb_uid_a'),
                     'role', 'authenticated')::text, true);
@@ -343,7 +344,7 @@ set local role authenticated;
 do $$
 begin
   begin
-    perform public.pedido_marcar_etiqueta(current_setting('teste.fb_p1')::bigint);
+    perform public.pedido_marcar_etiqueta(current_setting('teste.fb_p1')::bigint, null);
     raise exception 'FALHA: vendedor comum executou pedido_marcar_etiqueta';
   exception when sqlstate '42501' then
     null;
@@ -383,8 +384,41 @@ begin
       v_r.status, v_r.finalizado_manual, v_r.finalizado_por;
   end if;
 
-  -- Pedido salvo (p1).
-  perform public.pedido_marcar_etiqueta(current_setting('teste.fb_p1')::bigint);
+  -- alterado_em velho (a tela nao viu a ultima alteracao) ou nulo (a tela
+  -- viu o pedido antes de qualquer alteracao): MD001 e nada muda.
+  begin
+    perform public.pedido_marcar_etiqueta(current_setting('teste.fb_p1')::bigint,
+                                          now() - interval '3 hours');
+    raise exception 'FALHA: pedido_marcar_etiqueta aceitou alterado_em velho';
+  exception when sqlstate 'MD001' then
+    null;
+  end;
+  begin
+    perform public.pedido_marcar_etiqueta(current_setting('teste.fb_p1')::bigint, null);
+    raise exception 'FALHA: pedido_marcar_etiqueta aceitou alterado_em nulo de pedido alterado';
+  exception when sqlstate 'MD001' then
+    null;
+  end;
+  begin
+    perform public.pedido_marcar_etiqueta(current_setting('teste.fb_p1')::bigint);
+    raise exception 'FALHA: pedido_marcar_etiqueta sem alterado_em aceitou pedido alterado';
+  exception when sqlstate 'MD001' then
+    null;
+  end;
+  select * into v_r from public.pedidos where id = current_setting('teste.fb_p1')::bigint;
+  if v_r.etiqueta_impressa_em is not null or v_r.etiqueta_impressa_por is not null
+     or v_r.status is distinct from 'salvo'
+     or v_r.alterado_em is distinct from now() - interval '2 hours' then
+    raise exception 'FALHA: recusa MD001 mexeu em p1 (em %, por %, status %, alterado_em %)',
+      v_r.etiqueta_impressa_em, v_r.etiqueta_impressa_por, v_r.status, v_r.alterado_em;
+  end if;
+  if coalesce(current_setting('milkdim.acao_controle', true), '') = '1' then
+    raise exception 'FALHA: milkdim.acao_controle ligada depois da recusa MD001';
+  end if;
+
+  -- Pedido salvo (p1) com o alterado_em certo: marca.
+  perform public.pedido_marcar_etiqueta(current_setting('teste.fb_p1')::bigint,
+                                        now() - interval '2 hours');
   select * into v_r from public.pedidos where id = current_setting('teste.fb_p1')::bigint;
   if v_r.etiqueta_impressa_em is distinct from now()
      or v_r.etiqueta_impressa_por is distinct from '-907' then
@@ -403,8 +437,9 @@ begin
     raise exception 'FALHA: milkdim.acao_controle continua ligada depois de pedido_marcar_etiqueta';
   end if;
 
-  -- Pedido pronto (p4): continua pronto.
-  perform public.pedido_marcar_etiqueta(current_setting('teste.fb_p4')::bigint);
+  -- Pedido pronto (p4), nunca alterado: nulo = nulo conta como igual;
+  -- continua pronto.
+  perform public.pedido_marcar_etiqueta(current_setting('teste.fb_p4')::bigint, null);
   select * into v_r from public.pedidos where id = current_setting('teste.fb_p4')::bigint;
   if v_r.status is distinct from 'pronto' or v_r.alterado_em is not null
      or v_r.etiqueta_impressa_em is distinct from now()
@@ -413,10 +448,16 @@ begin
       v_r.status, v_r.alterado_em, v_r.etiqueta_impressa_em, v_r.etiqueta_impressa_por;
   end if;
 
-  -- Id inexistente: P0002.
+  -- Id inexistente: P0002 (antes do MD001, com ou sem alterado_em).
   begin
     perform public.pedido_marcar_etiqueta(-1);
     raise exception 'FALHA: pedido_marcar_etiqueta aceitou id inexistente';
+  exception when sqlstate 'P0002' then
+    null;
+  end;
+  begin
+    perform public.pedido_marcar_etiqueta(-1, now());
+    raise exception 'FALHA: pedido_marcar_etiqueta aceitou id inexistente com alterado_em';
   exception when sqlstate 'P0002' then
     null;
   end;
@@ -829,7 +870,18 @@ begin
 
   -- RPCs novas: security definer com search_path vazio; authenticated
   -- executa, anon e PUBLIC nao.
-  foreach v_fn in array array['public.pedido_marcar_etiqueta(bigint)'::regprocedure,
+  -- pedido_marcar_etiqueta so existe com (bigint, timestamptz).
+  if to_regprocedure('public.pedido_marcar_etiqueta(bigint)') is not null then
+    raise exception 'FALHA: pedido_marcar_etiqueta(bigint) ainda existe';
+  end if;
+  select count(*) into v_n from pg_proc
+   where proname = 'pedido_marcar_etiqueta'
+     and pronamespace = 'public'::regnamespace;
+  if v_n <> 1 then
+    raise exception 'FALHA: % versoes de pedido_marcar_etiqueta (esperada 1)', v_n;
+  end if;
+
+  foreach v_fn in array array['public.pedido_marcar_etiqueta(bigint, timestamptz)'::regprocedure,
                               'public.pedido_por_qr(uuid)'::regprocedure,
                               'public.pedido_entregar_por_qr(uuid, bytea)'::regprocedure]
   loop

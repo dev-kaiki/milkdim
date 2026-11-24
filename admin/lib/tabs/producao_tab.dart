@@ -43,7 +43,7 @@ class ProducaoTab extends StatefulWidget {
   @visibleForTesting
   final Future<void> Function(int id)? cancelar;
   @visibleForTesting
-  final Future<void> Function(int id)? marcarEtiqueta;
+  final Future<void> Function(int id, String? alteradoEmBruto)? marcarEtiqueta;
   @visibleForTesting
   final EnviarParaImpressora? enviarParaImpressora;
 
@@ -204,7 +204,8 @@ class _ProducaoTabState extends State<ProducaoTab> {
       await imprimirEtiquetaComConfirmacao(
         context,
         p,
-        marcar: widget.marcarEtiqueta ?? _service.marcarEtiqueta,
+        marcar: widget.marcarEtiqueta ??
+            (id, bruto) => _service.marcarEtiqueta(id, alteradoEmBruto: bruto),
         enviar: widget.enviarParaImpressora,
       );
     } catch (e) {
