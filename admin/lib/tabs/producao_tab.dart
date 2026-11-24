@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 
+import '../etiqueta/imprimir_etiqueta.dart';
+import '../etiqueta/tamanho_etiqueta.dart';
 import '../models/pedido.dart';
 import '../models/producao.dart';
 import '../services/supabase_service.dart';
@@ -39,6 +41,10 @@ class ProducaoTab extends StatefulWidget {
   final Future<void> Function(int id)? finalizar;
   @visibleForTesting
   final Future<void> Function(int id)? cancelar;
+  @visibleForTesting
+  final Future<void> Function(int id)? marcarEtiqueta;
+  @visibleForTesting
+  final EnviarParaImpressora? enviarParaImpressora;
 
   /// Busca do detalhe ao tocar no pedido; nulo usa [buscarDetalhePedido].
   @visibleForTesting
@@ -52,6 +58,8 @@ class ProducaoTab extends StatefulWidget {
     this.marcarPronto,
     this.finalizar,
     this.cancelar,
+    this.marcarEtiqueta,
+    this.enviarParaImpressora,
     this.buscarDetalhe,
     this.intervalo = const Duration(seconds: 30),
   });
@@ -154,13 +162,101 @@ class _ProducaoTabState extends State<ProducaoTab> {
       if (mounted) setState(() => _ocupados.remove(p.id));
       return;
     }
-    await _executar(
+    final deu = await _executar(
       p,
       (id) => widget.marcarPronto != null
           ? widget.marcarPronto!(id, p.alteradoEmBruto)
           : _service.marcarPronto(id, alteradoEmBruto: p.alteradoEmBruto),
       'Pedido pronto para entrega.',
     );
+    if (deu && mounted) await _perguntarImprimirAgora(p.id);
+  }
+
+  Future<void> _perguntarImprimirAgora(int id) async {
+    // Usa a linha recarregada (já pronta, com prontoEm e codigoQr).
+    Pedido? atual;
+    for (final x in _pedidos) {
+      if (x.id == id) atual = x;
+    }
+    if (atual == null || atual.codigoQr == null) return;
+    final agora = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const TituloDialogo(
+          icone: Icons.print_outlined,
+          texto: 'Imprimir a etiqueta agora?',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Depois')),
+          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Agora')),
+        ],
+      ),
+    );
+    if (agora != true || !mounted) return;
+    await _imprimirEtiqueta(atual);
+  }
+
+  Future<void> _imprimirEtiqueta(Pedido p) async {
+    if (_ocupados.contains(p.id)) return;
+    setState(() => _ocupados.add(p.id));
+    try {
+      await imprimirEtiquetaComConfirmacao(
+        context,
+        p,
+        marcar: widget.marcarEtiqueta ?? _service.marcarEtiqueta,
+        enviar: widget.enviarParaImpressora,
+      );
+    } catch (e) {
+      if (mounted) {
+        final msg = e is RepoFailure ? e.message : 'Erro ao imprimir a etiqueta: $e';
+        showMdSnack(context, msg, tipo: MdTipo.erro);
+      }
+    } finally {
+      if (mounted) setState(() => _ocupados.remove(p.id));
+    }
+    if (!mounted) return;
+    await _carregar(silencioso: true, garantir: true);
+  }
+
+  Future<void> _escolherTamanho() async {
+    TamanhoEtiqueta atual;
+    try {
+      atual = await lerTamanhoEtiqueta();
+    } catch (_) {
+      atual = TamanhoEtiqueta.m100x100;
+    }
+    if (!mounted) return;
+    final novo = await showDialog<TamanhoEtiqueta>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const TituloDialogo(
+          icone: Icons.straighten_outlined,
+          texto: 'Tamanho da etiqueta',
+        ),
+        children: [
+          for (final t in TamanhoEtiqueta.values)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(ctx).pop(t),
+              child: Row(
+                children: [
+                  Icon(t == atual ? Icons.radio_button_checked : Icons.radio_button_off,
+                      size: 20),
+                  const SizedBox(width: MdSpace.md),
+                  Text(t.rotulo),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (novo == null) return;
+    try {
+      await gravarTamanhoEtiqueta(novo);
+    } catch (e) {
+      if (mounted) {
+        showMdSnack(context, 'Não foi possível guardar o tamanho: $e', tipo: MdTipo.erro);
+      }
+    }
   }
 
   Future<void> _confirmarEntregue(Pedido p) async {
@@ -227,22 +323,26 @@ class _ProducaoTabState extends State<ProducaoTab> {
     );
   }
 
-  Future<void> _executar(
+  /// Devolve true se a ação deu certo.
+  Future<bool> _executar(
       Pedido p, Future<void> Function(int) acao, String sucesso) async {
     // O id já foi marcado como ocupado ao abrir a confirmação.
+    var deu = false;
     try {
       await acao(p.id);
-      if (!mounted) return;
+      deu = true;
+      if (!mounted) return true;
       showMdSnack(context, sucesso, tipo: MdTipo.sucesso);
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) return false;
       final msg = e is RepoFailure ? e.message : 'Erro ao atualizar pedido: $e';
       showMdSnack(context, msg, tipo: MdTipo.erro);
     } finally {
       if (mounted) setState(() => _ocupados.remove(p.id));
     }
-    if (!mounted) return;
+    if (!mounted) return deu;
     await _carregar(silencioso: true, garantir: true);
+    return deu;
   }
 
   // -------------------- helpers --------------------
@@ -367,6 +467,15 @@ class _ProducaoTabState extends State<ProducaoTab> {
                 icon: Icon(pronto ? Icons.local_shipping_outlined : Icons.check_rounded),
                 label: Text(pronto ? 'Marcar como entregue' : 'Produção concluída'),
               ),
+              if (pronto)
+                Tooltip(
+                  message: p.codigoQr == null ? 'Atualize o banco para imprimir etiquetas' : '',
+                  child: OutlinedButton.icon(
+                    onPressed: (ocupado || p.codigoQr == null) ? null : () => _imprimirEtiqueta(p),
+                    icon: const Icon(Icons.print_outlined),
+                    label: const Text('Imprimir etiqueta'),
+                  ),
+                ),
               OutlinedButton(
                 style: OutlinedButton.styleFrom(
                   foregroundColor: MdColors.danger,
@@ -377,8 +486,34 @@ class _ProducaoTabState extends State<ProducaoTab> {
               ),
             ],
           ),
+          if (pronto) ...[
+            const SizedBox(height: MdSpace.sm),
+            _chipEtiqueta(p),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _chipEtiqueta(Pedido p) {
+    if (p.etiquetaDesatualizada) {
+      return const MdStatusChip(
+        tipo: MdTipo.atencao,
+        icone: Icons.print_disabled_outlined,
+        texto: 'Etiqueta desatualizada',
+      );
+    }
+    if (p.etiquetaImpressaEm != null) {
+      return MdStatusChip(
+        tipo: MdTipo.neutro,
+        icone: Icons.print_outlined,
+        texto: 'Etiqueta impressa às ${_horaFmt.format(p.etiquetaImpressaEm!.toLocal())}',
+      );
+    }
+    return const MdStatusChip(
+      tipo: MdTipo.atencao,
+      icone: Icons.print_outlined,
+      texto: 'Sem etiqueta',
     );
   }
 
@@ -433,6 +568,11 @@ class _ProducaoTabState extends State<ProducaoTab> {
                 ),
               ),
             _botaoAtualizar(),
+            IconButton(
+              tooltip: 'Tamanho da etiqueta',
+              onPressed: _escolherTamanho,
+              icon: const Icon(Icons.settings_outlined),
+            ),
           ],
         ),
       );

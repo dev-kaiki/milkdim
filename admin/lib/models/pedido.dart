@@ -112,6 +112,11 @@ class Pedido {
   final DateTime? canceladoEm;
   final String? canceladoPor;
 
+  /// Código do QR da etiqueta (uuid) e marcas de impressão.
+  final String? codigoQr;
+  final DateTime? etiquetaImpressaEm;
+  final String? etiquetaImpressaPor;
+
   /// Para UI. No Supabase é bytea: o PostgREST devolve "\x" + hex.
   /// Assinatura da ENTREGA (coluna `assinatura`).
   final Uint8List? assinaturaBytes;
@@ -150,6 +155,9 @@ class Pedido {
     this.finalizadoManual = false,
     this.canceladoEm,
     this.canceladoPor,
+    this.codigoQr,
+    this.etiquetaImpressaEm,
+    this.etiquetaImpressaPor,
     this.assinaturaBytes,
     this.assinaturaPedidoBytes,
   });
@@ -295,6 +303,9 @@ class Pedido {
       finalizadoManual: _toBoolFlag(_pick(m, 'finalizado_manual', 'finalizadoManual')),
       canceladoEm: _toDate(_pick(m, 'cancelado_em', 'canceladoEm')),
       canceladoPor: _pick(m, 'cancelado_por', 'canceladoPor')?.toString(),
+      codigoQr: _pick(m, 'codigo_qr', 'codigoQr')?.toString(),
+      etiquetaImpressaEm: _toDate(_pick(m, 'etiqueta_impressa_em', 'etiquetaImpressaEm')),
+      etiquetaImpressaPor: _pick(m, 'etiqueta_impressa_por', 'etiquetaImpressaPor')?.toString(),
       assinaturaBytes: assinaturaBytes,
       assinaturaPedidoBytes: assinaturaPedido,
     );
@@ -399,6 +410,9 @@ class Pedido {
     bool? finalizadoManual,
     DateTime? canceladoEm,
     String? canceladoPor,
+    String? codigoQr,
+    DateTime? etiquetaImpressaEm,
+    String? etiquetaImpressaPor,
     Uint8List? assinaturaBytes,
     Uint8List? assinaturaPedidoBytes,
   }) {
@@ -435,6 +449,9 @@ class Pedido {
       finalizadoManual: finalizadoManual ?? this.finalizadoManual,
       canceladoEm: canceladoEm ?? this.canceladoEm,
       canceladoPor: canceladoPor ?? this.canceladoPor,
+      codigoQr: codigoQr ?? this.codigoQr,
+      etiquetaImpressaEm: etiquetaImpressaEm ?? this.etiquetaImpressaEm,
+      etiquetaImpressaPor: etiquetaImpressaPor ?? this.etiquetaImpressaPor,
       assinaturaBytes: assinaturaBytes ?? this.assinaturaBytes,
       assinaturaPedidoBytes: assinaturaPedidoBytes ?? this.assinaturaPedidoBytes,
     );
@@ -451,6 +468,12 @@ class Pedido {
       prontoEm != null &&
       alteradoEm != null &&
       alteradoEm!.isAfter(prontoEm!);
+
+  /// Alterado depois de a etiqueta ser impressa: os itens impressos estão velhos.
+  bool get etiquetaDesatualizada =>
+      etiquetaImpressaEm != null &&
+      alteradoEm != null &&
+      alteradoEm!.isAfter(etiquetaImpressaEm!);
 
   String get situacaoTexto {
     switch (status) {

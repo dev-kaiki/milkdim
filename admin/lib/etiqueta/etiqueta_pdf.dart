@@ -252,14 +252,18 @@ Future<Uint8List> gerarEtiquetaPdf(
       {bool bold = false, double? altura}) {
     return pw.SizedBox(
       height: altura ?? fonte * _alturaTexto,
-      child: pw.FittedBox(
-        fit: pw.BoxFit.scaleDown,
-        alignment: pw.Alignment.centerLeft,
-        child: pw.Text(
-          texto,
-          style: pw.TextStyle(font: bold ? negrito : normal, fontSize: fonte),
-        ),
-      ),
+      // Texto vazio tem largura 0 e o FittedBox recusa (assert do pdf).
+      child: texto.isEmpty
+          ? null
+          : pw.FittedBox(
+              fit: pw.BoxFit.scaleDown,
+              alignment: pw.Alignment.centerLeft,
+              child: pw.Text(
+                texto,
+                style: pw.TextStyle(
+                    font: bold ? negrito : normal, fontSize: fonte),
+              ),
+            ),
     );
   }
 
@@ -267,13 +271,15 @@ Future<Uint8List> gerarEtiquetaPdf(
   pw.Widget duasPontas(double fonte, String esq, String dir,
       {bool bold = false}) {
     pw.Widget texto(String t, pw.Alignment al) => pw.Flexible(
-          child: pw.FittedBox(
-            fit: pw.BoxFit.scaleDown,
-            alignment: al,
-            child: pw.Text(t,
-                style: pw.TextStyle(
-                    font: bold ? negrito : normal, fontSize: fonte)),
-          ),
+          child: t.isEmpty
+              ? pw.SizedBox()
+              : pw.FittedBox(
+                  fit: pw.BoxFit.scaleDown,
+                  alignment: al,
+                  child: pw.Text(t,
+                      style: pw.TextStyle(
+                          font: bold ? negrito : normal, fontSize: fonte)),
+                ),
         );
     return pw.SizedBox(
       height: fonte * _alturaTexto,

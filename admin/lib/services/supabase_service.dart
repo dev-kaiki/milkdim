@@ -57,7 +57,8 @@ const String colunasPedidoSemAssinatura =
     'cliente_whatsapp, cliente_email, cliente_endereco, cliente_cidade, '
     'cliente_cpf_cnpj, cliente_insc_estadual, cliente_cep, cliente_anotacao, '
     'enviado_em, alterado_em, pronto_em, pronto_por, '
-    'finalizado_em, finalizado_por, finalizado_manual, cancelado_em, cancelado_por';
+    'finalizado_em, finalizado_por, finalizado_manual, cancelado_em, cancelado_por, '
+    'codigo_qr, etiqueta_impressa_em, etiqueta_impressa_por';
 
 /// Mensagem em portugues para o erro de uma RPC de pedido.
 String mensagemErroRpcPedido(String? code) {
@@ -162,6 +163,10 @@ class SupabaseService {
     'finalizado_manual'     : m['finalizado_manual'],
     'cancelado_em'          : m['cancelado_em'],
     'cancelado_por'         : m['cancelado_por'],
+    'cliente_nome_fantasia' : m['cliente_nome_fantasia'],
+    'codigo_qr'             : m['codigo_qr'],
+    'etiqueta_impressa_em'  : m['etiqueta_impressa_em'],
+    'etiqueta_impressa_por' : m['etiqueta_impressa_por'],
   };
 
   // ----------------- CLIENTES -----------------
@@ -438,6 +443,8 @@ class SupabaseService {
   Future<void> finalizarManual(int id) => _rpcPedido('pedido_finalizar_manual', id);
 
   Future<void> cancelarPedido(int id) => _rpcPedido('pedido_cancelar', id);
+
+  Future<void> marcarEtiqueta(int id) => _rpcPedido('pedido_marcar_etiqueta', id);
 
   Future<void> _rpcPedido(String fn, int id, {Map<String, dynamic>? params}) async {
     try {
