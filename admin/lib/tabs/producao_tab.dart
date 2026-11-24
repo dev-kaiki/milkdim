@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 
+import '../etiqueta/estado_etiqueta.dart';
 import '../etiqueta/imprimir_etiqueta.dart';
 import '../etiqueta/tamanho_etiqueta.dart';
 import '../models/pedido.dart';
@@ -413,7 +414,10 @@ class _ProducaoTabState extends State<ProducaoTab> {
     // Tocar abre o mesmo detalhe da aba Pedidos (sem "Apagar": pedido em
     // aberto se cancela, não se apaga).
     return MdCard(
-      onTap: () => abrirDetalhesPedido(context, p, buscar: widget.buscarDetalhe),
+      onTap: () => abrirDetalhesPedido(context, p,
+          buscar: widget.buscarDetalhe,
+          marcarEtiqueta: widget.marcarEtiqueta,
+          enviarParaImpressora: widget.enviarParaImpressora),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -488,32 +492,10 @@ class _ProducaoTabState extends State<ProducaoTab> {
           ),
           if (pronto) ...[
             const SizedBox(height: MdSpace.sm),
-            _chipEtiqueta(p),
+            chipEtiqueta(p),
           ],
         ],
       ),
-    );
-  }
-
-  Widget _chipEtiqueta(Pedido p) {
-    if (p.etiquetaDesatualizada) {
-      return const MdStatusChip(
-        tipo: MdTipo.atencao,
-        icone: Icons.print_disabled_outlined,
-        texto: 'Etiqueta desatualizada',
-      );
-    }
-    if (p.etiquetaImpressaEm != null) {
-      return MdStatusChip(
-        tipo: MdTipo.neutro,
-        icone: Icons.print_outlined,
-        texto: 'Etiqueta impressa às ${_horaFmt.format(p.etiquetaImpressaEm!.toLocal())}',
-      );
-    }
-    return const MdStatusChip(
-      tipo: MdTipo.atencao,
-      icone: Icons.print_outlined,
-      texto: 'Sem etiqueta',
     );
   }
 
