@@ -36,6 +36,12 @@ class EtiquetaDados {
   final String codigoQr;
 }
 
+/// Texto de "Pronto em" na hora local. O `pronto_em` vem do PostgREST com
+/// `+00:00` e o `Pedido` o lê em UTC: sem `toLocal()` a etiqueta sairia com a
+/// hora de Greenwich.
+String textoProntoEm(DateTime prontoEm) =>
+    DateFormat('dd/MM HH:mm').format(prontoEm.toLocal());
+
 /// Medidas de cada tamanho. Tudo em pontos (1 mm = 72/25,4 pt).
 class _Medidas {
   const _Medidas({
@@ -243,8 +249,7 @@ Future<Uint8List> gerarEtiquetaPdf(
   final geom = geometriaQrArredondado(conteudoQrEntrega(d.codigoQr));
   final paginas = paginarItens(d.itens.length, t);
   final total = d.itens.fold<int>(0, (s, i) => s + i.quantidade);
-  final prontoEm =
-      d.prontoEm == null ? null : DateFormat('dd/MM HH:mm').format(d.prontoEm!);
+  final prontoEm = d.prontoEm == null ? null : textoProntoEm(d.prontoEm!);
 
   final doc = pw.Document(title: 'Etiqueta do pedido ${d.numero}');
 

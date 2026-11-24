@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:intl/intl.dart';
 import 'package:milkdim_admin/etiqueta/etiqueta_pdf.dart';
 import 'package:milkdim_admin/etiqueta/qr_arredondado.dart';
 import 'package:milkdim_admin/etiqueta/tamanho_etiqueta.dart';
@@ -176,6 +177,19 @@ void main() {
         expect(bytes, isNotEmpty);
         expect(String.fromCharCodes(bytes.take(4)), '%PDF', reason: t.name);
       }
+    });
+
+    test('"Pronto em" sai na hora local, não em UTC', () {
+      // Como o Pedido lê o pronto_em do PostgREST.
+      final utc = DateTime.parse('2026-11-24T17:05:00+00:00');
+      expect(utc.isUtc, isTrue);
+      final local = DateTime.fromMillisecondsSinceEpoch(utc.millisecondsSinceEpoch);
+      expect(textoProntoEm(utc), DateFormat('dd/MM HH:mm').format(local));
+      if (local.timeZoneOffset != Duration.zero) {
+        expect(textoProntoEm(utc), isNot('24/11 17:05'));
+      }
+      // Hora já local fica como está.
+      expect(textoProntoEm(DateTime(2026, 11, 24, 14, 5)), '24/11 14:05');
     });
 
     test('gera PDF também sem logo e com muitos itens', () async {
