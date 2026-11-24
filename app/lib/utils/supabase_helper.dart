@@ -291,6 +291,7 @@ Map<String, dynamic> _camposDoServidor(
       'id_aparelho': _texto(remoto['id_aparelho']) ?? _texto(idAparelhoLocal),
       'so_local': 0,
       'erro_envio': null,
+      'codigo_qr': _texto(remoto['codigo_qr']),
       for (final c in _colunasAuditoria)
         c: c == 'finalizado_manual' ? _boolComoTexto(remoto[c]) : _texto(remoto[c]),
     };
@@ -778,6 +779,7 @@ const List<String> _camposForaDoPayload = [
   'pendente_envio',
   'so_local',
   'erro_envio',
+  'codigo_qr', // o servidor gera; nunca vai do app
   kLimparAssinaturaPedido, // pedido de limpeza local, não é coluna
   ..._colunasAuditoria,
 ];
