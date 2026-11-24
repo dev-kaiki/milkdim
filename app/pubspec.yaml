@@ -48,6 +48,7 @@ dependencies:
   # Visual compartilhado (tokens, tema e componentes) com o app de controle
   milkdim_ui:
     path: ../packages/milkdim_ui
+  mobile_scanner: ^7.5.0
 
 dev_dependencies:
   flutter_test:

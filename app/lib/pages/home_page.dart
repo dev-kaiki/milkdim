@@ -18,6 +18,7 @@ import '../utils/supabase_helper.dart';
 import 'pedido_page.dart';
 import 'pedidos_page.dart';
 import 'configuracoes_page.dart';
+import 'ler_etiqueta_page.dart';
 
 class HomePage extends StatefulWidget {
   final Map<String, dynamic> vendedor;
@@ -327,6 +328,13 @@ class _HomePageState extends State<HomePage> {
                         titulo: 'Meus pedidos',
                         subtitulo: 'Ver, editar e compartilhar',
                         onTap: () => _abrir(PedidosPage(vendedorCodigo: _codigo)),
+                      ),
+                      const SizedBox(height: MdSpace.md),
+                      MdActionTile(
+                        icone: Icons.qr_code_scanner,
+                        titulo: 'Ler etiqueta',
+                        subtitulo: 'Registrar a entrega pelo QR',
+                        onTap: () => _abrir(const LerEtiquetaPage()),
                       ),
                       if (_sincronizando) ...[
                         const SizedBox(height: MdSpace.xl),
