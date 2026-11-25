@@ -23,6 +23,9 @@ class EtiquetaDados {
     required this.itens,
     required this.prontoEm,
     required this.codigoQr,
+    this.endereco = '',
+    this.cep = '',
+    this.telefone = '',
   });
 
   final int numero;
@@ -35,6 +38,37 @@ class EtiquetaDados {
   final List<({String nome, int quantidade})> itens;
   final DateTime? prontoEm;
   final String codigoQr;
+
+  /// Contato para a entrega; vazio quando o cliente não tem.
+  final String endereco, cep, telefone;
+}
+
+/// Linhas do bloco "Entregar em", ao lado do QR (só nas etiquetas de 100 mm).
+/// Linha sem dado não aparece; sem endereço, CEP nem telefone, o bloco some.
+/// CPF/CNPJ, e-mail e anotação ficam de fora: a etiqueta fica à vista no
+/// pacote.
+List<String> linhasEntrega(EtiquetaDados d) {
+  final endereco = d.endereco.trim();
+  final cep = _textoCep(d.cep);
+  final telefone = d.telefone.trim();
+  if (endereco.isEmpty && cep.isEmpty && telefone.isEmpty) return const [];
+  return [
+    'Entregar em',
+    if (endereco.isNotEmpty) endereco,
+    if (cep.isNotEmpty) 'CEP $cep',
+    if (telefone.isNotEmpty) 'Tel. $telefone',
+  ];
+}
+
+/// CEP sem o prefixo "CEP" que às vezes vem digitado; 8 dígitos saem como
+/// 00000-000, o resto como foi cadastrado.
+String _textoCep(String bruto) {
+  final s = bruto.trim().replaceFirst(RegExp(r'^cep\s*:?\s*', caseSensitive: false), '');
+  final digitos = s.replaceAll(RegExp(r'\D'), '');
+  if (digitos.length == 8) {
+    return '${digitos.substring(0, 5)}-${digitos.substring(5)}';
+  }
+  return s;
 }
 
 /// Texto de "Pronto em" na hora local. O `pronto_em` vem do PostgREST com
@@ -251,6 +285,7 @@ Future<Uint8List> gerarEtiquetaPdf(
   final paginas = paginarItens(d.itens.length, t);
   final total = d.itens.fold<int>(0, (s, i) => s + i.quantidade);
   final prontoEm = d.prontoEm == null ? null : textoProntoEm(d.prontoEm!);
+  final entrega = linhasEntrega(d);
 
   final doc = pw.Document(title: 'Etiqueta do pedido ${d.numero}');
 
@@ -391,6 +426,12 @@ Future<Uint8List> gerarEtiquetaPdf(
       mainAxisAlignment: pw.MainAxisAlignment.end,
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
+        // Na 60x40 a coluna é só a largura do QR: o endereço não cabe.
+        if (!m.qrLateral && entrega.isNotEmpty) ...[
+          linha(m.fontePequena, entrega.first),
+          for (final l in entrega.skip(1)) linha(m.fontePequena, l, bold: true),
+          pw.SizedBox(height: _pt(1)),
+        ],
         if (prontoEm != null) ...[
           pw.Text('Pronto em',
               style: pw.TextStyle(font: normal, fontSize: m.fontePequena)),

@@ -93,6 +93,9 @@ EtiquetaDados _dados({int itens = 3}) => EtiquetaDados(
       ],
       prontoEm: DateTime(2026, 11, 24, 14, 5),
       codigoQr: _uuids.first,
+      endereco: 'Rua de Teste, 123 - Centro',
+      cep: '15990000',
+      telefone: '(16) 99999-0000',
     );
 
 Uint8List? _logo() {
@@ -221,6 +224,93 @@ void main() {
       expect(etiquetaDoPedido(pedido(nome: '  ')).vendedor, '0002');
       expect(etiquetaDoPedido(pedido(nome: null, codigo: null)).vendedor, '');
     });
+
+    Pedido comContato({
+      String? endereco,
+      String? cep,
+      String? telefone,
+      String? whatsapp,
+    }) =>
+        Pedido(
+          id: 9,
+          numero: '77',
+          total: 0,
+          status: 'pronto',
+          clienteNome: 'Cliente Teste',
+          clienteEndereco: endereco,
+          clienteCep: cep,
+          clienteTelefone: telefone,
+          clienteWhatsapp: whatsapp,
+          itens: const [],
+        );
+
+    test('a etiqueta leva endereço, CEP e telefone do pedido', () {
+      final d = etiquetaDoPedido(comContato(
+        endereco: ' Rua Teste, 10 ',
+        cep: ' 15990000 ',
+        telefone: ' (16) 3333-0000 ',
+        whatsapp: '(16) 99999-0000',
+      ));
+      expect(d.endereco, 'Rua Teste, 10');
+      expect(d.cep, '15990000');
+      expect(d.telefone, '(16) 3333-0000');
+    });
+
+    test('sem telefone, usa o WhatsApp', () {
+      expect(etiquetaDoPedido(comContato(telefone: ' ', whatsapp: '(16) 99999-0000')).telefone,
+          '(16) 99999-0000');
+      expect(etiquetaDoPedido(comContato()).telefone, '');
+    });
+  });
+
+  group('bloco "Entregar em"', () {
+    EtiquetaDados com({String endereco = '', String cep = '', String telefone = ''}) =>
+        EtiquetaDados(
+          numero: 1,
+          clienteTitulo: 'Cliente Teste',
+          cidade: 'Cidade Teste',
+          vendedor: '',
+          itens: const [],
+          prontoEm: null,
+          codigoQr: _uuids.first,
+          endereco: endereco,
+          cep: cep,
+          telefone: telefone,
+        );
+
+    test('com tudo preenchido', () {
+      expect(
+        linhasEntrega(com(endereco: 'Rua Teste, 10', cep: '15990000', telefone: '(16) 3333-0000')),
+        ['Entregar em', 'Rua Teste, 10', 'CEP 15990-000', 'Tel. (16) 3333-0000'],
+      );
+    });
+
+    test('linha vazia não aparece', () {
+      expect(linhasEntrega(com(endereco: 'Rua Teste, 10')), ['Entregar em', 'Rua Teste, 10']);
+      expect(linhasEntrega(com(telefone: '(16) 3333-0000')), ['Entregar em', 'Tel. (16) 3333-0000']);
+    });
+
+    test('sem endereço, CEP nem telefone, o bloco some', () {
+      expect(linhasEntrega(com()), isEmpty);
+    });
+
+    test('CEP: formata 8 dígitos e não repete o "CEP"', () {
+      expect(linhasEntrega(com(cep: '15.990-000')).last, 'CEP 15990-000');
+      expect(linhasEntrega(com(cep: 'CEP: 15990-000')).last, 'CEP 15990-000');
+      expect(linhasEntrega(com(cep: '1599')).last, 'CEP 1599');
+    });
+
+    test('gera o PDF com o bloco nos três tamanhos, mesmo com endereço longo', () async {
+      final d = com(
+        endereco: 'Avenida de Teste com um Nome Bem Comprido, 12345 - Bairro Distante',
+        cep: '15990000',
+        telefone: '(16) 99999-0000',
+      );
+      for (final t in TamanhoEtiqueta.values) {
+        final bytes = await gerarEtiquetaPdf(d, t, logo: _logo());
+        expect(String.fromCharCodes(bytes.take(4)), '%PDF', reason: t.name);
+      }
+    });
   });
 
   group('tamanho da etiqueta', () {
@@ -249,6 +339,9 @@ void main() {
       File('${dir.path}/etiqueta_100x100.pdf').writeAsBytesSync(
           await gerarEtiquetaPdf(_dados(), TamanhoEtiqueta.m100x100,
               logo: logo));
+      File('${dir.path}/etiqueta_100x150.pdf').writeAsBytesSync(
+          await gerarEtiquetaPdf(_dados(), TamanhoEtiqueta.m100x150,
+              logo: logo));
       File('${dir.path}/etiqueta_60x40_muitos_itens.pdf').writeAsBytesSync(
           await gerarEtiquetaPdf(_dados(itens: 25), TamanhoEtiqueta.m60x40,
               logo: logo));
@@ -256,6 +349,7 @@ void main() {
           img.encodePng(rasterizar(conteudoQrEntrega(_uuids.first))));
       for (final n in [
         'etiqueta_100x100.pdf',
+        'etiqueta_100x150.pdf',
         'etiqueta_60x40_muitos_itens.pdf',
         'qr.png'
       ]) {
