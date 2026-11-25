@@ -73,8 +73,10 @@ A impressão passa pelo driver do Windows. Antes de testar no Controle:
 - [ ] Quando perguntar **"A etiqueta saiu certa?"**: **Sim** (marca como impressa), **Imprimir de
       novo** ou **Cancelar**. Só **Sim** marca a etiqueta como impressa.
 - [ ] Conferir a etiqueta: nada cortado, texto legível.
-- [ ] **Ler o QR com um celular qualquer** (a câmera comum serve). Tem que ler. Se os pontinhos
-      redondos do QR saírem borrados na impressora, é um pequeno ajuste que dá para pedir.
+- [ ] **Ler o QR com um celular qualquer** (a câmera comum serve). O QR é um link
+      (`https://dev-kaiki.github.io/m/#…`): num celular sem o app abre a página "Etiqueta de pedido
+      MilkDim"; num celular com o APK novo abre o app. Se os pontinhos redondos do QR saírem
+      borrados na impressora, é um pequeno ajuste que dá para pedir.
 
 ## 4. APK novo em todos os vendedores (depois do Controle)
 
@@ -89,6 +91,9 @@ Para cada vendedor, **com o celular na internet**:
       "Enviar agora" e esperar zerar.
 - [ ] Conferir o botão **Ler etiqueta** na tela inicial e em **Meus pedidos**. No primeiro uso,
       o Android pede permissão da câmera: **Permitir**.
+- [ ] Ler uma etiqueta com a **câmera comum do celular** (fora do app): tem que abrir o app
+      MilkDim direto no pedido. Se abrir a página "Etiqueta de pedido MilkDim" no navegador,
+      ver "A câmera abre a página e não o app" na seção 7.
 
 ## 5. Teste de ponta a ponta
 
@@ -110,7 +115,7 @@ nada no fim**: os pedidos de teste ficam como estão.
 - [ ] **4.** **B** (com internet) lê a etiqueta de P1, que está pronto. Abre **Registrar
       entrega**, o cliente assina e aparece **"Entrega registrada."**
 - [ ] **5.** No Controle, atualizar e abrir P1: mostra **"Entregue por B (outro vendedor)"**,
-      com o código e o nome de B.
+      com o nome de B (não o código).
 - [ ] **6.** **A** sincroniza (abre o app com internet). P1 aparece como **Entregue**.
 - [ ] **7.** Na fábrica, **Produção concluída** em P2 de novo e responder **Depois** em
       **"Imprimir a etiqueta agora?"** (não imprimir etiqueta nova). **A** coloca o celular em **modo
@@ -125,6 +130,10 @@ nada no fim**: os pedidos de teste ficam como estão.
       concluída** de novo: no cartão em **Prontos para entrega** e no detalhe de P3 aparece
       **"Etiqueta desatualizada"**, e é preciso imprimir de novo. A etiqueta velha deixou de
       refletir o pedido.
+- [ ] **10.** Câmera comum: com um pedido pronto P4 de **A** e a etiqueta impressa, **A** fecha o
+      app, abre a **câmera comum** do celular e aponta para a etiqueta. Tocar no link que
+      aparece: o app abre direto em **Registrar entrega** de P4. Fazer o mesmo com o app já
+      aberto em outra tela: o pedido abre por cima.
 
 ## 6. Mensagens do app e o que fazer
 
@@ -142,6 +151,8 @@ nada no fim**: os pedidos de teste ficam como estão.
 | Sem internet. Para entregar pedido de outro vendedor, conecte e leia de novo. | Pedido de outro vendedor só com internet. Conectar e ler de novo. |
 | Entrega registrada. | Tudo certo. |
 | Libere a câmera nas configurações do Android para ler etiquetas. | Ver "Câmera negada" abaixo. |
+| Não deu para abrir a câmera. | Tocar **Tentar de novo**. Se continuar, fechar o app e abrir de novo. |
+| Não deu para abrir a etiqueta. Tente de novo. | Falha ao abrir o pedido pelo link da câmera comum. Ler de novo, ou usar **Ler etiqueta** dentro do app. |
 
 Regra geral da leitura:
 
@@ -155,6 +166,13 @@ Regra geral da leitura:
 - **Câmera negada.** O app mostra "Libere a câmera nas configurações do Android para ler
   etiquetas." No celular: Configurações, Apps, MilkDim, Permissões, Câmera, **Permitir**. Voltar
   ao app e tocar **Ler etiqueta** de novo.
+- **A câmera abre a página e não o app.** O Android ainda não confirmou que o link é do app.
+  Confira se o celular está com o APK novo e com internet. No celular: Configurações, Apps,
+  MilkDim, **Abrir por padrão**, ligar **Abrir links compatíveis** e conferir se
+  `dev-kaiki.github.io` está marcado. Enquanto isso, o botão **Ler etiqueta** dentro do app
+  funciona sempre. O link depende do arquivo `.well-known/assetlinks.json` do site
+  `dev-kaiki.github.io` e da chave que assina o APK: se a chave mudar, o arquivo precisa ser
+  atualizado.
 - **Impressora sem driver.** O Controle imprime pelo driver do Windows. Se não aparece a
   impressora ou nada sai, instalar o driver do fabricante e imprimir uma página de teste pelo
   Windows. Só depois tentar de novo no Controle.

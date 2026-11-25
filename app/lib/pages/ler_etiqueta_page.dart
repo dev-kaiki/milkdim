@@ -30,6 +30,40 @@ const String _msgCameraNegada =
 /// permissão de câmera); nos outros sistemas o botão não aparece.
 bool get leituraDeEtiquetaDisponivel => defaultTargetPlatform == TargetPlatform.android;
 
+/// Decide o destino do conteúdo [lido] (QR da câmera ou link aberto pelo
+/// Android) e abre a tela certa, esperando ela fechar. Devolve a mensagem para
+/// mostrar quando não abre nada; null quando abriu.
+/// - [antesDeAbrir]: roda logo antes de abrir uma tela (a leitura para a câmera).
+/// - [decidir]/[editor]: trocam a decisão e a tela de edição nos testes.
+Future<String?> abrirPelaEtiqueta(
+  BuildContext context,
+  String lido, {
+  required String vendedorCodigo,
+  Future<DestinoLeitura> Function(String lido)? decidir,
+  Widget Function(Map<String, dynamic> pedido)? editor,
+  Future<void> Function()? antesDeAbrir,
+}) async {
+  final destino = await (decidir ??
+      (String l) => decidirDestinoDaLeitura(l, vendedorCodigo: vendedorCodigo))(lido);
+  if (!context.mounted) return null;
+  final Widget tela;
+  switch (destino) {
+    case QrInvalido():
+      return _msgQrInvalido;
+    case SemInternet():
+      return _msgSemInternet;
+    case AbrirPedidoLocal(:final pedido):
+      if (!podeAbrirPelaEtiqueta(pedido)) return motivoNaoAbrirPelaEtiqueta(pedido);
+      tela = (editor ?? (p) => PedidoPageEdit(pedido: p))(pedido);
+    case AbrirEntregaServidor(:final codigoQr):
+      tela = EntregaQrPage(codigoQr: codigoQr);
+  }
+  await antesDeAbrir?.call();
+  if (!context.mounted) return null;
+  await Navigator.push(context, MaterialPageRoute(builder: (_) => tela));
+  return null;
+}
+
 class LerEtiquetaPage extends StatefulWidget {
   /// Código do vendedor logado: só pedido dele abre como pedido local.
   final String vendedorCodigo;
@@ -133,34 +167,22 @@ class _LerEtiquetaPageState extends State<LerEtiquetaPage> with WidgetsBindingOb
     if (_travada) return;
     _travada = true;
     try {
-      final decidir = widget.decidir ??
-          (String l) => decidirDestinoDaLeitura(l, vendedorCodigo: widget.vendedorCodigo);
-      final destino = await decidir(lido);
+      final msg = await abrirPelaEtiqueta(
+        context,
+        lido,
+        vendedorCodigo: widget.vendedorCodigo,
+        decidir: widget.decidir,
+        editor: widget.editor,
+        antesDeAbrir: _pararCamera,
+      );
       if (!mounted) return;
-      await _pararCamera();
-      if (!mounted) return;
-      switch (destino) {
-        case AbrirPedidoLocal(:final pedido):
-          if (!podeAbrirPelaEtiqueta(pedido)) {
-            _avisarELiberar(motivoNaoAbrirPelaEtiqueta(pedido));
-            return;
-          }
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) =>
-                (widget.editor ?? (p) => PedidoPageEdit(pedido: p))(pedido)),
-          );
-        case AbrirEntregaServidor(:final codigoQr):
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => EntregaQrPage(codigoQr: codigoQr)),
-          );
-        case QrInvalido():
-          _avisarELiberar(_msgQrInvalido);
-          return;
-        case SemInternet():
-          _avisarELiberar(_msgSemInternet);
-          return;
+      if (msg != null) {
+        // Parar e religar zera a última leitura: a mesma etiqueta volta a
+        // valer depois do intervalo.
+        await _pararCamera();
+        if (!mounted) return;
+        _avisarELiberar(msg);
+        return;
       }
     } catch (e) {
       debugPrint('Ler etiqueta: erro: $e');

@@ -19,6 +19,7 @@ import 'pedido_page.dart';
 import 'pedidos_page.dart';
 import 'configuracoes_page.dart';
 import 'ler_etiqueta_page.dart';
+import '../widgets/ouvir_etiqueta_pendente.dart';
 
 class HomePage extends StatefulWidget {
   final Map<String, dynamic> vendedor;
@@ -278,8 +279,12 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // Etiqueta lida pela câmera do celular, fora do app: abre o pedido daqui.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      OuvirEtiquetaPendente(vendedorCodigo: _codigo, child: Builder(builder: _tela));
+
+  Widget _tela(BuildContext context) {
     final tt = Theme.of(context).textTheme;
     return Scaffold(
       appBar: AppBar(
