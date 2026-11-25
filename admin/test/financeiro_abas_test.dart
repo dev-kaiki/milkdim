@@ -159,6 +159,22 @@ void main() {
     expect(find.byKey(const ValueKey('grafico-ano')), findsOneWidget);
   });
 
+  testWidgets('Ano: colunas de valor com a mesma largura em todas as linhas',
+      (t) async {
+    final f = _Fonte(entregues: [_ped(1, 123456.78, DateTime(2026, 11, 5))]);
+    await _abrir(t, f, agora);
+    await _aba(t, 'Ano');
+    double largura(Finder texto) => t
+        .getSize(find
+            .ancestor(of: texto.first, matching: find.byType(SizedBox))
+            .first)
+        .width;
+    final cab = largura(find.text('Resultado'));
+    final dado = largura(find.text('R\$ 123.456,78'));
+    expect(cab, 120);
+    expect(dado, cab);
+  });
+
   testWidgets('erro de carga: todas as abas mostram Tentar de novo',
       (t) async {
     await _abrir(t, _Fonte(falhar: true), agora);

@@ -6,6 +6,9 @@ import '../modelos_financeiro.dart';
 import '../painel_financeiro.dart';
 import 'graficos_financeiro.dart';
 
+/// Largura única das colunas de valor (Vendas, Saídas, Resultado).
+const double _wValor = 120;
+
 class AbaAno extends StatelessWidget {
   final List<MesSerie> serie;
 
@@ -50,9 +53,9 @@ class AbaAno extends StatelessWidget {
     final linhas = <Widget>[
       linha([
         cel('Mês', 80, direita: false, estilo: cab),
-        cel('Vendas', 120, estilo: cab),
-        cel('Saídas', 120, estilo: cab),
-        cel('Resultado', 120, estilo: cab),
+        cel('Vendas', _wValor, estilo: cab),
+        cel('Saídas', _wValor, estilo: cab),
+        cel('Resultado', _wValor, estilo: cab),
         cel('Margem', 70, estilo: cab),
         cel('Pedidos', 70, estilo: cab),
       ]),
@@ -61,9 +64,9 @@ class AbaAno extends StatelessWidget {
         if (m.temDado)
           linha([
             cel('${mesesAbrev[m.mes - 1]}/${m.ano % 100}', 80, direita: false),
-            cel(fmtCentavos(m.vendasCentavos), 120),
-            cel(fmtCentavos(m.saidasCentavos), 120),
-            cel(fmtCentavos(m.resultadoCentavos), 100,
+            cel(fmtCentavos(m.vendasCentavos), _wValor),
+            cel(fmtCentavos(m.saidasCentavos), _wValor),
+            cel(fmtCentavos(m.resultadoCentavos), _wValor,
                 estilo: corRes(m.resultadoCentavos)),
             cel(m.margemPct == null ? '—' : '${m.margemPct}%', 70),
             cel('${m.pedidos}', 70),
@@ -72,16 +75,16 @@ class AbaAno extends StatelessWidget {
           linha([
             cel('${mesesAbrev[m.mes - 1]}/${m.ano % 100}', 80,
                 direita: false, estilo: mudo),
-            for (final w in [120.0, 120.0, 120.0, 70.0, 70.0])
+            for (final w in [_wValor, _wValor, _wValor, 70.0, 70.0])
               cel('—', w, estilo: mudo),
           ]),
         const Divider(height: 1),
       ],
       linha([
         cel('Total', 80, direita: false, estilo: cab),
-        cel(fmtCentavos(vendas), 120, estilo: cab),
-        cel(fmtCentavos(saidas), 120, estilo: cab),
-        cel(fmtCentavos(resultado), 100,
+        cel(fmtCentavos(vendas), _wValor, estilo: cab),
+        cel(fmtCentavos(saidas), _wValor, estilo: cab),
+        cel(fmtCentavos(resultado), _wValor,
             estilo: cab.copyWith(color: resultado < 0 ? erro : null)),
         cel(margem == null ? '—' : '$margem%', 70, estilo: cab),
         cel('$pedidos', 70, estilo: cab),
