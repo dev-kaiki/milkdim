@@ -31,7 +31,9 @@ class _FonteFalsa implements FonteFinanceiro {
     List<CategoriaSaida>? cats,
     this.falhar = false,
   }) : cats = cats ??
-            const [CategoriaSaida(id: 1, nome: 'Aluguel', ativa: true, ordem: 1)];
+            const [
+              CategoriaSaida(id: 1, nome: 'Aluguel', ativa: true, ordem: 1)
+            ];
 
   @override
   Future<List<Pedido>> pedidosEntregues(DateTime i, DateTime f) async {
@@ -69,8 +71,9 @@ Saida _saida(int cent, {int cat = 1}) => Saida(
       valorCentavos: cent,
     );
 
-Future<void> _abrir(WidgetTester t, _FonteFalsa f, DateTime agora) async {
-  t.view.physicalSize = const Size(1000, 2400);
+Future<void> _abrir(WidgetTester t, _FonteFalsa f, DateTime agora,
+    {double largura = 1000}) async {
+  t.view.physicalSize = Size(largura, 2400);
   t.view.devicePixelRatio = 1;
   addTearDown(t.view.reset);
   await t.pumpWidget(MaterialApp(
@@ -140,5 +143,17 @@ void main() {
     await _abrir(t, f, DateTime(2026, 11, 25));
     expect(find.text('Frete antigo'), findsWidgets);
     expect(find.text('Sem categoria'), findsNothing);
+  });
+
+  testWidgets('em 360px não estoura e o botão Lançar saída aparece', (t) async {
+    final f = _FonteFalsa(
+      entregues: [_ped(1, 8420), _ped(2, 50)],
+      prontos: [_ped(3, 1234.5, status: 'pronto')],
+      saidas: [_saida(329000)],
+    );
+    await _abrir(t, f, DateTime(2026, 11, 25), largura: 360);
+    expect(t.takeException(), isNull);
+    expect(find.text('Lançar saída'), findsOneWidget);
+    expect(find.text('Novembro 2026'), findsOneWidget);
   });
 }

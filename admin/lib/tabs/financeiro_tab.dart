@@ -107,7 +107,8 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
     } catch (e) {
       if (!mounted || minha != _geracao) return;
       setState(() {
-        _erro = e is RepoFailure ? e.message : 'Erro ao carregar o financeiro: $e';
+        _erro =
+            e is RepoFailure ? e.message : 'Erro ao carregar o financeiro: $e';
         _carregando = false;
       });
     }
@@ -127,30 +128,48 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
 
   Widget _cabecalho() {
     final tt = Theme.of(context).textTheme;
-    return Row(
+    // Wrap: em tela estreita as ações descem para a linha de baixo.
+    return Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: MdSpace.xs,
       children: [
-        IconButton(
-          tooltip: 'Mês anterior',
-          onPressed: () => _mudarMes(-1),
-          icon: const Icon(Icons.chevron_left),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Mês anterior',
+              onPressed: () => _mudarMes(-1),
+              icon: const Icon(Icons.chevron_left),
+            ),
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text('${_meses[_mes - 1]} $_ano', style: tt.titleLarge),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Próximo mês',
+              onPressed: () => _mudarMes(1),
+              icon: const Icon(Icons.chevron_right),
+            ),
+          ],
         ),
-        Text('${_meses[_mes - 1]} $_ano', style: tt.titleLarge),
-        IconButton(
-          tooltip: 'Próximo mês',
-          onPressed: () => _mudarMes(1),
-          icon: const Icon(Icons.chevron_right),
-        ),
-        const Spacer(),
-        IconButton(
-          tooltip: 'Atualizar',
-          onPressed: _carregando ? null : _carregar,
-          icon: const Icon(Icons.refresh),
-        ),
-        const SizedBox(width: MdSpace.sm),
-        FilledButton.icon(
-          onPressed: _lancarSaida,
-          icon: const Icon(Icons.add),
-          label: const Text('Lançar saída'),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Atualizar',
+              onPressed: _carregando ? null : _carregar,
+              icon: const Icon(Icons.refresh),
+            ),
+            const SizedBox(width: MdSpace.sm),
+            FilledButton.icon(
+              onPressed: _lancarSaida,
+              icon: const Icon(Icons.add),
+              label: const Text('Lançar saída'),
+            ),
+          ],
         ),
       ],
     );
@@ -158,36 +177,54 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
 
   Widget _numero(String rotulo, String valor, {Color? cor, String? extra}) {
     final tt = Theme.of(context).textTheme;
-    return Expanded(
-      child: MdCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(rotulo, style: tt.bodyMedium!.copyWith(color: MdColors.textMuted)),
-            const SizedBox(height: MdSpace.xs),
-            Text(valor, style: tt.titleLarge!.copyWith(color: cor)),
-            if (extra != null)
-              Text(extra, style: tt.bodySmall!.copyWith(color: MdColors.textMuted)),
-          ],
-        ),
+    return MdCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(rotulo,
+              style: tt.bodyMedium!.copyWith(color: MdColors.textMuted)),
+          const SizedBox(height: MdSpace.xs),
+          Text(valor, style: tt.titleLarge!.copyWith(color: cor)),
+          if (extra != null)
+            Text(extra,
+                style: tt.bodySmall!.copyWith(color: MdColors.textMuted)),
+        ],
       ),
     );
   }
 
   Widget _resumoTopo(ResumoMes r) {
     final negativo = r.resultadoCentavos < 0;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _numero('Vendas', fmtCentavos(r.vendasCentavos),
-            extra: '(${r.pedidos} ${r.pedidos == 1 ? 'pedido' : 'pedidos'})'),
-        const SizedBox(width: MdSpace.md),
-        _numero('Saídas', fmtCentavos(r.saidasCentavos)),
-        const SizedBox(width: MdSpace.md),
-        _numero('Resultado do mês', fmtCentavos(r.resultadoCentavos),
-            cor: negativo ? Theme.of(context).colorScheme.error : null),
-      ],
-    );
+    final cards = [
+      _numero('Vendas', fmtCentavos(r.vendasCentavos),
+          extra: '(${r.pedidos} ${r.pedidos == 1 ? 'pedido' : 'pedidos'})'),
+      _numero('Saídas', fmtCentavos(r.saidasCentavos)),
+      _numero('Resultado do mês', fmtCentavos(r.resultadoCentavos),
+          cor: negativo ? Theme.of(context).colorScheme.error : null),
+    ];
+    // Estreito (celular): um cartão embaixo do outro.
+    return LayoutBuilder(builder: (context, c) {
+      if (c.maxWidth < 560) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < cards.length; i++) ...[
+              if (i > 0) const SizedBox(height: MdSpace.md),
+              cards[i],
+            ],
+          ],
+        );
+      }
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < cards.length; i++) ...[
+            if (i > 0) const SizedBox(width: MdSpace.md),
+            Expanded(child: cards[i]),
+          ],
+        ],
+      );
+    });
   }
 
   Widget _quadro(String titulo, List<LinhaValor> linhas,
@@ -226,7 +263,8 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
                                   .copyWith(color: MdColors.textMuted)),
                           const SizedBox(width: MdSpace.md),
                         ],
-                        Text(fmtCentavos(linhas[i].centavos), style: tt.bodyLarge),
+                        Text(fmtCentavos(linhas[i].centavos),
+                            style: tt.bodyLarge),
                       ],
                     ),
                   ),
