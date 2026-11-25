@@ -50,4 +50,47 @@ void main() {
       expect(find.text('Saídas'), findsOneWidget);
     });
   }
+
+  test('rotuloEixoReais', () {
+    expect(rotuloEixoReais(0), '0');
+    expect(rotuloEixoReais(50), '50');
+    expect(rotuloEixoReais(250), '250');
+    expect(rotuloEixoReais(-300), '-300');
+    expect(rotuloEixoReais(1000), '1 mil');
+    expect(rotuloEixoReais(1500), '1,5 mil');
+    expect(rotuloEixoReais(1250), '1,25 mil');
+    expect(rotuloEixoReais(12000), '12 mil');
+  });
+
+  MesSerie mes(int i, int v, int s, int p) => MesSerie(
+      ano: 2026, mes: i + 1, vendasCentavos: v, saidasCentavos: s, pedidos: p);
+  final casos = <String, List<MesSerie>>{
+    'sem nenhum dado': [for (var i = 0; i < 12; i++) mes(i, 0, 0, 0)],
+    'só saídas': [for (var i = 0; i < 12; i++) mes(i, 0, 5000 * (i + 1), 0)],
+    'só resultados negativos': [
+      for (var i = 0; i < 12; i++) mes(i, 1000, 30000 + i * 100, 1)
+    ],
+    'resultado minúsculo': [for (var i = 0; i < 12; i++) mes(i, 100, 0, 1)],
+  };
+  for (final e in casos.entries) {
+    for (final w in [360.0, 1000.0]) {
+      testWidgets('${e.key} em ${w.toInt()} px sem exceção', (t) async {
+        await t.pumpWidget(MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: SizedBox(
+                width: w,
+                child: Column(children: [
+                  CurvaResultado(serie: e.value),
+                  BarrasVendasSaidas(serie: e.value),
+                ]),
+              ),
+            ),
+          ),
+        ));
+        await t.pumpAndSettle();
+        expect(t.takeException(), isNull);
+      });
+    }
+  }
 }

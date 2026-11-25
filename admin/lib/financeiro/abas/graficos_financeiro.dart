@@ -6,7 +6,7 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 import '../modelos_financeiro.dart';
 import '../painel_financeiro.dart';
 
-const Color _corVendas = MdColors.primary;
+const Color _corMarca = MdColors.primary;
 const Color _corSaidas = Color(0xFFA8A29A);
 
 /// Pontos da curva do resultado: x = índice do mês, y = resultado em reais.
@@ -21,13 +21,14 @@ List<FlSpot> pontosResultado(List<MesSerie> serie) => [
 String _rotuloMes(List<MesSerie> serie, int i) =>
     i >= 0 && i < serie.length ? mesesAbrev[serie[i].mes - 1] : '';
 
-String _eixoReais(double v) {
-  if (v == 0) return '0';
-  final mil = v / 1000;
-  final txt = mil.abs() >= 10 || mil == mil.roundToDouble()
-      ? mil.round().toString()
-      : mil.toStringAsFixed(1).replaceAll('.', ',');
-  return '$txt mil';
+/// Rótulo compacto do eixo: reais inteiros abaixo de 1000, "N mil" a partir daí.
+String rotuloEixoReais(double reais) {
+  if (reais.abs() < 1000) return reais.round().toString();
+  var t = (reais / 1000).toStringAsFixed(2);
+  if (t.contains('.')) {
+    t = t.replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+  }
+  return '${t.replaceAll('.', ',')} mil';
 }
 
 String _reais(double v) => fmtCentavos((v * 100).round());
@@ -59,7 +60,7 @@ FlTitlesData _titulos(List<MesSerie> serie, BuildContext context) {
           if (v == meta.min || v == meta.max) return const SizedBox.shrink();
           return SideTitleWidget(
             meta: meta,
-            child: Text(_eixoReais(v), style: estilo),
+            child: Text(rotuloEixoReais(v), style: estilo),
           );
         },
       ),
@@ -83,12 +84,12 @@ class CurvaResultado extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pontos = pontosResultado(serie);
-    final ys = pontos.where((p) => p != FlSpot.nullSpot).map((p) => p.y);
+    final ys = pontos.where((p) => !p.isNull()).map((p) => p.y);
     var minY = ys.isEmpty ? 0.0 : ys.reduce((a, b) => a < b ? a : b);
     var maxY = ys.isEmpty ? 0.0 : ys.reduce((a, b) => a > b ? a : b);
     if (minY > 0) minY = 0;
     if (maxY < 0) maxY = 0;
-    if (maxY == minY) maxY = minY + 1000;
+    if (maxY - minY < 100) maxY = minY + 100;
     final folga = (maxY - minY) * 0.1;
     final tt = Theme.of(context).textTheme;
     return Column(
@@ -126,7 +127,7 @@ class CurvaResultado extends StatelessWidget {
               lineBarsData: [
                 LineChartBarData(
                   spots: pontos,
-                  color: _corVendas,
+                  color: _corMarca,
                   barWidth: 3,
                   isCurved: false,
                   dotData: const FlDotData(show: true),
@@ -165,12 +166,12 @@ class BarrasVendasSaidas extends StatelessWidget {
           100;
       if (v > maxY) maxY = v;
     }
-    if (maxY == 0) maxY = 1000;
+    if (maxY < 100) maxY = 100;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(children: [
-          _legenda(context, _corVendas, 'Vendas'),
+          _legenda(context, _corMarca, 'Vendas'),
           const SizedBox(width: MdSpace.md),
           _legenda(context, _corSaidas, 'Saídas'),
         ]),
@@ -201,7 +202,7 @@ class BarrasVendasSaidas extends StatelessWidget {
                         ? [
                             BarChartRodData(
                               toY: serie[i].vendasCentavos / 100,
-                              color: _corVendas,
+                              color: _corMarca,
                               width: 6,
                               borderRadius: BorderRadius.zero,
                             ),
