@@ -19,7 +19,7 @@ class EtiquetaDados {
     required this.numero,
     required this.clienteTitulo,
     required this.cidade,
-    required this.vendedorCodigo,
+    required this.vendedor,
     required this.itens,
     required this.prontoEm,
     required this.codigoQr,
@@ -30,7 +30,8 @@ class EtiquetaDados {
   /// Nome fantasia ou, na falta, o nome do cliente.
   final String clienteTitulo;
   final String cidade;
-  final String vendedorCodigo;
+  /// Nome do vendedor do pedido (o código, se o pedido não tem o nome).
+  final String vendedor;
   final List<({String nome, int quantidade})> itens;
   final DateTime? prontoEm;
   final String codigoQr;
@@ -405,7 +406,8 @@ Future<Uint8List> gerarEtiquetaPdf(
     final cabecalho = <pw.Widget>[
       duasPontas(m.fonteCabecalho, 'MILKDIM', 'Pedido ${d.numero}', bold: true),
       linha(m.fonteCliente, d.clienteTitulo, bold: true),
-      duasPontas(m.fontePequena, d.cidade, 'Vendedor ${d.vendedorCodigo}'),
+      duasPontas(m.fontePequena, d.cidade,
+          d.vendedor.isEmpty ? '' : 'Vendedor ${d.vendedor}'),
       separador(),
     ];
 

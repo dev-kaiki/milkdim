@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:intl/intl.dart';
 import 'package:milkdim_admin/etiqueta/etiqueta_pdf.dart';
+import 'package:milkdim_admin/etiqueta/imprimir_etiqueta.dart';
+import 'package:milkdim_admin/models/pedido.dart';
 import 'package:milkdim_admin/etiqueta/qr_arredondado.dart';
 import 'package:milkdim_admin/etiqueta/tamanho_etiqueta.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
@@ -84,7 +86,7 @@ EtiquetaDados _dados({int itens = 3}) => EtiquetaDados(
       numero: 1234,
       clienteTitulo: 'Cliente Teste',
       cidade: 'Cidade Teste',
-      vendedorCodigo: '0002',
+      vendedor: 'Vendedor Teste',
       itens: [
         for (var i = 0; i < itens; i++)
           (nome: 'Produto de teste ${i + 1}', quantidade: 3 + i),
@@ -196,6 +198,28 @@ void main() {
       final bytes =
           await gerarEtiquetaPdf(_dados(itens: 25), TamanhoEtiqueta.m60x40);
       expect(String.fromCharCodes(bytes.take(4)), '%PDF');
+    });
+  });
+
+  group('dados da etiqueta', () {
+    Pedido pedido({String? nome, String? codigo = '0002'}) => Pedido(
+          id: 9,
+          numero: '77',
+          total: 0,
+          status: 'pronto',
+          vendedorCodigo: codigo,
+          vendedorNome: nome,
+          clienteNome: 'Cliente Teste',
+          itens: const [],
+        );
+
+    test('a etiqueta leva o nome do vendedor, não o código', () {
+      expect(etiquetaDoPedido(pedido(nome: ' Vendedor Teste ')).vendedor, 'Vendedor Teste');
+    });
+
+    test('sem nome no pedido, leva o código', () {
+      expect(etiquetaDoPedido(pedido(nome: '  ')).vendedor, '0002');
+      expect(etiquetaDoPedido(pedido(nome: null, codigo: null)).vendedor, '');
     });
   });
 

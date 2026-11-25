@@ -125,7 +125,7 @@ class _EntregaQrPageState extends State<EntregaQrPage> {
                 alignment: Alignment.centerLeft,
                 child: MdStatusChip(
                   tipo: MdTipo.info,
-                  texto: 'Pedido do vendedor ${p.vendedorCodigo}',
+                  texto: 'Pedido do vendedor ${(p.vendedorNome ?? '').trim().isNotEmpty ? p.vendedorNome!.trim() : p.vendedorCodigo}',
                   icone: Icons.badge_outlined,
                 ),
               ),

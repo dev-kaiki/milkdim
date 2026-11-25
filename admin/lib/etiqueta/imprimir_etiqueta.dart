@@ -27,14 +27,16 @@ Future<bool> _enviarPadrao(Uint8List pdf, TamanhoEtiqueta t) {
 }
 
 /// Dados da etiqueta a partir do pedido (nome fantasia, se houver, senão o nome).
+/// O vendedor sai pelo nome; sem nome no pedido, pelo código.
 EtiquetaDados etiquetaDoPedido(Pedido p) {
   final fantasia = (p.clienteNomeFantasia ?? '').trim();
   final nome = (p.clienteNome ?? '').trim();
+  final nomeVendedor = (p.vendedorNome ?? '').trim();
   return EtiquetaDados(
     numero: int.tryParse((p.numero ?? '').trim()) ?? p.id,
     clienteTitulo: fantasia.isNotEmpty ? fantasia : nome,
     cidade: (p.clienteCidade ?? '').trim(),
-    vendedorCodigo: (p.vendedorCodigo ?? '').trim(),
+    vendedor: nomeVendedor.isNotEmpty ? nomeVendedor : (p.vendedorCodigo ?? '').trim(),
     itens: [for (final i in p.itens) (nome: i.nome.trim(), quantidade: i.quantidade)],
     prontoEm: p.prontoEm,
     codigoQr: p.codigoQr ?? '',

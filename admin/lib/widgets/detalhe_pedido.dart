@@ -65,33 +65,60 @@ MdTipo tipoDaSituacao(String status) {
 Widget chipSituacao(Pedido p) =>
     MdStatusChip(tipo: tipoDaSituacao(p.status), texto: p.situacaoTexto);
 
-String vendedorTextoPedido(Pedido p) =>
-    (p.vendedorCodigo ?? '') +
-    ((p.vendedorNome ?? '').isNotEmpty ? ' (${p.vendedorNome})' : '');
+/// O vendedor do pedido pelo nome; sem nome, pelo código.
+String vendedorTextoPedido(Pedido p) {
+  final nome = (p.vendedorNome ?? '').trim();
+  return nome.isNotEmpty ? nome : (p.vendedorCodigo ?? '').trim();
+}
 
 bool temVendedorPedido(Pedido p) =>
     (p.vendedorCodigo ?? '').isNotEmpty || (p.vendedorNome ?? '').isNotEmpty;
 
-/// "Entregue por <código> (<nome>)" para pedido finalizado; null se não está
-/// finalizado ou não se sabe quem. `finalizadoPor` é um texto opaco (código de
-/// vendedor ou, em conta admin sem código, um email). Acrescenta
-/// " (outro vendedor)" quando não é o dono do pedido e a entrega não foi manual,
-/// e " (manual)" quando foi manual.
-String? textoEntreguePor(Pedido p, Map<String, String> nomesPorCodigo) {
-  final por = p.finalizadoPor;
-  if (p.status != 'finalizado' || por == null || por.trim().isEmpty) {
-    return null;
-  }
-  final nome = (nomesPorCodigo[por] ?? '').trim();
+/// Quem fez uma ação no pedido (pronto_por, finalizado_por, cancelado_por,
+/// etiqueta_impressa_por), pelo nome. Esses campos guardam o código do
+/// vendedor ou, em conta admin sem código, um e-mail: o nome vem de
+/// [nomesPorCodigo] ou, se for o vendedor do pedido, do nome gravado nele; sem
+/// nome, fica o que está gravado. null se vazio.
+String? nomeDeQuem(String? codigo, Pedido p, Map<String, String> nomesPorCodigo) {
+  final c = (codigo ?? '').trim();
+  if (c.isEmpty) return null;
+  final daLista = (nomesPorCodigo[c] ?? '').trim();
+  if (daLista.isNotEmpty) return daLista;
+  final doPedido = (p.vendedorNome ?? '').trim();
+  if (c == (p.vendedorCodigo ?? '').trim() && doPedido.isNotEmpty) return doPedido;
+  return c;
+}
+
+/// "<nome> (outro vendedor)" / "<nome> (manual)" / "<nome>" para pedido
+/// finalizado; null se não está finalizado ou não se sabe quem.
+/// " (outro vendedor)" quando não é o dono do pedido e a entrega não foi
+/// manual; " (manual)" quando foi manual.
+String? quemEntregou(Pedido p, Map<String, String> nomesPorCodigo) {
+  final por = (p.finalizadoPor ?? '').trim();
+  if (p.status != 'finalizado' || por.isEmpty) return null;
   final sufixo = p.finalizadoManual
       ? ' (manual)'
       : (por != p.vendedorCodigo ? ' (outro vendedor)' : '');
-  return 'Entregue por $por${nome.isEmpty ? '' : ' ($nome)'}$sufixo';
+  return '${nomeDeQuem(por, p, nomesPorCodigo)}$sufixo';
+}
+
+/// "Entregue por <nome>…" (ver [quemEntregou]).
+String? textoEntreguePor(Pedido p, Map<String, String> nomesPorCodigo) {
+  final quem = quemEntregou(p, nomesPorCodigo);
+  return quem == null ? null : 'Entregue por $quem';
+}
+
+/// Nome dos vendedores por código; a falha só deixa os códigos à mostra.
+Future<Map<String, String>> buscarNomesDosVendedores() async {
+  final vs = await SupabaseService().buscarVendedores();
+  return {for (final v in vs) v.codigo: v.nome};
 }
 
 /// Abre o detalhe do pedido [p] (busca a linha completa no servidor).
 /// - [buscar]: troca a busca (testes); nulo usa [buscarDetalhePedido].
-/// - [nomesPorCodigo]: nome dos vendedores por código (para "Entregue por").
+/// - [nomesPorCodigo]: nome dos vendedores por código (para "Entregue por",
+///   "Pronto por" etc.). Vazio: a folha busca com [buscarNomes] (nulo usa
+///   [buscarNomesDosVendedores]); se a busca falhar, ficam os códigos.
 /// - [marcarEtiqueta]/[enviarParaImpressora]: etiqueta do pedido pronto; nulo
 ///   usa o [SupabaseService].
 /// - [apagar]: mostra o botão "Apagar pedido" e o chama; devolve true se
@@ -102,9 +129,21 @@ void abrirDetalhesPedido(
   Future<DetalheDoPedido> Function(int id)? buscar,
   Future<bool> Function(Pedido p)? apagar,
   Map<String, String> nomesPorCodigo = const {},
+  Future<Map<String, String>> Function()? buscarNomes,
   Future<void> Function(int id, String? alteradoEmBruto)? marcarEtiqueta,
   EnviarParaImpressora? enviarParaImpressora,
 }) {
+  // Uma busca por folha aberta, só quando a aba não mandou os nomes.
+  final Future<Map<String, String>> nomes = nomesPorCodigo.isNotEmpty
+      ? Future.value(nomesPorCodigo)
+      : () async {
+          try {
+            return await (buscarNomes ?? buscarNomesDosVendedores)();
+          } catch (_) {
+            return const <String, String>{};
+          }
+        }();
+
   Future<DetalheDoPedido?> carregar() async {
     try {
       return await (buscar ?? buscarDetalhePedido)(p.id);
@@ -125,8 +164,11 @@ void abrirDetalhesPedido(
         child: Padding(
           padding:
               const EdgeInsets.fromLTRB(MdSpace.xl, 0, MdSpace.xl, MdSpace.lg),
-          child: FutureBuilder<DetalheDoPedido?>(
-            future: carregar(),
+          child: FutureBuilder<(DetalheDoPedido?, Map<String, String>)>(
+            future: () async {
+              final d = await carregar();
+              return (d, await nomes);
+            }(),
             builder: (_, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
                 return const SizedBox(
@@ -134,7 +176,8 @@ void abrirDetalhesPedido(
                   child: Center(child: CircularProgressIndicator()),
                 );
               }
-              final data = snap.data;
+              final data = snap.data?.$1;
+              final nomesDaFolha = snap.data?.$2 ?? nomesPorCodigo;
               if (data == null) {
                 return const Padding(
                   padding: EdgeInsets.all(16),
@@ -146,7 +189,7 @@ void abrirDetalhesPedido(
                 ped: data.parsed,
                 contextoDaAba: context,
                 apagar: apagar,
-                nomesPorCodigo: nomesPorCodigo,
+                nomesPorCodigo: nomesDaFolha,
                 marcarEtiqueta: marcarEtiqueta,
                 enviarParaImpressora: enviarParaImpressora,
                 recarregar: carregar,
@@ -383,7 +426,8 @@ class _FolhaDetalheState extends State<_FolhaDetalhe> {
                 runSpacing: MdSpace.sm,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  chipEtiqueta(ped, comQuem: true),
+                  chipEtiqueta(ped,
+                      quem: nomeDeQuem(ped.etiquetaImpressaPor, ped, nomesPorCodigo)),
                   Tooltip(
                     message: ped.codigoQr == null
                         ? 'Atualize o banco para imprimir etiquetas'
@@ -504,7 +548,7 @@ class _FolhaDetalheState extends State<_FolhaDetalhe> {
                   ? null
                   : _dateFmt.format(ped.prontoEm!.toLocal()),
             ),
-            _infoRow(context, 'Pronto por', ped.prontoPor),
+            _infoRow(context, 'Pronto por', nomeDeQuem(ped.prontoPor, ped, nomesPorCodigo)),
             _infoRow(
               context,
               'Finalizado em',
@@ -515,12 +559,10 @@ class _FolhaDetalheState extends State<_FolhaDetalhe> {
             _infoRow(
                 context,
                 'Finalizado por',
-                textoEntreguePor(ped, nomesPorCodigo) == null
-                    ? ped.finalizadoPor
-                    : textoEntreguePor(ped, nomesPorCodigo)!
-                        .replaceFirst('Entregue por ', '')),
+                quemEntregou(ped, nomesPorCodigo) ??
+                    nomeDeQuem(ped.finalizadoPor, ped, nomesPorCodigo)),
             _infoRow(context, 'Cancelado em', ped.canceladoEm),
-            _infoRow(context, 'Cancelado por', ped.canceladoPor),
+            _infoRow(context, 'Cancelado por', nomeDeQuem(ped.canceladoPor, ped, nomesPorCodigo)),
 
             // DADOS BRUTOS / TODAS AS COLUNAS
             const SizedBox(height: MdSpace.lg),

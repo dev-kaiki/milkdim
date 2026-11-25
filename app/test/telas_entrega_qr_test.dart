@@ -219,7 +219,7 @@ void main() {
         (tester) async {
       await _abrir(tester, const EntregaQrPage(codigoQr: _qr));
       expect(find.text('Pedido 70'), findsWidgets);
-      expect(find.text('Pedido do vendedor 0002'), findsOneWidget);
+      expect(find.text('Pedido do vendedor Outro Vendedor'), findsOneWidget);
       expect(find.text('Padaria Teste'), findsOneWidget);
       expect(find.text('Campinas'), findsOneWidget);
       expect(find.text('3×'), findsOneWidget);
