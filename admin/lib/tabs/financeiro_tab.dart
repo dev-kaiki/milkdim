@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 
+import '../financeiro/dialogo_categorias.dart';
+import '../financeiro/dialogo_saida.dart';
 import '../financeiro/modelos_financeiro.dart';
 import '../financeiro/resumo_financeiro.dart';
 import '../models/pedido.dart';
@@ -121,8 +123,73 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
     _carregar();
   }
 
-  /// A Tarefa 5 implementa o diálogo de lançar saída.
-  void _lancarSaida() {}
+  void _aviso(Object e) {
+    if (!mounted) return;
+    final msg = e is RepoFailure ? e.message : 'Erro: $e';
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _lancarSaida() => _abrirDialogoSaida(null);
+
+  Future<void> _abrirDialogoSaida(Saida? editar) async {
+    final List<CategoriaSaida> cats;
+    try {
+      cats = await _fonte.categorias();
+    } catch (e) {
+      _aviso(e);
+      return;
+    }
+    if (!mounted) return;
+    final n = _agora();
+    final s = await mostrarDialogoSaida(
+      context,
+      categorias: cats,
+      editar: editar,
+      hoje: DateTime(n.year, n.month, n.day),
+    );
+    if (s == null) return;
+    try {
+      if (editar == null) {
+        await _fonte.inserirSaida(s);
+      } else {
+        await _fonte.alterarSaida(s);
+      }
+    } catch (e) {
+      _aviso(e);
+      return;
+    }
+    if (mounted) await _carregar();
+  }
+
+  Future<void> _apagarSaida(Saida s) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Apagar esta saída?'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Apagar')),
+        ],
+      ),
+    );
+    if (ok != true || s.id == null) return;
+    try {
+      await _fonte.apagarSaida(s.id!);
+    } catch (e) {
+      _aviso(e);
+      return;
+    }
+    if (mounted) await _carregar();
+  }
+
+  Future<void> _gerenciarCategorias() async {
+    await mostrarDialogoCategorias(context, _fonte);
+    if (mounted) await _carregar();
+  }
 
   // -------------------- UI --------------------
 
@@ -155,15 +222,20 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
             ),
           ],
         ),
-        Row(
-          mainAxisSize: MainAxisSize.min,
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: MdSpace.xs,
           children: [
             IconButton(
               tooltip: 'Atualizar',
               onPressed: _carregando ? null : _carregar,
               icon: const Icon(Icons.refresh),
             ),
-            const SizedBox(width: MdSpace.sm),
+            IconButton(
+              tooltip: 'Categorias',
+              onPressed: _gerenciarCategorias,
+              icon: const Icon(Icons.category_outlined),
+            ),
             FilledButton.icon(
               onPressed: _lancarSaida,
               icon: const Icon(Icons.add),
@@ -320,34 +392,39 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
               children: [
                 for (var i = 0; i < _saidas.length; i++) ...[
                   if (i > 0) const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: MdSpace.md),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 92,
-                          child: Text(_dataBr(_saidas[i].data),
-                              style: tt.bodyMedium!
-                                  .copyWith(color: MdColors.textMuted)),
-                        ),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                  _nomes[_saidas[i].categoriaId] ??
-                                      'Sem categoria',
-                                  style: tt.bodyLarge),
-                              if (_saidas[i].descricao.trim().isNotEmpty)
-                                Text(_saidas[i].descricao.trim(),
-                                    style: tt.bodyMedium!
+                  InkWell(
+                    onTap: () => _abrirDialogoSaida(_saidas[i]),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: MdSpace.sm),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                    _nomes[_saidas[i].categoriaId] ??
+                                        'Sem categoria',
+                                    style: tt.bodyLarge),
+                                Text(_dataBr(_saidas[i].data),
+                                    style: tt.bodySmall!
                                         .copyWith(color: MdColors.textMuted)),
-                            ],
+                                if (_saidas[i].descricao.trim().isNotEmpty)
+                                  Text(_saidas[i].descricao.trim(),
+                                      style: tt.bodyMedium!
+                                          .copyWith(color: MdColors.textMuted)),
+                              ],
+                            ),
                           ),
-                        ),
-                        Text(fmtCentavos(_saidas[i].valorCentavos),
-                            style: tt.bodyLarge),
-                      ],
+                          Text(fmtCentavos(_saidas[i].valorCentavos),
+                              style: tt.bodyLarge),
+                          IconButton(
+                            tooltip: 'Apagar saída',
+                            onPressed: () => _apagarSaida(_saidas[i]),
+                            icon: const Icon(Icons.delete_outline),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
