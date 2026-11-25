@@ -19,6 +19,13 @@ import '../utils/regras_pedido.dart';
 import '../utils/supabase_helper.dart';
 import '../utils/convert.dart'; // assinaturaToBytes / signatureToImageBytes
 
+/// Recarregar sem servidor: a lista continua com o que está no aparelho.
+const String kMsgSemServidorMeusPedidos =
+    'Sem conexão com o servidor. Mostrando os pedidos do aparelho.';
+
+Future<void> _baixarDoSupabase(String vendedorCodigo) =>
+    sincronizarPedidos(vendedorCodigo: vendedorCodigo);
+
 class PedidosPage extends StatefulWidget {
   /// Código do vendedor para filtrar os pedidos. Se null/vazio, mostra todos.
   final String? vendedorCodigo;
@@ -30,11 +37,17 @@ class PedidosPage extends StatefulWidget {
   /// Só para a captura visual: aba aberta (0 Em aberto, 1 Entregues, 2 Cancelados).
   final int abaInicialParaCaptura;
 
+  /// Baixa do servidor os pedidos do vendedor (o que a fábrica mudou: pronto,
+  /// finalizado manual, cancelado). Roda ao abrir e no Recarregar; nos testes,
+  /// troca a chamada ao Supabase.
+  final Future<void> Function(String vendedorCodigo) baixarPedidos;
+
   const PedidosPage({
     super.key,
     this.vendedorCodigo,
     this.pedidosParaCaptura,
     this.abaInicialParaCaptura = 0,
+    this.baixarPedidos = _baixarDoSupabase,
   });
 
   @override
@@ -73,7 +86,31 @@ class _PedidosPageState extends State<PedidosPage>
       }
       return;
     }
-    _carregar();
+    _abrir();
+  }
+
+  /// Mostra logo o que está no aparelho e depois traz o servidor, sem aviso
+  /// se não houver conexão.
+  Future<void> _abrir() async {
+    await _carregar();
+    await _atualizarDoServidor(silencioso: true);
+  }
+
+  /// Baixa os pedidos do vendedor e relê o aparelho. Sem servidor, a lista
+  /// fica como está (e avisa, se não for [silencioso]).
+  Future<void> _atualizarDoServidor({bool silencioso = false}) async {
+    final codigo = widget.vendedorCodigo;
+    if (codigo == null || codigo.isEmpty) return _carregar();
+    var ok = true;
+    try {
+      await widget.baixarPedidos(codigo);
+    } catch (e) {
+      ok = false;
+      debugPrint('Meus pedidos: não deu para baixar do servidor: $e');
+    }
+    if (!mounted) return;
+    await _carregar(mostrarCarregando: false);
+    if (!ok && !silencioso && mounted) _snack(kMsgSemServidorMeusPedidos);
   }
 
   @override
@@ -124,8 +161,8 @@ class _PedidosPageState extends State<PedidosPage>
 
   // ---------------- Data ----------------
 
-  Future<void> _carregar() async {
-    setState(() => _carregando = true);
+  Future<void> _carregar({bool mostrarCarregando = true}) async {
+    if (mostrarCarregando) setState(() => _carregando = true);
     try {
       final db = await getDb();
       final hasFiltro =
@@ -962,7 +999,7 @@ class _PedidosPageState extends State<PedidosPage>
     bool somenteLeitura(Map<String, dynamic> p) => !estaEmAberto(p);
 
     return RefreshIndicator(
-      onRefresh: _carregar,
+      onRefresh: _atualizarDoServidor,
       child: LayoutBuilder(
         builder: (context, c) {
           if (_carregando) {
@@ -1354,7 +1391,7 @@ class _PedidosPageState extends State<PedidosPage>
               tooltip: 'Filtros',
             ),
             IconButton(
-              onPressed: _carregar,
+              onPressed: _atualizarDoServidor,
               icon: const Icon(Icons.refresh),
               tooltip: 'Recarregar',
             ),
