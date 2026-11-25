@@ -3,9 +3,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 
+import '../financeiro/abas/aba_ano.dart';
+import '../financeiro/abas/aba_resumo.dart';
+import '../financeiro/abas/aba_saidas.dart';
+import '../financeiro/abas/aba_vendas.dart';
 import '../financeiro/dialogo_categorias.dart';
 import '../financeiro/dialogo_saida.dart';
 import '../financeiro/modelos_financeiro.dart';
+import '../financeiro/painel_financeiro.dart';
 import '../financeiro/resumo_financeiro.dart';
 import '../models/pedido.dart';
 import '../services/financeiro_service.dart';
@@ -53,7 +58,9 @@ class FinanceiroTab extends StatefulWidget {
   State<FinanceiroTab> createState() => _FinanceiroTabState();
 }
 
-class _FinanceiroTabState extends State<FinanceiroTab> {
+class _FinanceiroTabState extends State<FinanceiroTab>
+    with SingleTickerProviderStateMixin {
+  late final TabController _abas = TabController(length: 4, vsync: this);
   late final FonteFinanceiro _fonte = widget.fonte ?? FinanceiroService();
   late int _ano;
   late int _mes;
@@ -61,6 +68,9 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
   bool _carregando = true;
   String? _erro;
   ResumoMes? _resumo;
+  ComparacaoMes _comparacao = const ComparacaoMes();
+  List<MesSerie> _serie = [];
+  List<LinhaValor> _clientes = [];
   List<Saida> _saidas = [];
   Map<int, String> _nomes = {};
   int _geracao = 0;
@@ -102,6 +112,7 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
   @override
   void dispose() {
     widget.aberta?.removeListener(_aoMudarAberta);
+    _abas.dispose();
     super.dispose();
   }
 
@@ -141,13 +152,26 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
       _anoReal = n.year;
       _mesReal = n.month;
       final atual = n.year == _ano && n.month == _mes;
-      final entregues = await _fonte.pedidosEntregues(iv.inicio, iv.fim);
+      // 12 meses terminando no mês escolhido; o mês é filtrado em memória.
+      final ini12 = DateTime(_ano, _mes - 11, 1);
+      final entregues12 = await _fonte.pedidosEntregues(ini12, iv.fim);
       final prontos = atual ? await _fonte.pedidosProntos() : <Pedido>[];
-      final saidas = await _fonte.saidasEntre(iv.inicio, iv.fim);
+      final saidas12 = await _fonte.saidasEntre(ini12, iv.fim);
       final cats = await _fonte.categorias();
       if (!mounted || minha != _geracao) return;
       // Todas as categorias (ativas e inativas): saída antiga mantém o nome.
       final nomes = {for (final c in cats) c.id: c.nome};
+      final entregues = [
+        for (final p in entregues12)
+          if (p.finalizadoEm != null &&
+              !p.finalizadoEm!.toLocal().isBefore(iv.inicio) &&
+              p.finalizadoEm!.toLocal().isBefore(iv.fim))
+            p,
+      ];
+      final saidas = [
+        for (final s in saidas12)
+          if (!s.data.isBefore(iv.inicio) && s.data.isBefore(iv.fim)) s,
+      ];
       setState(() {
         _mesAtual = atual;
         _nomes = nomes;
@@ -158,6 +182,20 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
           saidas: saidas,
           nomesCategorias: nomes,
         );
+        _comparacao = compararMes(
+          ano: _ano,
+          mes: _mes,
+          agora: n,
+          entregues: entregues12,
+          saidas: saidas12,
+        );
+        _serie = serieDozeMeses(
+          ano: _ano,
+          mes: _mes,
+          entregues: entregues12,
+          saidas: saidas12,
+        );
+        _clientes = melhoresClientes(entregues);
         _carregando = false;
       });
     } catch (e) {
@@ -295,211 +333,14 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
               onPressed: _carregando ? null : _carregar,
               icon: const Icon(Icons.refresh),
             ),
-            IconButton(
-              tooltip: 'Categorias',
-              onPressed: _gerenciarCategorias,
-              icon: const Icon(Icons.category_outlined),
-            ),
-            FilledButton.icon(
-              onPressed: _lancarSaida,
-              icon: const Icon(Icons.add),
-              label: const Text('Lançar saída'),
-            ),
           ],
         ),
       ],
     );
   }
 
-  Widget _numero(String rotulo, String valor, {Color? cor, String? extra}) {
-    final tt = Theme.of(context).textTheme;
-    return MdCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(rotulo,
-              style: tt.bodyMedium!.copyWith(color: MdColors.textMuted)),
-          const SizedBox(height: MdSpace.xs),
-          Text(valor, style: tt.titleLarge!.copyWith(color: cor)),
-          if (extra != null)
-            Text(extra,
-                style: tt.bodySmall!.copyWith(color: MdColors.textMuted)),
-        ],
-      ),
-    );
-  }
-
-  Widget _resumoTopo(ResumoMes r) {
-    final negativo = r.resultadoCentavos < 0;
-    final cards = [
-      _numero('Vendas', fmtCentavos(r.vendasCentavos),
-          extra: '(${r.pedidos} ${r.pedidos == 1 ? 'pedido' : 'pedidos'})'),
-      _numero('Saídas', fmtCentavos(r.saidasCentavos)),
-      _numero('Resultado do mês', fmtCentavos(r.resultadoCentavos),
-          cor: negativo ? Theme.of(context).colorScheme.error : null),
-    ];
-    // Estreito (celular): um cartão embaixo do outro.
-    return LayoutBuilder(builder: (context, c) {
-      if (c.maxWidth < 560) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (var i = 0; i < cards.length; i++) ...[
-              if (i > 0) const SizedBox(height: MdSpace.md),
-              cards[i],
-            ],
-          ],
-        );
-      }
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (var i = 0; i < cards.length; i++) ...[
-            if (i > 0) const SizedBox(width: MdSpace.md),
-            Expanded(child: cards[i]),
-          ],
-        ],
-      );
-    });
-  }
-
-  Widget _quadro(String titulo, List<LinhaValor> linhas,
-      {bool comUnidades = false}) {
-    final tt = Theme.of(context).textTheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        MdSectionHeader(titulo: titulo),
-        if (linhas.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: MdSpace.sm),
-            child: Text('Sem registros no mês.',
-                style: tt.bodyMedium!.copyWith(color: MdColors.textMuted)),
-          )
-        else
-          MdCard(
-            padding: const EdgeInsets.symmetric(
-                horizontal: MdSpace.lg, vertical: MdSpace.sm),
-            child: Column(
-              children: [
-                for (var i = 0; i < linhas.length; i++) ...[
-                  if (i > 0) const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: MdSpace.md),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                              linhas[i].rotulo.isEmpty ? '—' : linhas[i].rotulo,
-                              style: tt.bodyLarge),
-                        ),
-                        if (comUnidades) ...[
-                          Text('${linhas[i].quantidade} un',
-                              style: tt.bodyMedium!
-                                  .copyWith(color: MdColors.textMuted)),
-                          const SizedBox(width: MdSpace.md),
-                        ],
-                        Text(fmtCentavos(linhas[i].centavos),
-                            style: tt.bodyLarge),
-                      ],
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _aReceber(ResumoMes r) {
-    final tt = Theme.of(context).textTheme;
-    final n = r.aReceberPedidos;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const MdSectionHeader(titulo: 'A receber'),
-        MdCard(
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '$n ${n == 1 ? 'pedido pronto' : 'pedidos prontos'}, ainda não entregues',
-                  style: tt.bodyLarge,
-                ),
-              ),
-              Text(fmtCentavos(r.aReceberCentavos), style: tt.titleMedium),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _listaSaidas() {
-    final tt = Theme.of(context).textTheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const MdSectionHeader(titulo: 'Saídas do mês'),
-        if (_saidas.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: MdSpace.sm),
-            child: Text('Nenhuma saída lançada neste mês.',
-                style: tt.bodyMedium!.copyWith(color: MdColors.textMuted)),
-          )
-        else
-          MdCard(
-            padding: const EdgeInsets.symmetric(
-                horizontal: MdSpace.lg, vertical: MdSpace.sm),
-            child: Column(
-              children: [
-                for (var i = 0; i < _saidas.length; i++) ...[
-                  if (i > 0) const Divider(height: 1),
-                  InkWell(
-                    onTap: () => _abrirDialogoSaida(_saidas[i]),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: MdSpace.sm),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                    _nomes[_saidas[i].categoriaId] ??
-                                        'Sem categoria',
-                                    style: tt.bodyLarge),
-                                Text(_dataBr(_saidas[i].data),
-                                    style: tt.bodySmall!
-                                        .copyWith(color: MdColors.textMuted)),
-                                if (_saidas[i].descricao.trim().isNotEmpty)
-                                  Text(_saidas[i].descricao.trim(),
-                                      style: tt.bodyMedium!
-                                          .copyWith(color: MdColors.textMuted)),
-                              ],
-                            ),
-                          ),
-                          Text(fmtCentavos(_saidas[i].valorCentavos),
-                              style: tt.bodyLarge),
-                          IconButton(
-                            tooltip: 'Apagar saída',
-                            onPressed: () => _apagarSaida(_saidas[i]),
-                            icon: const Icon(Icons.delete_outline),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _corpo() {
+  /// Conteúdo de uma aba: carregando, erro (igual em todas) ou o [conteudo].
+  Widget _aba(Widget Function(ResumoMes r) conteudo) {
     if (_carregando) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: MdSpace.xl),
@@ -507,55 +348,77 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
       );
     }
     if (_erro != null) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      return ListView(
+        padding: const EdgeInsets.only(top: MdSpace.md),
         children: [
           MdBanner(tipo: MdTipo.erro, texto: _erro!),
           const SizedBox(height: MdSpace.md),
-          OutlinedButton.icon(
-            onPressed: _carregar,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Tentar de novo'),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _carregar,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Tentar de novo'),
+            ),
           ),
         ],
       );
     }
-    final r = _resumo!;
-    const sep = SizedBox(height: MdSpace.lg);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _resumoTopo(r),
-        sep,
-        _quadro('Vendas por vendedor', r.porVendedor),
-        sep,
-        _quadro('Vendas por produto', r.porProduto, comUnidades: true),
-        sep,
-        _quadro('Saídas por categoria', r.porCategoria),
-        if (_mesAtual) ...[sep, _aReceber(r)],
-        sep,
-        _listaSaidas(),
-      ],
-    );
+    return conteudo(_resumo!);
   }
 
   @override
   Widget build(BuildContext context) {
     final tt = Theme.of(context).textTheme;
-    return ListView(
+    return Padding(
       padding: const EdgeInsets.fromLTRB(
-          MdSpace.lg, MdSpace.sm, MdSpace.lg, MdSpace.lg),
-      children: [
-        _cabecalho(),
-        if (_mostraAviso)
-          Padding(
-            padding: const EdgeInsets.only(top: MdSpace.xs),
-            child: Text(_avisoHistorico,
-                style: tt.bodySmall!.copyWith(color: MdColors.textMuted)),
+          MdSpace.lg, MdSpace.sm, MdSpace.lg, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _cabecalho(),
+          if (_mostraAviso)
+            Padding(
+              padding: const EdgeInsets.only(top: MdSpace.xs),
+              child: Text(_avisoHistorico,
+                  style: tt.bodySmall!.copyWith(color: MdColors.textMuted)),
+            ),
+          const SizedBox(height: MdSpace.xs),
+          TabBar(
+            controller: _abas,
+            tabs: const [
+              Tab(text: 'Resumo'),
+              Tab(text: 'Vendas'),
+              Tab(text: 'Saídas'),
+              Tab(text: 'Ano'),
+            ],
           ),
-        const SizedBox(height: MdSpace.md),
-        _corpo(),
-      ],
+          Expanded(
+            child: TabBarView(
+              controller: _abas,
+              children: [
+                _aba((r) => AbaResumo(
+                      resumo: r,
+                      comparacao: _comparacao,
+                      serie: _serie,
+                      mesAtual: _mesAtual,
+                    )),
+                _aba((r) => AbaVendas(resumo: r, clientes: _clientes)),
+                _aba((r) => AbaSaidas(
+                      resumo: r,
+                      saidasDoMes: _saidas,
+                      nomesCategorias: _nomes,
+                      onLancar: _lancarSaida,
+                      onCategorias: _gerenciarCategorias,
+                      onEditar: _abrirDialogoSaida,
+                      onApagar: _apagarSaida,
+                    )),
+                _aba((r) => AbaAno(serie: _serie)),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

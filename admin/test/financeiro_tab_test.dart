@@ -14,6 +14,7 @@ Pedido _ped(int id, double total, {String status = 'finalizado'}) => Pedido(
       total: total,
       status: status,
       vendedorNome: 'Ana',
+      finalizadoEm: DateTime(2026, 11, 5, 10),
     );
 
 class _FonteFalsa implements FonteFinanceiro {
@@ -97,6 +98,10 @@ void main() {
     expect(find.text('R\$ 30,00'), findsWidgets);
     expect(find.text('R\$ 120,00'), findsOneWidget);
     expect(find.text('A receber'), findsOneWidget);
+    expect(find.text('Lançar saída'), findsNothing,
+        reason: 'o botão fica na aba Saídas');
+    await t.tap(find.widgetWithText(Tab, 'Saídas'));
+    await t.pumpAndSettle();
     expect(find.text('Lançar saída'), findsOneWidget);
   });
 
@@ -109,7 +114,8 @@ void main() {
     expect(find.text('Outubro 2026'), findsOneWidget);
     expect(find.text('A receber'), findsNothing);
     expect(find.text('Até 23/11/2026, a data é a do pedido.'), findsOneWidget);
-    expect(f.inicios.last, DateTime(2026, 10, 1));
+    // Carga de 12 meses: começa 11 meses antes de outubro/2026.
+    expect(f.inicios.last, DateTime(2025, 11, 1));
   });
 
   testWidgets('dezembro de 2026 não mostra o aviso', (t) async {
@@ -142,11 +148,14 @@ void main() {
       ],
     );
     await _abrir(t, f, DateTime(2026, 11, 25));
+    await t.tap(find.widgetWithText(Tab, 'Saídas'));
+    await t.pumpAndSettle();
     expect(find.text('Frete antigo'), findsWidgets);
     expect(find.text('Sem categoria'), findsNothing);
   });
 
-  testWidgets('em 360px não estoura e o botão Lançar saída aparece', (t) async {
+  testWidgets('em 360px não estoura e o botão Lançar saída aparece na aba Saídas',
+      (t) async {
     final f = _FonteFalsa(
       entregues: [_ped(1, 8420), _ped(2, 50)],
       prontos: [_ped(3, 1234.5, status: 'pronto')],
@@ -154,8 +163,11 @@ void main() {
     );
     await _abrir(t, f, DateTime(2026, 11, 25), largura: 360);
     expect(t.takeException(), isNull);
-    expect(find.text('Lançar saída'), findsOneWidget);
     expect(find.text('Novembro 2026'), findsOneWidget);
+    await t.tap(find.widgetWithText(Tab, 'Saídas'));
+    await t.pumpAndSettle();
+    expect(t.takeException(), isNull);
+    expect(find.text('Lançar saída'), findsOneWidget);
   });
 
   testWidgets('selecionar a aba de novo recarrega (e fechar não)', (t) async {
@@ -196,7 +208,7 @@ void main() {
     aberta.value = true;
     await t.pumpAndSettle();
     expect(find.text('Dezembro 2026'), findsOneWidget);
-    expect(f.inicios.last, DateTime(2026, 12, 1));
+    expect(f.inicios.last, DateTime(2026, 1, 1)); // 12 meses até dez/2026
     expect(find.text('A receber'), findsOneWidget);
   });
 

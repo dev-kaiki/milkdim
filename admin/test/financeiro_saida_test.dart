@@ -73,6 +73,9 @@ Future<void> _abrir(WidgetTester t, _Fonte f, {double largura = 1000}) async {
     home: Scaffold(body: FinanceiroTab(fonte: f, agora: () => _hoje)),
   ));
   await t.pumpAndSettle();
+  // Lançar, editar, apagar e categorias ficam na aba Saídas.
+  await t.tap(find.widgetWithText(Tab, 'Saídas'));
+  await t.pumpAndSettle();
 }
 
 Saida _saidaExistente() => Saida(
