@@ -76,6 +76,42 @@ String mensagemErroRpcPedido(String? code) {
   }
 }
 
+/// Linha de `pedidos` (DB) -> mapa que o `Pedido.fromMap` espera.
+JsonMap pedidoDbParaModelo(JsonMap m) => {
+  'id'                    : m['id'],
+  'datahora'              : m['datahora'],
+  'status'                : m['status'],
+  'total'                 : m['total'],
+  'numero'                : m['numero'],
+  'vendedor_codigo'       : m['vendedor_codigo'],
+  'vendedor_nome'         : m['vendedor_nome'],
+  'cliente_id'            : m['cliente_id'],
+  'cliente_nome'          : m['cliente_nome'] ?? m['cliente_nome_fantasia'],
+  'cliente_email'         : m['cliente_email'],
+  'cliente_whatsapp'      : m['cliente_whatsapp'],
+  'cliente_telefone'      : m['cliente_telefone'],
+  'cliente_endereco'      : m['cliente_endereco'],
+  'cliente_cidade'        : m['cliente_cidade'],
+  'cliente_cpf_cnpj'      : m['cliente_cpf_cnpj'],
+  'cliente_insc_estadual' : m['cliente_insc_estadual'],
+  'cliente_cep'           : m['cliente_cep'],
+  'cliente_anotacao'      : m['cliente_anotacao'],
+  'produtos'              : m['produtos'],
+  'enviado_em'            : m['enviado_em'],
+  'alterado_em'           : m['alterado_em'],
+  'pronto_em'             : m['pronto_em'],
+  'pronto_por'            : m['pronto_por'],
+  'finalizado_em'         : m['finalizado_em'],
+  'finalizado_por'        : m['finalizado_por'],
+  'finalizado_manual'     : m['finalizado_manual'],
+  'cancelado_em'          : m['cancelado_em'],
+  'cancelado_por'         : m['cancelado_por'],
+  'cliente_nome_fantasia' : m['cliente_nome_fantasia'],
+  'codigo_qr'             : m['codigo_qr'],
+  'etiqueta_impressa_em'  : m['etiqueta_impressa_em'],
+  'etiqueta_impressa_por' : m['etiqueta_impressa_por'],
+};
+
 class SupabaseService {
   final SupabaseClient _sb;
   SupabaseService([SupabaseClient? injected]) : _sb = injected ?? Supabase.instance.client;
@@ -132,41 +168,6 @@ class SupabaseService {
     'ativo'         : _toBool(m['ativo']),
     'datahora'      : m['datahora'],
     'ultimo_pedido' : m['ultimo_pedido'],
-  };
-
-  JsonMap _pedidoDbToModel(JsonMap m) => {
-    'id'                    : m['id'],
-    'datahora'              : m['datahora'],
-    'status'                : m['status'],
-    'total'                 : m['total'],
-    'numero'                : m['numero'],
-    'vendedor_codigo'       : m['vendedor_codigo'],
-    'vendedor_nome'         : m['vendedor_nome'],
-    'cliente_id'            : m['cliente_id'],
-    'cliente_nome'          : m['cliente_nome'] ?? m['cliente_nome_fantasia'],
-    'cliente_email'         : m['cliente_email'],
-    'cliente_whatsapp'      : m['cliente_whatsapp'],
-    'cliente_telefone'      : m['cliente_telefone'],
-    'cliente_endereco'      : m['cliente_endereco'],
-    'cliente_cidade'        : m['cliente_cidade'],
-    'cliente_cpf_cnpj'      : m['cliente_cpf_cnpj'],
-    'cliente_insc_estadual' : m['cliente_insc_estadual'],
-    'cliente_cep'           : m['cliente_cep'],
-    'cliente_anotacao'      : m['cliente_anotacao'],
-    'produtos'              : m['produtos'],
-    'enviado_em'            : m['enviado_em'],
-    'alterado_em'           : m['alterado_em'],
-    'pronto_em'             : m['pronto_em'],
-    'pronto_por'            : m['pronto_por'],
-    'finalizado_em'         : m['finalizado_em'],
-    'finalizado_por'        : m['finalizado_por'],
-    'finalizado_manual'     : m['finalizado_manual'],
-    'cancelado_em'          : m['cancelado_em'],
-    'cancelado_por'         : m['cancelado_por'],
-    'cliente_nome_fantasia' : m['cliente_nome_fantasia'],
-    'codigo_qr'             : m['codigo_qr'],
-    'etiqueta_impressa_em'  : m['etiqueta_impressa_em'],
-    'etiqueta_impressa_por' : m['etiqueta_impressa_por'],
   };
 
   // ----------------- CLIENTES -----------------
@@ -379,7 +380,7 @@ class SupabaseService {
 
       final List<dynamic> raw = await run;
       final rows = raw.map((e) => JsonMap.from(e as Map)).toList();
-      return rows.map((m) => Pedido.fromMap(_pedidoDbToModel(m))).toList();
+      return rows.map((m) => Pedido.fromMap(pedidoDbParaModelo(m))).toList();
     } catch (e) {
       throw RepoFailure('Erro ao buscar pedidos: $e');
     }
@@ -422,7 +423,7 @@ class SupabaseService {
           .inFilter('status', ['salvo', 'pronto'])
           .order('enviado_em', ascending: true);
       return raw
-          .map((e) => Pedido.fromMap(_pedidoDbToModel(JsonMap.from(e as Map))))
+          .map((e) => Pedido.fromMap(pedidoDbParaModelo(JsonMap.from(e as Map))))
           .toList();
     } catch (e) {
       throw RepoFailure('Erro ao buscar pedidos em aberto: $e');
@@ -471,7 +472,7 @@ class SupabaseService {
         .from('pedidos')
         .stream(primaryKey: ['id'])
         .order('datahora', ascending: false)
-        .map((rows) => rows.map((e) => Pedido.fromMap(_pedidoDbToModel(JsonMap.from(e as Map)))).toList());
+        .map((rows) => rows.map((e) => Pedido.fromMap(pedidoDbParaModelo(JsonMap.from(e as Map)))).toList());
   }
 
   Future<void> deletarPedido(int id) async {
