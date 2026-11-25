@@ -4,11 +4,7 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 
 import '../modelos_financeiro.dart';
 import '../painel_financeiro.dart';
-
-const List<String> _abrev = [
-  'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
-  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez',
-];
+import 'graficos_financeiro.dart';
 
 class AbaAno extends StatelessWidget {
   final List<MesSerie> serie;
@@ -58,7 +54,7 @@ class AbaAno extends StatelessWidget {
       for (final m in serie) ...[
         if (m.temDado)
           linha([
-            cel('${_abrev[m.mes - 1]}/${m.ano % 100}', 80, direita: false),
+            cel('${mesesAbrev[m.mes - 1]}/${m.ano % 100}', 80, direita: false),
             cel(fmtCentavos(m.vendasCentavos), 100),
             cel(fmtCentavos(m.saidasCentavos), 100),
             cel(fmtCentavos(m.resultadoCentavos), 100,
@@ -68,7 +64,7 @@ class AbaAno extends StatelessWidget {
           ])
         else
           linha([
-            cel('${_abrev[m.mes - 1]}/${m.ano % 100}', 80,
+            cel('${mesesAbrev[m.mes - 1]}/${m.ano % 100}', 80,
                 direita: false, estilo: mudo),
             for (final w in [100.0, 100.0, 100.0, 70.0, 70.0])
               cel('—', w, estilo: mudo),
@@ -89,7 +85,10 @@ class AbaAno extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(top: MdSpace.md, bottom: MdSpace.lg),
       children: [
-        const SizedBox(key: ValueKey('grafico-ano'), height: 180),
+        MdCard(
+          key: const ValueKey('grafico-ano'),
+          child: BarrasVendasSaidas(serie: serie),
+        ),
         const SizedBox(height: MdSpace.lg),
         MdCard(
           child: SingleChildScrollView(

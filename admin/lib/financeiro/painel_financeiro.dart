@@ -135,6 +135,12 @@ ComparacaoMes compararMes({
   );
 }
 
+/// Nomes de mês com 3 letras, índice 0 = Jan.
+const List<String> mesesAbrev = [
+  'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
+  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez',
+];
+
 class MesSerie {
   final int ano;
   final int mes;

@@ -5,6 +5,7 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 import '../modelos_financeiro.dart';
 import '../painel_financeiro.dart';
 import '../resumo_financeiro.dart';
+import 'graficos_financeiro.dart';
 
 Color _corVariacao(Variacao v, BuildContext context) => switch (v.sentido) {
       1 => MdColors.success,
@@ -137,7 +138,10 @@ class AbaResumo extends StatelessWidget {
                 variacao: comparacao.resultado),
           ], l),
           sep,
-          const SizedBox(key: ValueKey('curva-resultado'), height: 180),
+          MdCard(
+            key: const ValueKey('curva-resultado'),
+            child: CurvaResultado(serie: serie),
+          ),
           sep,
           const MdSectionHeader(titulo: 'Destaques do mês'),
           _grade([
