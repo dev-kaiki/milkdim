@@ -8,7 +8,7 @@ Roteiro da instalação, na ordem. Marque cada caixa ao terminar.
   - [x] Migração 1 (Fase A: pedidos em aberto, Produção, Cancelar).
   - [x] Migração 2 (pedido pronto para entrega + assinatura do pedido e assinatura da entrega).
 - [x] Builds gerados em `Downloads\GitHub\milkdim-builds`:
-  - `MilkDim_Funcionario_2026-11-23_faseA.apk` — app dos vendedores
+  - `MilkDim_Funcionario_2026-11-25_faseA_atualizar.apk` — app dos vendedores
   - `MilkDim_Controle_2026-11-23_faseA.apk` — Controle no celular
   - `MilkDim_Controle_Windows_2026-11-23_faseA\milkdim_admin.exe` — Controle no computador
 
@@ -34,7 +34,7 @@ no celular. Sempre instalar **por cima**.
 
 O teste roda **fora da fábrica e longe dos vendedores**:
 
-- [ ] Celular do dono: instalar `MilkDim_Funcionario_2026-11-23_faseA.apk` **por cima** e entrar
+- [ ] Celular do dono: instalar `MilkDim_Funcionario_2026-11-25_faseA_atualizar.apk` **por cima** e entrar
       com **um código de vendedor que nenhum outro celular usa** (por exemplo 0001).
 - [ ] Computador do dono: copiar a pasta `MilkDim_Controle_Windows_2026-11-23_faseA` para
       qualquer lugar e abrir o `milkdim_admin.exe` dela. Isso não mexe no computador da fábrica.
@@ -45,7 +45,7 @@ Só depois de tudo certo aqui, instalar o Controle na fábrica (seção 3) e o A
 - [ ] **1.** Pedido novo → **Enviar pedido** → o cliente assina. O pedido aparece em **Pedidos
       em aberto** em até 30 segundos e o total de **A fabricar** sobe.
 - [ ] **2.** No Controle: **Produção concluída**. O pedido passa para **Prontos para entrega** e
-      os totais descem. No celular, depois de sincronizar, o pedido mostra **Pronto**.
+      os totais descem. No celular, ao abrir **Meus pedidos** (ou tocar em Recarregar), o pedido mostra **Pronto**.
   - Se aparecer "O pedido mudou depois que a tela foi atualizada…" logo depois de tocar em
     Atualizar, é defeito — me avise.
 - [ ] **3.** No celular: abrir o pedido, mudar uma quantidade e tocar **Salvar alterações**. O
@@ -70,7 +70,7 @@ Só depois de tudo certo aqui, instalar o Controle na fábrica (seção 3) e o A
       agora**. Vale a versão do vendedor: quantidades dele, "Finalizado por" com o código dele
       (sem "(manual)") e assinatura preenchida.
 - [ ] **8.** Outro pedido: **Produção concluída** e, no Controle, **Marcar como entregue** (o
-      celular com internet). No celular, depois de sincronizar, o pedido está em **Entregues**
+      celular com internet). No celular, ao abrir **Meus pedidos** (ou tocar em Recarregar), o pedido está em **Entregues**
       com o botão **Registrar entrega**. Tocar, o cliente assina a entrega. Vale a do vendedor:
       no Controle, "Finalizado por" com o código dele (sem "(manual)") e a assinatura da
       entrega preenchida; no celular o botão some.
@@ -110,7 +110,7 @@ O que a fábrica vai notar:
 
 Para cada vendedor, **com o celular na internet**:
 
-- [ ] Instalar `MilkDim_Funcionario_2026-11-23_faseA.apk` **por cima** (não desinstalar).
+- [ ] Instalar `MilkDim_Funcionario_2026-11-25_faseA_atualizar.apk` **por cima** (não desinstalar).
 - [ ] Abrir o app. Ele deve entrar direto, sem pedir login de novo.
 - [ ] Esperar a tela inicial mostrar **0 pedidos aguardando envio**. Se mostrar N > 0, tocar
       "Enviar agora" e esperar zerar.
