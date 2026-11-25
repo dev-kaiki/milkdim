@@ -1,4 +1,5 @@
 // lib/tabs/financeiro_tab.dart
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 
@@ -42,7 +43,11 @@ class FinanceiroTab extends StatefulWidget {
   /// Relógio; nulo usa [DateTime.now].
   final DateTime Function()? agora;
 
-  const FinanceiroTab({super.key, this.fonte, this.agora});
+  /// Fica verdadeiro quando a aba passa a ser a selecionada; a cada abertura
+  /// o mês é recarregado. Nulo: só carrega ao montar.
+  final ValueListenable<bool>? aberta;
+
+  const FinanceiroTab({super.key, this.fonte, this.agora, this.aberta});
 
   @override
   State<FinanceiroTab> createState() => _FinanceiroTabState();
@@ -60,6 +65,13 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
   Map<int, String> _nomes = {};
   int _geracao = 0;
 
+  /// Calculado uma vez por carga: o mês na tela era o mês real?
+  bool _mesAtual = false;
+
+  /// Mês real (ano, mês) no momento da última carga iniciada.
+  late int _anoReal;
+  late int _mesReal;
+
   DateTime _agora() => (widget.agora ?? DateTime.now)();
 
   @override
@@ -68,12 +80,50 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
     final n = _agora();
     _ano = n.year;
     _mes = n.month;
+    _anoReal = n.year;
+    _mesReal = n.month;
+    _ultimaAberta = widget.aberta?.value ?? true;
+    widget.aberta?.addListener(_aoMudarAberta);
     _carregar();
   }
 
-  bool get _mesAtual {
+  late bool _ultimaAberta;
+
+  @override
+  void didUpdateWidget(FinanceiroTab old) {
+    super.didUpdateWidget(old);
+    if (old.aberta != widget.aberta) {
+      old.aberta?.removeListener(_aoMudarAberta);
+      widget.aberta?.addListener(_aoMudarAberta);
+      _ultimaAberta = widget.aberta?.value ?? true;
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.aberta?.removeListener(_aoMudarAberta);
+    super.dispose();
+  }
+
+  void _aoMudarAberta() {
+    final v = widget.aberta!.value;
+    final abriu = v && !_ultimaAberta;
+    _ultimaAberta = v;
+    if (abriu) _atualizarAoAbrir();
+  }
+
+  /// Ao abrir a aba: se virou o mês e a pessoa olhava o "mês atual" de antes,
+  /// vai para o novo mês atual; depois recarrega.
+  void _atualizarAoAbrir() {
+    if (!mounted) return;
     final n = _agora();
-    return n.year == _ano && n.month == _mes;
+    if ((n.year != _anoReal || n.month != _mesReal) &&
+        _ano == _anoReal &&
+        _mes == _mesReal) {
+      _ano = n.year;
+      _mes = n.month;
+    }
+    _carregar();
   }
 
   bool get _mostraAviso =>
@@ -87,7 +137,10 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
     });
     try {
       final iv = intervaloDoMes(_ano, _mes);
-      final atual = _mesAtual;
+      final n = _agora();
+      _anoReal = n.year;
+      _mesReal = n.month;
+      final atual = n.year == _ano && n.month == _mes;
       final entregues = await _fonte.pedidosEntregues(iv.inicio, iv.fim);
       final prontos = atual ? await _fonte.pedidosProntos() : <Pedido>[];
       final saidas = await _fonte.saidasEntre(iv.inicio, iv.fim);
@@ -96,6 +149,7 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
       // Todas as categorias (ativas e inativas): saída antiga mantém o nome.
       final nomes = {for (final c in cats) c.id: c.nome};
       setState(() {
+        _mesAtual = atual;
         _nomes = nomes;
         _saidas = saidas;
         _resumo = resumirMes(
@@ -158,7 +212,15 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
       _aviso(e);
       return;
     }
-    if (mounted) await _carregar();
+    if (!mounted) return;
+    var msg = editar == null
+        ? 'Saída lançada em ${_dataBr(s.data)}.'
+        : 'Saída alterada.';
+    if (s.data.year != _ano || s.data.month != _mes) {
+      msg += ' Ela aparece em ${_meses[s.data.month - 1]} ${s.data.year}.';
+    }
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    await _carregar();
   }
 
   Future<void> _apagarSaida(Saida s) async {
@@ -166,6 +228,8 @@ class _FinanceiroTabState extends State<FinanceiroTab> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Apagar esta saída?'),
+        content: Text(
+            '${_nomes[s.categoriaId] ?? 'Sem categoria'} · ${_dataBr(s.data)} · ${fmtCentavos(s.valorCentavos)}'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),

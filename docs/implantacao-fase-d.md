@@ -43,7 +43,8 @@ A migração é o arquivo `supabase/migrations/20261125000001_fase_d_saidas.sql`
       admin. Não apaga nem altera dados existentes.
 - [ ] **2.** Rodar o teste **em rollback**, no SQL Editor do banco (Supabase), tudo numa
       execução só: `begin; <migração>; <teste>; rollback;`. A transação é desfeita no fim e
-      nada fica gravado. Conferir que terminou sem erro.
+      nada fica gravado. Conferir que terminou sem erro. Esse teste já passou em 25/11/2026
+      (antes da última rodada de ajustes); será rodado de novo antes de aplicar.
 - [ ] **3.** Só depois do **OK do dono**, aplicar a migração de verdade.
 - [ ] **4.** Conferir as **8 categorias** iniciais, nesta ordem:
   1. Matéria-prima
@@ -74,7 +75,7 @@ A migração é o arquivo `supabase/migrations/20261125000001_fase_d_saidas.sql`
 
 Use valores de teste e **apague as saídas de teste no fim**. Os pedidos não são tocados.
 
-- [ ] **1. Mês atual.** Abrir **Financeiro**. Deve abrir em novembro de 2026, com **Vendas**,
+- [ ] **1. Mês atual.** Abrir **Financeiro** (a aba recarrega toda vez que é aberta). Deve abrir no mês atual (hoje, novembro de 2026), com **Vendas**,
       **Saídas** e **Resultado do mês**, e os quadros "Vendas por vendedor", "Vendas por
       produto" e "Saídas por categoria". Aparece a seção **A receber** (só no mês atual).
       Conferir uma venda conhecida contra o Controle de pedidos.
@@ -84,11 +85,13 @@ Use valores de teste e **apague as saídas de teste no fim**. Os pedidos não s�
 - [ ] **3. Lançar saída de teste.** Voltar ao mês atual e tocar em **Lançar saída**. Escolher a
       **Categoria**, digitar o **Valor** (ex.: `1.234,56`, `480,5` ou `R$ 480,00`), uma
       **Descrição** e a **Data**. Tocar em **Salvar**. A saída aparece em **Saídas do mês** e o
-      **Resultado do mês** diminui no mesmo valor.
+      **Resultado do mês** diminui no mesmo valor. Aparece o aviso **"Saída lançada em
+      dd/MM/aaaa."**; se a data caiu em outro mês que não o da tela, o aviso diz em qual mês
+      ela aparece (ex.: "Ela aparece em Novembro 2026.").
 - [ ] **4. Editar.** Tocar na linha da saída. O diálogo abre como **Editar saída**. Mudar o valor,
-      **Salvar** e conferir que os totais mudaram.
+      **Salvar** (aviso **"Saída alterada."**) e conferir que os totais mudaram.
 - [ ] **5. Apagar.** Tocar no ícone de lixeira (**Apagar saída**). Aparece **"Apagar esta
-      saída?"**. Tocar em **Apagar** e conferir que sumiu e que os totais voltaram.
+      saída?"**, com categoria, data e valor da saída. Tocar em **Apagar** e conferir que sumiu e que os totais voltaram.
 - [ ] **6. Categoria.** Tocar no ícone **Categorias**. Em **Nova categoria**, criar uma de teste
       (campo **Nome**, **Salvar**). Depois **Desativar** (ícone do olho): ela fica com
       **(desativada)** na lista. Abrir **Lançar saída** e conferir que ela **não** aparece na

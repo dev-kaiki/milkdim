@@ -43,6 +43,12 @@ class _HomePageState extends State<HomePage> {
   DateTime? _lastBackPress;
   StreamSubscription<AuthState>? _authSub;
 
+  static const int _indiceFinanceiro = 5;
+
+  /// Verdadeiro enquanto a aba Financeiro é a selecionada (ela recarrega ao abrir).
+  late final ValueNotifier<bool> _financeiroAberto =
+      ValueNotifier(_selectedIndex == _indiceFinanceiro);
+
   late final List<Widget> _tabs = widget.abasDeTeste ??
       [
         const ProducaoTab(),
@@ -50,7 +56,7 @@ class _HomePageState extends State<HomePage> {
         const prod.ProdutosTab(),
         const ped.PedidosTab(),
         const ClientesTab(),
-        const FinanceiroTab(),
+        FinanceiroTab(aberta: _financeiroAberto),
       ];
 
   static const List<String> _titles = [
@@ -85,6 +91,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _authSub?.cancel();
+    _financeiroAberto.dispose();
     super.dispose();
   }
 
@@ -146,7 +153,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<bool> _onWillPop() async {
     if (_selectedIndex != 0) {
-      setState(() => _selectedIndex = 0);
+      _selecionar(0);
       return false;
     }
     final now = DateTime.now();
@@ -166,7 +173,10 @@ class _HomePageState extends State<HomePage> {
     return true;
   }
 
-  void _selecionar(int i) => setState(() => _selectedIndex = i);
+  void _selecionar(int i) {
+    setState(() => _selectedIndex = i);
+    _financeiroAberto.value = i == _indiceFinanceiro;
+  }
 
   // A chave global mantém as abas (e o que já carregaram) quando a janela
   // cruza a largura do menu lateral e a árvore de layout muda.

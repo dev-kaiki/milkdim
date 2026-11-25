@@ -4,7 +4,8 @@
 --
 -- Tabelas novas:
 --   categorias_saida  categorias das saidas (Materia-prima, Embalagens, ...).
---                     Nome unico sem contar maiusculas nem espacos nas pontas.
+--                     Nome unico sem contar maiusculas nem espacos nas pontas,
+--                     e nunca vazio (so espacos conta como vazio).
 --                     Categoria com saidas nao e apagada (on delete restrict):
 --                     o app so a desativa (ativa = false).
 --   saidas            o que a fabrica gastou: data, categoria, descricao, valor.
@@ -22,9 +23,10 @@
 --
 -- Dados iniciais: as 8 categorias, so se ainda nao existirem.
 --
--- Pode rodar de novo sem estrago (if not exists / drop ... if exists /
--- on conflict do nothing). Este arquivo nao abre nem fecha transacao: quem
--- aplica decide.
+-- Pode rodar de novo (if not exists / drop ... if exists / on conflict do
+-- nothing), mas uma nova rodada recria as categorias iniciais que tenham sido
+-- renomeadas ou apagadas depois. Este arquivo nao abre nem fecha transacao:
+-- quem aplica decide.
 
 -- ---------------------------------------------------------------------------
 -- categorias_saida
@@ -32,10 +34,23 @@
 
 create table if not exists public.categorias_saida (
   id    bigint generated always as identity primary key,
-  nome  text    not null,
+  nome  text    not null
+        constraint categorias_saida_nome_nao_vazio check (btrim(nome) <> ''),
   ativa boolean not null default true,
   ordem int     not null default 100
 );
+
+-- Caso a tabela ja exista sem a regra (nova rodada sobre versao antiga).
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = 'public.categorias_saida'::regclass
+       and conname = 'categorias_saida_nome_nao_vazio') then
+    alter table public.categorias_saida
+      add constraint categorias_saida_nome_nao_vazio check (btrim(nome) <> '');
+  end if;
+end $$;
 
 create unique index if not exists categorias_saida_nome_key
   on public.categorias_saida (lower(btrim(nome)));

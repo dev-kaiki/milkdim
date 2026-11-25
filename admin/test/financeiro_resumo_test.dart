@@ -46,6 +46,13 @@ void main() {
       expect(parseValorCentavos(t), isNull, reason: t);
     }
   });
+  test('parseValorCentavos: ponto de milhar, decimal com ponto e limites', () {
+    expect(parseValorCentavos('1.234'), 123400);
+    expect(parseValorCentavos('480.5'), 48050);
+    expect(parseValorCentavos('99999999999999999999'), isNull);
+    expect(parseValorCentavos('10.000.000.000,00'), isNull);
+    expect(parseValorCentavos('9.999.999.999,99'), 999999999999);
+  });
   test('fmtCentavos', () {
     expect(fmtCentavos(842000), 'R\$ 8.420,00');
     expect(fmtCentavos(0), 'R\$ 0,00');

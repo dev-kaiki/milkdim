@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:milkdim_admin/financeiro/modelos_financeiro.dart';
@@ -72,13 +73,13 @@ Saida _saida(int cent, {int cat = 1}) => Saida(
     );
 
 Future<void> _abrir(WidgetTester t, _FonteFalsa f, DateTime agora,
-    {double largura = 1000}) async {
+    {double largura = 1000, ValueListenable<bool>? aberta}) async {
   t.view.physicalSize = Size(largura, 2400);
   t.view.devicePixelRatio = 1;
   addTearDown(t.view.reset);
   await t.pumpWidget(MaterialApp(
     theme: buildMilkdimTheme(),
-    home: Scaffold(body: FinanceiroTab(fonte: f, agora: () => agora)),
+    home: Scaffold(body: FinanceiroTab(fonte: f, agora: () => agora, aberta: aberta)),
   ));
   await t.pumpAndSettle();
 }
@@ -155,5 +156,93 @@ void main() {
     expect(t.takeException(), isNull);
     expect(find.text('Lançar saída'), findsOneWidget);
     expect(find.text('Novembro 2026'), findsOneWidget);
+  });
+
+  testWidgets('selecionar a aba de novo recarrega (e fechar não)', (t) async {
+    final f = _FonteFalsa();
+    final aberta = ValueNotifier(true);
+    await _abrir(t, f, DateTime(2026, 11, 25), aberta: aberta);
+    expect(f.chamadas, 1);
+    aberta.value = false;
+    await t.pumpAndSettle();
+    expect(f.chamadas, 1);
+    aberta.value = true;
+    await t.pumpAndSettle();
+    expect(f.chamadas, 2);
+    aberta.value = false;
+    aberta.value = true;
+    await t.pumpAndSettle();
+    expect(f.chamadas, 3);
+  });
+
+  testWidgets('virou o mês: quem olhava o mês atual pula para o novo',
+      (t) async {
+    final f = _FonteFalsa();
+    final aberta = ValueNotifier(true);
+    var agora = DateTime(2026, 11, 30);
+    t.view.physicalSize = const Size(1000, 2400);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    await t.pumpWidget(MaterialApp(
+      theme: buildMilkdimTheme(),
+      home: Scaffold(
+          body: FinanceiroTab(
+              fonte: f, agora: () => agora, aberta: aberta)),
+    ));
+    await t.pumpAndSettle();
+    expect(find.text('Novembro 2026'), findsOneWidget);
+    agora = DateTime(2026, 12, 1);
+    aberta.value = false;
+    aberta.value = true;
+    await t.pumpAndSettle();
+    expect(find.text('Dezembro 2026'), findsOneWidget);
+    expect(f.inicios.last, DateTime(2026, 12, 1));
+    expect(find.text('A receber'), findsOneWidget);
+  });
+
+  testWidgets('virou o mês: quem olhava outro mês fica onde estava',
+      (t) async {
+    final f = _FonteFalsa();
+    final aberta = ValueNotifier(true);
+    var agora = DateTime(2026, 11, 30);
+    t.view.physicalSize = const Size(1000, 2400);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    await t.pumpWidget(MaterialApp(
+      theme: buildMilkdimTheme(),
+      home: Scaffold(
+          body: FinanceiroTab(
+              fonte: f, agora: () => agora, aberta: aberta)),
+    ));
+    await t.pumpAndSettle();
+    await t.tap(find.byTooltip('Mês anterior'));
+    await t.pumpAndSettle();
+    agora = DateTime(2026, 12, 1);
+    aberta.value = false;
+    aberta.value = true;
+    await t.pumpAndSettle();
+    expect(find.text('Outubro 2026'), findsOneWidget);
+    expect(find.text('A receber'), findsNothing);
+  });
+
+  testWidgets('A receber segue o flag da carga, não o relógio no build',
+      (t) async {
+    final f = _FonteFalsa();
+    var agora = DateTime(2026, 11, 25);
+    Widget app() => MaterialApp(
+          theme: buildMilkdimTheme(),
+          home: Scaffold(
+              body: FinanceiroTab(fonte: f, agora: () => agora)),
+        );
+    t.view.physicalSize = const Size(1000, 2400);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    await t.pumpWidget(app());
+    await t.pumpAndSettle();
+    expect(find.text('A receber'), findsOneWidget);
+    // O relógio anda, mas sem nova carga o flag da carga vale.
+    agora = DateTime(2026, 12, 1);
+    await t.pumpWidget(app());
+    expect(find.text('A receber'), findsOneWidget);
   });
 }

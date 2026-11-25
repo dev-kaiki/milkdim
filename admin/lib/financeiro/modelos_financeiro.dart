@@ -87,6 +87,8 @@ String fmtCentavos(int c) {
   return c < 0 ? '-$s' : s;
 }
 
+const int _maxCentavos = 999999999999;
+
 /// Texto digitado (formato brasileiro) -> centavos; null se inválido ou <= 0.
 int? parseValorCentavos(String texto) {
   var t = texto.trim();
@@ -112,8 +114,13 @@ int? parseValorCentavos(String texto) {
     inteiro = m.group(1)!;
     frac = m.group(2)!;
   }
-  final c = int.parse(inteiro) * 100 + int.parse(frac.padRight(2, '0'));
-  return c > 0 ? c : null;
+  final i = int.tryParse(inteiro);
+  final f = int.tryParse(frac.padRight(2, '0'));
+  if (i == null || f == null) return null;
+  // numeric(12,2): no máximo 9.999.999.999,99.
+  if (i > 9999999999) return null;
+  final c = i * 100 + f;
+  return c > 0 && c <= _maxCentavos ? c : null;
 }
 
 /// [inicio, fim) do mês, em hora local.

@@ -2,6 +2,9 @@
 -- de begin ... rollback, montado por quem executa: este arquivo nao abre nem
 -- fecha transacao. Cada bloco da raise exception quando a verificacao falha.
 --
+-- Teste de pre-aplicacao: o bloco 1 espera exatamente 8 categorias, entao so
+-- vale antes de a migracao ir de verdade para o banco (dentro do rollback).
+--
 -- Ordem:  begin; <fase D, 20261125000001_fase_d_saidas.sql>; <este arquivo>;
 --         rollback;
 -- (fases 1 a B ja aplicadas no banco.) Vendedores -910 e -911.
@@ -190,6 +193,14 @@ begin
     insert into public.categorias_saida (nome) values (' matéria-PRIMA ');
     raise exception 'FALHA: categoria com nome repetido aceita';
   exception when sqlstate '23505' then
+    null;
+  end;
+
+  -- Nome vazio (so espacos): 23514.
+  begin
+    insert into public.categorias_saida (nome) values ('   ');
+    raise exception 'FALHA: categoria com nome so de espacos aceita';
+  exception when sqlstate '23514' then
     null;
   end;
 
@@ -399,6 +410,10 @@ begin
           and has_table_privilege('authenticated', 'public.categorias_saida', 'update')
           and has_table_privilege('authenticated', 'public.categorias_saida', 'delete')) then
     raise exception 'FALHA: authenticated sem as 4 permissoes nas tabelas';
+  end if;
+  if has_table_privilege('authenticated', 'public.saidas', 'truncate')
+     or has_table_privilege('authenticated', 'public.categorias_saida', 'truncate') then
+    raise exception 'FALHA: authenticated pode truncar saidas/categorias_saida';
   end if;
 
   -- Gatilho de auditoria: security definer, search_path vazio, fora do alcance do app.

@@ -172,6 +172,7 @@ void main() {
     await t.tap(find.byTooltip('Apagar saída'));
     await t.pumpAndSettle();
     expect(find.text('Apagar esta saída?'), findsOneWidget);
+    expect(find.text('Aluguel · 05/11/2026 · R\$ 300,00'), findsOneWidget);
     await t.tap(find.text('Cancelar'));
     await t.pumpAndSettle();
     expect(f.apagadas, isEmpty);
@@ -264,5 +265,50 @@ void main() {
     expect(t.takeException(), isNull);
     expect(find.text('Lançar saída'), findsOneWidget);
     expect(find.byTooltip('Categorias'), findsOneWidget);
+  });
+
+  testWidgets('lançar mostra a data; edição mostra Saída alterada.', (t) async {
+    final f = _Fonte(saidas: [_saidaExistente()]);
+    await _abrir(t, f);
+    await t.tap(find.text('Conta de luz'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Salvar'));
+    await t.pumpAndSettle();
+    expect(find.text('Saída alterada.'), findsOneWidget);
+    ScaffoldMessenger.of(t.element(find.byType(FinanceiroTab)))
+        .hideCurrentSnackBar();
+    await t.pumpAndSettle();
+
+    await t.tap(find.text('Lançar saída'));
+    await t.pumpAndSettle();
+    await t.tap(find.byType(DropdownButtonFormField<int>));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Matéria-prima').last);
+    await t.pumpAndSettle();
+    await t.enterText(find.widgetWithText(TextField, 'Valor'), '10');
+    await t.tap(find.text('Salvar'));
+    await t.pumpAndSettle();
+    expect(find.text('Saída lançada em 25/11/2026.'), findsOneWidget);
+  });
+
+  testWidgets('saída em outro mês avisa onde ela aparece', (t) async {
+    final f = _Fonte();
+    await _abrir(t, f);
+    await t.tap(find.byTooltip('Mês anterior'));
+    await t.pumpAndSettle();
+    expect(find.text('Outubro 2026'), findsOneWidget);
+    await t.tap(find.text('Lançar saída'));
+    await t.pumpAndSettle();
+    await t.tap(find.byType(DropdownButtonFormField<int>));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Matéria-prima').last);
+    await t.pumpAndSettle();
+    await t.enterText(find.widgetWithText(TextField, 'Valor'), '10');
+    await t.tap(find.text('Salvar'));
+    await t.pumpAndSettle();
+    expect(
+        find.text(
+            'Saída lançada em 25/11/2026. Ela aparece em Novembro 2026.'),
+        findsOneWidget);
   });
 }
