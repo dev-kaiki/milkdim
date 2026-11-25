@@ -75,6 +75,99 @@ final _pedidos = <Map<String, dynamic>>[
   },
 ];
 
+final _cancelados = <Map<String, dynamic>>[
+  {
+    'id': 4,
+    'numero': '126',
+    'status': 'cancelado',
+    'pendente_envio': 0,
+    'datahora': '2026-11-17T09:20:00Z',
+    'total': 64.5,
+    'cliente_nome': 'Mercadinho Primavera',
+    'cliente_cidade': 'Uberlândia',
+    'vendedor_nome': 'João Silva',
+    'vendedor_codigo': '0001',
+    'produtos': '[{"nome":"Requeijão Cremoso 200 g","quantidade":5}]',
+  },
+];
+
+final _naoEnviados = <Map<String, dynamic>>[
+  {
+    'id': 1000000011,
+    'numero': '130',
+    'status': 'salvo',
+    'so_local': 1,
+    'pendente_envio': 0,
+    'datahora': '2026-11-20T11:00:00Z',
+    'total': 37.8,
+    'cliente_nome': 'Lanchonete do Zé',
+    'vendedor_nome': 'João Silva',
+    'vendedor_codigo': '0001',
+    'produtos': '[{"nome":"Queijo Minas Frescal 500 g","quantidade":2}]',
+  },
+  {
+    'id': 1000000012,
+    'numero': '131',
+    'status': 'salvo',
+    'erro_envio': 'numero',
+    'pendente_envio': 1,
+    'datahora': '2026-11-20T12:00:00Z',
+    'total': 22.5,
+    'cliente_nome': 'Padaria Central',
+    'vendedor_nome': 'João Silva',
+    'vendedor_codigo': '0001',
+    'produtos': '[{"nome":"Requeijão Cremoso 200 g","quantidade":3}]',
+  },
+];
+
+/// Pronto para entrega (a fábrica concluiu) e um em aberto ainda aguardando envio.
+final _prontos = <Map<String, dynamic>>[
+  {
+    'id': 5,
+    'numero': '132',
+    'status': 'pronto',
+    'pendente_envio': 0,
+    'datahora': '2026-11-21T08:30:00Z',
+    'pronto_em': '2026-11-22T16:00:00Z',
+    'total': 113.4,
+    'cliente_nome': 'Empório Santa Luzia',
+    'cliente_cidade': 'Uberlândia',
+    'vendedor_nome': 'João Silva',
+    'vendedor_codigo': '0001',
+    'produtos':
+        '[{"nome":"Queijo Minas Frescal 500 g","preco":18.9,"quantidade":6,"subtotal":113.4}]',
+  },
+];
+
+/// Folha "Resumo do Pedido" com os botões dados.
+Widget _resumo({required BotaoResumo principal, required BotaoResumo secundario}) => Scaffold(
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(MdSpace.xl),
+          child: ResumoPedido(
+            numero: '133',
+            cliente: 'Lanchonete do Zé',
+            ultimoPedido: DateTime.now().subtract(const Duration(days: 5)),
+            campos: const [
+              ('Telefone', '(34) 99999-1234'),
+              ('Cidade', 'Uberlândia'),
+            ],
+            vendedor: 'João Silva',
+            itens: const [
+              (nome: 'Queijo Minas Frescal 500 g', quantidade: 2, subtotal: 37.8),
+              (nome: 'Requeijão Cremoso 200 g', quantidade: 3, subtotal: 22.5),
+            ],
+            total: 60.3,
+            assinatura: null,
+            ocupado: false,
+            onAssinar: () {},
+            principal: principal,
+            secundario: secundario,
+          ),
+        ),
+      ),
+    );
+
 void main() {
   setUpAll(carregarFontesReais);
 
@@ -103,6 +196,26 @@ void main() {
       tester,
       PedidosPage(vendedorCodigo: '0001', pedidosParaCaptura: _pedidos),
       'app_pedidos',
+    );
+  });
+
+  testWidgets('meus pedidos cancelados', (tester) async {
+    await capturar(
+      tester,
+      PedidosPage(
+        vendedorCodigo: '0001',
+        pedidosParaCaptura: [..._pedidos, ..._cancelados],
+        abaInicialParaCaptura: 2,
+      ),
+      'meus_pedidos_cancelados',
+    );
+  });
+
+  testWidgets('pedido não enviado', (tester) async {
+    await capturar(
+      tester,
+      PedidosPage(vendedorCodigo: '0001', pedidosParaCaptura: _naoEnviados),
+      'pedido_nao_enviado',
     );
   });
 
@@ -166,8 +279,8 @@ void main() {
               assinatura: null,
               ocupado: false,
               onAssinar: () {},
-              onSalvar: () {},
-              onFinalizar: () {},
+              principal: (rotulo: 'Enviar pedido', icone: Icons.send_outlined, onPressed: () {}),
+              secundario: (rotulo: 'Salvar rascunho', icone: Icons.save_outlined, onPressed: () {}),
             ),
           ),
         ),
@@ -176,8 +289,53 @@ void main() {
     );
   });
 
+  testWidgets('pedido novo: botões', (tester) async {
+    await capturar(
+      tester,
+      _resumo(
+        principal: (rotulo: 'Enviar pedido', icone: Icons.send_outlined, onPressed: () {}),
+        secundario: (rotulo: 'Salvar rascunho', icone: Icons.save_outlined, onPressed: () {}),
+      ),
+      'pedido_novo_botoes',
+    );
+  });
+
+  testWidgets('pedido aberto: botões', (tester) async {
+    await capturar(
+      tester,
+      _resumo(
+        principal: (
+          rotulo: 'Registrar entrega',
+          icone: Icons.local_shipping_outlined,
+          onPressed: () {}
+        ),
+        secundario: (rotulo: 'Salvar alterações', icone: Icons.save_outlined, onPressed: () {}),
+      ),
+      'pedido_aberto_botoes',
+    );
+  });
+
+  testWidgets('meus pedidos com pronto', (tester) async {
+    await capturar(
+      tester,
+      PedidosPage(vendedorCodigo: '0001', pedidosParaCaptura: [..._pedidos, ..._prontos]),
+      'meus_pedidos_pronto',
+    );
+  });
+
   testWidgets('assinatura', (tester) async {
     await capturar(tester, const AssinaturaPage(), 'app_assinatura');
+  });
+
+  testWidgets('assinatura do pedido com aviso', (tester) async {
+    await capturar(
+      tester,
+      const AssinaturaPage(
+        titulo: 'Assinatura do pedido',
+        aviso: 'O cliente precisa assinar o pedido de novo, porque os itens mudaram.',
+      ),
+      'assinatura_pedido_aviso',
+    );
   });
 
   testWidgets('configurações', (tester) async {

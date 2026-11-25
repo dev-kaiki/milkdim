@@ -44,6 +44,37 @@ String filtroBuscaPedidos(String t) =>
     'vendedor_nome.ilike.%$t%,cliente_nome.ilike.%$t%,'
     'cliente_nome_fantasia.ilike.%$t%,numero.ilike.%$t%';
 
+/// `null`/'todos' = sem filtro (string vazia); senao o proprio status.
+String filtroSituacao(String? s) =>
+    (s == null || s.isEmpty || s == 'todos') ? '' : s;
+
+/// Colunas de `pedidos` que a Produção usa. Fica de fora `assinatura` e
+/// `assinatura_pedido` (bytea, pesadas): o detalhe busca a linha inteira.
+const String colunasPedidoSemAssinatura =
+    'id, numero, status, total, datahora, produtos, '
+    'vendedor_codigo, vendedor_nome, '
+    'cliente_id, cliente_nome, cliente_nome_fantasia, cliente_telefone, '
+    'cliente_whatsapp, cliente_email, cliente_endereco, cliente_cidade, '
+    'cliente_cpf_cnpj, cliente_insc_estadual, cliente_cep, cliente_anotacao, '
+    'enviado_em, alterado_em, pronto_em, pronto_por, '
+    'finalizado_em, finalizado_por, finalizado_manual, cancelado_em, cancelado_por';
+
+/// Mensagem em portugues para o erro de uma RPC de pedido.
+String mensagemErroRpcPedido(String? code) {
+  switch (code) {
+    case '42501':
+      return 'Sem permissão para essa ação.';
+    case 'MD001':
+      return 'O pedido mudou depois que a tela foi atualizada. Atualize e confira.';
+    case '55000':
+      return 'Esse pedido não está mais em aberto.';
+    case 'P0002':
+      return 'Pedido não encontrado.';
+    default:
+      return 'Erro ao atualizar pedido.';
+  }
+}
+
 class SupabaseService {
   final SupabaseClient _sb;
   SupabaseService([SupabaseClient? injected]) : _sb = injected ?? Supabase.instance.client;
@@ -122,6 +153,15 @@ class SupabaseService {
     'cliente_cep'           : m['cliente_cep'],
     'cliente_anotacao'      : m['cliente_anotacao'],
     'produtos'              : m['produtos'],
+    'enviado_em'            : m['enviado_em'],
+    'alterado_em'           : m['alterado_em'],
+    'pronto_em'             : m['pronto_em'],
+    'pronto_por'            : m['pronto_por'],
+    'finalizado_em'         : m['finalizado_em'],
+    'finalizado_por'        : m['finalizado_por'],
+    'finalizado_manual'     : m['finalizado_manual'],
+    'cancelado_em'          : m['cancelado_em'],
+    'cancelado_por'         : m['cancelado_por'],
   };
 
   // ----------------- CLIENTES -----------------
@@ -365,6 +405,48 @@ class SupabaseService {
       to: offset + (hasMore ? limit : items.length),
       hasMore: hasMore,
     );
+  }
+
+  /// Pedidos em aberto ('salvo') e prontos para entrega ('pronto'), do mais antigo enviado para o mais novo.
+  /// (Sem as colunas de assinatura: ver [colunasPedidoSemAssinatura].)
+  Future<List<Pedido>> buscarPedidosEmAberto() async {
+    try {
+      final List<dynamic> raw = await _sb
+          .from('pedidos')
+          .select(colunasPedidoSemAssinatura)
+          .inFilter('status', ['salvo', 'pronto'])
+          .order('enviado_em', ascending: true);
+      return raw
+          .map((e) => Pedido.fromMap(_pedidoDbToModel(JsonMap.from(e as Map))))
+          .toList();
+    } catch (e) {
+      throw RepoFailure('Erro ao buscar pedidos em aberto: $e');
+    }
+  }
+
+  /// Parâmetros da RPC `pedido_marcar_pronto`. [alteradoEmBruto] é o texto de
+  /// `alterado_em` exatamente como veio na linha (null se a linha tinha null).
+  static Map<String, dynamic> paramsMarcarPronto(int id, String? alteradoEmBruto) =>
+      {'p_id': id, 'p_alterado_em': alteradoEmBruto};
+
+  Future<void> marcarPronto(int id, {String? alteradoEmBruto}) => _rpcPedido(
+        'pedido_marcar_pronto',
+        id,
+        params: paramsMarcarPronto(id, alteradoEmBruto),
+      );
+
+  Future<void> finalizarManual(int id) => _rpcPedido('pedido_finalizar_manual', id);
+
+  Future<void> cancelarPedido(int id) => _rpcPedido('pedido_cancelar', id);
+
+  Future<void> _rpcPedido(String fn, int id, {Map<String, dynamic>? params}) async {
+    try {
+      await _sb.rpc(fn, params: params ?? {'p_id': id});
+    } on PostgrestException catch (e) {
+      throw RepoFailure(mensagemErroRpcPedido(e.code));
+    } catch (e) {
+      throw RepoFailure('Erro ao atualizar pedido: $e');
+    }
   }
 
   /// Stream realtime (ordenado por datahora desc)

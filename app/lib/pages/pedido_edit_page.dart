@@ -11,6 +11,9 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 import '../utils/produto.dart';
 import '../utils/produto_service.dart';
 import '../utils/db.dart';
+import '../utils/pdf_utils.dart' show imagemDaAssinatura;
+import '../utils/pedido_da_tela.dart';
+import '../utils/regras_pedido.dart';
 import '../utils/supabase_helper.dart';
 import '../utils/convert.dart'; // assinaturaToBytes / signatureToImageBytes / imageTypeFromBytes
 import '../widgets/pedido_ui.dart';
@@ -23,7 +26,31 @@ class PedidoPageEdit extends StatefulWidget {
   /// consulta SQLite nem rede.
   final List<Produto>? produtosParaCaptura;
 
-  const PedidoPageEdit({super.key, required this.pedido, this.produtosParaCaptura});
+  /// Para teste: no lugar de abrir a `AssinaturaPage`.
+  final PedirAssinatura? pedirAssinatura;
+
+  /// Para teste: no lugar de `gravarPedidoEEnviar`.
+  final GravarPedido? gravar;
+
+  /// Para teste: no lugar de gravar o arquivo da assinatura da entrega em
+  /// Documents/signatures; devolve o caminho.
+  final Future<String?> Function(Uint8List bytes, {required String numero})?
+      gravarArquivoAssinatura;
+
+  /// Para teste: no lugar de `situacaoGravada` (a situação do pedido no
+  /// SQLite depois do eco). Com [gravar] injetado e sem esta, a mensagem usa
+  /// a situação prevista.
+  final Future<String?> Function(Map<String, dynamic> pedido)? lerSituacaoGravada;
+
+  const PedidoPageEdit({
+    super.key,
+    required this.pedido,
+    this.produtosParaCaptura,
+    this.pedirAssinatura,
+    this.gravar,
+    this.gravarArquivoAssinatura,
+    this.lerSituacaoGravada,
+  });
 
   @override
   State<PedidoPageEdit> createState() => _PedidoPageEditState();
@@ -34,8 +61,40 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
   final Map<Produto, TextEditingController> _qtdControllers = {};
   List<Produto> produtos = [];
 
-  /// Assinatura PNG/JPEG (bytes) para preview/PDF e salvamento
+  /// Assinatura da **entrega** (PNG/JPEG): a guardada, para a prévia da tela
+  /// de assinatura; "Registrar entrega" pede uma nova.
   Uint8List? _assinatura;
+
+  /// Assinatura do pedido guardada (arquivo do aparelho ou bytes).
+  Uint8List? _assinaturaPedidoAtual;
+
+  /// Assinatura do pedido colhida agora (vai ao salvar).
+  Uint8List? _assinaturaPedidoNova;
+
+  /// Itens e cliente que a [_assinaturaPedidoNova] cobre (como estavam na
+  /// tela quando o cliente assinou).
+  Map<String, dynamic>? _assinadoSobre;
+
+  /// Itens e cliente da tela agora (o que a assinatura do pedido cobre).
+  Map<String, dynamic> _itensEClienteDaTela() => {
+        'produtos': _itensDaTela(),
+        'cliente_id': _clienteId,
+        'cliente_nome': nomeCtrl.text.trim(),
+      };
+
+  void _guardarAssinaturaPedido(Uint8List bytes) {
+    _assinaturaPedidoNova = bytes;
+    _assinadoSobre = _itensEClienteDaTela();
+  }
+
+  /// Entregue pelo Controle e sem a assinatura da entrega
+  /// ([podeRegistrarEntregaDepois]): a tela só oferece "Registrar entrega".
+  bool get _soEntrega => podeRegistrarEntregaDepois(widget.pedido);
+
+  /// A assinatura colhida agora foi dada para outros itens ou outro cliente?
+  bool get _assinaturaNovaVencida =>
+      _assinaturaPedidoNova != null &&
+      (_assinadoSobre == null || itensOuClienteMudaram(_assinadoSobre!, _itensEClienteDaTela()));
 
   // cliente selecionado
   int? _clienteId;
@@ -85,11 +144,12 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
 
     // Carrega assinatura existente (prioriza arquivo local) e normaliza para imagem
     _initAssinatura();
+    _assinaturaPedidoAtual = imagemDaAssinatura(widget.pedido,
+        chaveBytes: 'assinatura_pedido', chaveCaminho: 'assinatura_pedido_path');
 
     final captura = widget.produtosParaCaptura;
     if (captura != null) {
-      _inicializarCarrinhoEControllers(captura);
-      produtos = captura;
+      produtos = _inicializarCarrinhoEControllers(captura);
       carregandoProdutos = false;
       return;
     }
@@ -177,11 +237,11 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     final produtosDb = await buscarProdutosOnlineOuLocal();
 
     // prepara carrinho/quantidades com base no pedido existente
-    _inicializarCarrinhoEControllers(produtosDb);
+    final lista = _inicializarCarrinhoEControllers(produtosDb);
 
     if (!mounted) return;
     setState(() {
-      produtos = produtosDb;
+      produtos = lista;
       carregandoProdutos = false;
     });
     // ignore: avoid_print
@@ -196,21 +256,34 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     print('[EDIT] clientes carregados: ${clientes.length}');
   }
 
-  void _inicializarCarrinhoEControllers(List<Produto> produtosDb) {
-    // itens do pedido podem vir como String (JSON) ou List
+  /// Itens do pedido (o campo pode vir como String JSON ou List).
+  List _itensDoPedido() {
     final dynamic prodField = widget.pedido['produtos'];
-    List itensPedido;
     if (prodField is String) {
       try {
-        itensPedido = (jsonDecode(prodField) as List?) ?? <dynamic>[];
+        return (jsonDecode(prodField) as List?) ?? <dynamic>[];
       } catch (_) {
-        itensPedido = <dynamic>[];
+        return <dynamic>[];
       }
-    } else if (prodField is List) {
-      itensPedido = prodField;
-    } else {
-      itensPedido = <dynamic>[];
     }
+    return prodField is List ? prodField : <dynamic>[];
+  }
+
+  static double? _numeroOuNull(Object? v) =>
+      v is num ? v.toDouble() : double.tryParse('${v ?? ''}'.trim().replaceAll(',', '.'));
+
+  /// Monta o carrinho com as quantidades do pedido e devolve os produtos da
+  /// grade.
+  ///
+  /// Os itens do pedido ficam com o **nome e o preço do pedido** (o preço
+  /// combinado com o cliente), mesmo que o catálogo de hoje tenha outro preço
+  /// ou não tenha mais o produto (aí ele entra no fim da grade). Senão salvar
+  /// sem mexer contaria como itens mudados: pediria assinatura de novo e
+  /// tiraria o pedido de "pronto". Os outros produtos do catálogo entram com o
+  /// preço de hoje.
+  List<Produto> _inicializarCarrinhoEControllers(List<Produto> produtosDb) {
+    final itensPedido = _itensDoPedido();
+    final usados = <int>{};
 
     // limpa controllers antigos
     for (final c in _qtdControllers.values) {
@@ -219,20 +292,8 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     _qtdControllers.clear();
     carrinho.clear();
 
-    for (final p in produtosDb) {
-      Map? salvo;
-      for (final it in itensPedido) {
-        if (it is Map && (it['nome'] ?? '') == p.nome) {
-          salvo = it;
-          break;
-        }
-      }
-      final int qtd = (salvo?['quantidade'] is int)
-          ? salvo!['quantidade'] as int
-          : (int.tryParse('${salvo?['quantidade'] ?? '0'}') ?? 0);
-
+    void adicionar(Produto p, int qtd) {
       carrinho[p] = qtd;
-
       final ctrl = TextEditingController(text: qtd > 0 ? qtd.toString() : '');
       ctrl.addListener(() {
         final val = int.tryParse(ctrl.text) ?? 0;
@@ -242,15 +303,80 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
       _qtdControllers[p] = ctrl;
     }
 
+    int qtdDoItem(Map it) => (_numeroOuNull(it['quantidade']) ?? 0).toInt();
+
+    final lista = <Produto>[];
+    for (final p in produtosDb) {
+      var i = -1;
+      for (var j = 0; j < itensPedido.length; j++) {
+        final it = itensPedido[j];
+        if (!usados.contains(j) && it is Map && (it['nome'] ?? '') == p.nome) {
+          i = j;
+          break;
+        }
+      }
+      if (i < 0) {
+        lista.add(p);
+        adicionar(p, 0);
+        continue;
+      }
+      usados.add(i);
+      final it = itensPedido[i] as Map;
+      final doPedido = p.copyWith(preco: _numeroOuNull(it['preco']) ?? p.preco);
+      lista.add(doPedido);
+      adicionar(doPedido, qtdDoItem(it));
+    }
+
+    // Itens do pedido que o catálogo não tem mais (id negativo: só na tela).
+    for (var j = 0; j < itensPedido.length; j++) {
+      final it = itensPedido[j];
+      if (usados.contains(j) || it is! Map) continue;
+      final nome = (it['nome'] ?? '').toString();
+      if (nome.isEmpty) continue;
+      final p = Produto(id: -(j + 1), nome: nome, preco: _numeroOuNull(it['preco']) ?? 0.0);
+      lista.add(p);
+      adicionar(p, qtdDoItem(it));
+    }
+
     // ignore: avoid_print
-    print('[EDIT] carrinho inicializado com ${produtosDb.length} produtos');
+    print('[EDIT] carrinho inicializado com ${lista.length} produtos');
+    return lista;
   }
+
+  /// Os itens como a tela grava (só os com quantidade).
+  List<Map<String, dynamic>> _itensDaTela() => carrinho.entries
+      .where((e) => e.value > 0)
+      .map((e) => <String, dynamic>{
+            'nome': e.key.nome,
+            'preco': e.key.preco,
+            'quantidade': e.value,
+            'subtotal': (e.key.preco * e.value),
+          })
+      .toList();
 
   double get total =>
       carrinho.entries.fold(0.0, (s, e) => s + e.key.preco * (e.value));
 
-  // ====== ASSINATURA: grava/atualiza arquivo e retorna caminho ======
+  // ====== ASSINATURA DA ENTREGA: grava/atualiza arquivo e retorna caminho ======
+  // O arquivo é só uma cópia no aparelho: os bytes vão no SQLite e ao
+  // servidor. Se gravar o arquivo falhar, segue sem caminho (null): o PDF e a
+  // prévia leem os bytes novos, nunca a imagem antiga de outro arquivo.
   Future<String?> _persistirAssinaturaLocal(Uint8List? bytes,
+      {required String numero}) async {
+    try {
+      final injetada = widget.gravarArquivoAssinatura;
+      if (injetada != null && bytes != null && bytes.isNotEmpty) {
+        return await injetada(bytes, numero: numero);
+      }
+      return await _gravarArquivoAssinatura(bytes, numero: numero);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[EDIT] não gravou o arquivo da assinatura: $e');
+      return null;
+    }
+  }
+
+  Future<String?> _gravarArquivoAssinatura(Uint8List? bytes,
       {required String numero}) async {
     if (bytes == null || bytes.isEmpty) {
       final old = widget.pedido['assinatura_path'];
@@ -291,111 +417,227 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     return file.path;
   }
 
-  Future<void> _atualizarPedido({required String status}) async {
+  /// Abre a tela de assinatura do [tipo] (com o [aviso], se houver) e devolve
+  /// a imagem, ou null se o vendedor voltou sem assinar.
+  Future<Uint8List?> _pedirAssinatura(TipoAssinatura tipo, {String? aviso}) async {
+    final injetada = widget.pedirAssinatura;
+    if (injetada != null) return injetada(tipo, aviso: aviso);
+    final dynamic ret = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AssinaturaPage(
+          assinatura: tipo == TipoAssinatura.entrega
+              ? _assinatura
+              : (_assinaturaPedidoNova ?? _assinaturaPedidoAtual),
+          titulo: tipo.titulo,
+          aviso: aviso,
+        ),
+      ),
+    );
+    // Aceita qualquer formato retornado e normaliza para imagem
+    final img = signatureToImageBytes(ret);
+    return (img == null || img.isEmpty) ? null : img;
+  }
+
+  /// O pedido como a tela grava, sobre a linha guardada.
+  Map<String, dynamic> _pedidoDaTela({
+    required List<Map<String, dynamic>> itens,
+    required String status,
+    required Uint8List? assinaturaEntrega,
+    required String? assinaturaEntregaPath,
+  }) =>
+      {
+        ...pedidoDaTela(
+          base: widget.pedido,
+          numero: numeroPedidoCtrl.text.trim(),
+          produtos: itens,
+          total: total,
+          status: status,
+          datahora: DateTime.now().toUtc().toIso8601String(),
+          clienteId: _clienteId,
+          cliente: {
+            'cliente_nome': nomeCtrl.text.trim(),
+            'cliente_nome_fantasia': nomeFantasiaCtrl.text.trim(),
+            'cliente_telefone': telefoneCtrl.text.trim(),
+            'cliente_whatsapp': whatsappCtrl.text.trim(),
+            'cliente_email': emailCtrl.text.trim(),
+            'cliente_endereco': enderecoCtrl.text.trim(),
+            'cliente_cidade': cidadeCtrl.text.trim(),
+            'cliente_cpf_cnpj': cpfCnpjCtrl.text.trim(),
+            'cliente_insc_estadual': inscEstadualCtrl.text.trim(),
+            'cliente_cep': cepCtrl.text.trim(),
+            'cliente_anotacao': anotacaoCtrl.text.trim(),
+          },
+          // os bytes vão ao servidor (e ficam no SQLite para os reenvios);
+          // o caminho fica só no aparelho
+          assinatura: assinaturaEntrega,
+          assinaturaPath: assinaturaEntregaPath,
+          // assinatura do pedido colhida agora: só os bytes (sem arquivo)
+          // (uma colhida antes de mudar itens/cliente não vai: não cobre a tela)
+          assinaturaPedido: _assinaturaNovaVencida ? null : _assinaturaPedidoNova,
+        ),
+        // trocou o número que o servidor recusou: o conflito antigo não vale mais
+        if (widget.pedido['erro_envio'] != null &&
+            numeroPedidoCtrl.text.trim() != (widget.pedido['numero'] ?? '').toString().trim())
+          'erro_envio': null,
+      };
+
+  String? get _caminhoAssinaturaEntregaGuardado {
+    final old = widget.pedido['assinatura_path'];
+    return (old is String && old.isNotEmpty) ? old : null;
+  }
+
+  /// "Salvar alterações": se mudaram itens ou cliente (ou o pedido nunca foi
+  /// assinado), o cliente assina o pedido de novo antes; se o vendedor volta
+  /// sem a assinatura, nada é gravado e o formulário continua. A situação
+  /// mandada preserva `pronto` (quem decide voltar para `salvo` é o servidor;
+  /// `pedidoDaTela` prevê o mesmo).
+  Future<void> _salvarAlteracoes() async {
     if (processando) return;
-
-    final itens = carrinho.entries
-        .where((e) => e.value > 0)
-        .map((e) => {
-      'nome': e.key.nome,
-      'preco': e.key.preco,
-      'quantidade': e.value,
-      'subtotal': (e.key.preco * e.value),
-    })
-        .toList();
-
+    final itens = _itensDaTela();
     if (itens.isEmpty) {
       _showSnack('Adicione ao menos um produto ao pedido!');
       return;
     }
-    if (status == 'finalizado' && (_assinatura == null || _assinatura!.isEmpty)) {
-      _showSnack('É obrigatório assinar para finalizar!');
+    final status = estaPronto(widget.pedido) ? 'pronto' : 'salvo';
+    Map<String, dynamic> montar() => _pedidoDaTela(
+          itens: itens,
+          status: status,
+          assinaturaEntrega: null,
+          assinaturaEntregaPath: _caminhoAssinaturaEntregaGuardado,
+        );
+
+    // Assinatura colhida antes e os itens ou o cliente mudaram depois: ela
+    // não vale para o que está na tela. Descarta e, se a guardada também não
+    // cobre, o cliente assina de novo.
+    final vencida = _assinaturaNovaVencida;
+    if (vencida) {
+      setState(() {
+        _assinaturaPedidoNova = null;
+        _assinadoSobre = null;
+      });
+    }
+    if (_assinaturaPedidoNova == null) {
+      var aviso = avisoAssinaturaDoPedido(original: widget.pedido, editado: montar());
+      if (aviso != null && vencida) aviso = kAvisoAssinarPedidoDeNovo;
+      if (aviso != null) {
+        final bytes = await _pedirAssinatura(TipoAssinatura.pedido, aviso: aviso);
+        if (!mounted || bytes == null) return;
+        setState(() => _guardarAssinaturaPedido(bytes));
+      }
+    }
+    await _gravar(() async => montar());
+  }
+
+  /// "Salvar rascunho" (só no rascunho do aparelho, `so_local = 1`): grava
+  /// `salvo` só no aparelho, sem enviar e sem pedir assinatura. A assinatura
+  /// do pedido fica quando ainda cobre os itens e o cliente da tela (a colhida
+  /// agora, se não venceu, ou a guardada, se itens e cliente não mudaram);
+  /// senão é apagada do rascunho, e o envio pede de novo.
+  Future<void> _salvarRascunho() async {
+    if (processando) return;
+    final itens = _itensDaTela();
+    if (itens.isEmpty) {
+      _showSnack('Adicione ao menos um produto ao pedido!');
       return;
     }
+    await _gravar(() async {
+      final p = _pedidoDaTela(
+        itens: itens,
+        status: 'salvo',
+        assinaturaEntrega: null,
+        assinaturaEntregaPath: _caminhoAssinaturaEntregaGuardado,
+      );
+      final novaCobre = _assinaturaPedidoNova != null && !_assinaturaNovaVencida;
+      final guardadaCobre =
+          temAssinaturaDoPedido(widget.pedido) && !itensOuClienteMudaram(widget.pedido, p);
+      final cobre = novaCobre || guardadaCobre;
+      return {
+        ...p,
+        if (!cobre) ...{
+          'assinatura_pedido': null,
+          'assinatura_pedido_path': null,
+          kLimparAssinaturaPedido: true,
+        },
+        'so_local': 1,
+      };
+    });
+  }
 
+  /// "Registrar entrega": pede só a assinatura da entrega (não exige a do
+  /// pedido) e grava `finalizado`. Sem a assinatura, nada é gravado.
+  Future<void> _registrarEntrega() async {
+    if (processando) return;
+    final itens = _itensDaTela();
+    if (itens.isEmpty) {
+      _showSnack('Adicione ao menos um produto ao pedido!');
+      return;
+    }
+    final bytes = await _pedirAssinatura(TipoAssinatura.entrega);
+    if (!mounted || bytes == null) return;
+    setState(() => _assinatura = bytes);
+
+    await _gravar(() async {
+      // garante persistência da assinatura como ARQUIVO
+      final caminhoAss =
+          await _persistirAssinaturaLocal(bytes, numero: numeroPedidoCtrl.text.trim());
+      return _pedidoDaTela(
+        itens: itens,
+        status: 'finalizado',
+        assinaturaEntrega: bytes,
+        assinaturaEntregaPath: caminhoAss,
+      );
+    });
+  }
+
+  /// Grava no aparelho na hora (nunca espera a rede) e tenta enviar. Um envio
+  /// de pendentes que esteja no ar não sobrescreve esta edição: o eco antigo
+  /// é descartado em aplicarEcoDoServidor. Gravou: fecha a página.
+  Future<void> _gravar(Future<Map<String, dynamic>> Function() montar) async {
     setState(() => processando = true);
     try {
-      // garante persistência da assinatura como ARQUIVO
-      final caminhoAss = await _persistirAssinaturaLocal(
-        _assinatura,
-        numero: numeroPedidoCtrl.text.trim(),
-      );
-
-      final pedidoAtualizado = {
-        ...widget.pedido,
-        'numero': numeroPedidoCtrl.text.trim(),
-        'produtos': itens,
-        'total': total,
-        'status': status,
-        'datahora': DateTime.now().toUtc().toIso8601String(),
-
-        // cliente
-        'cliente_id': _clienteId,
-        'cliente_nome': nomeCtrl.text.trim(),
-        'cliente_nome_fantasia': nomeFantasiaCtrl.text.trim(),
-        'cliente_telefone': telefoneCtrl.text.trim(),
-        'cliente_whatsapp': whatsappCtrl.text.trim(),
-        'cliente_email': emailCtrl.text.trim(),
-        'cliente_endereco': enderecoCtrl.text.trim(),
-        'cliente_cidade': cidadeCtrl.text.trim(),
-        'cliente_cpf_cnpj': cpfCnpjCtrl.text.trim(),
-        'cliente_insc_estadual': inscEstadualCtrl.text.trim(),
-        'cliente_cep': cepCtrl.text.trim(),
-        'cliente_anotacao': anotacaoCtrl.text.trim(),
-
-        // somente o CAMINHO local:
-        'assinatura_path': caminhoAss,
-      };
+      final pedidoAtualizado = await montar();
+      final status = (pedidoAtualizado['status'] ?? '').toString();
 
       // LOG
       // ignore: avoid_print
-      print('[EDIT] atualizando pedido nº=${pedidoAtualizado['numero']} | status=$status total=$total | assinatura=${_assinatura == null ? 'null' : '${_assinatura!.length} bytes (tipo=${imageTypeFromBytes(_assinatura!)})'} | path=$caminhoAss');
+      print('[EDIT] atualizando pedido nº=${pedidoAtualizado['numero']} | status=$status total=$total | assinatura=${_assinatura == null ? 'null' : '${_assinatura!.length} bytes (tipo=${imageTypeFromBytes(_assinatura!)})'} | assinatura_pedido nova=${_assinaturaPedidoNova?.length ?? 0} bytes');
 
-      // Grava no aparelho na hora (nunca espera a rede) e, se finalizado, tenta
-      // enviar. Um envio de pendentes que esteja no ar não sobrescreve esta
-      // edição: o eco antigo é descartado em aplicarEcoDoServidor.
-      final r = await gravarPedidoEEnviar(pedidoAtualizado, novo: false);
+      final r = await (widget.gravar ?? gravarPedidoEEnviar)(pedidoAtualizado, novo: false);
+
+      // Enviado: a mensagem segue a situação que ficou no aparelho depois do
+      // eco, não a prevista (a cópia do celular podia estar velha: pronto no
+      // servidor e salvo aqui, ou o contrário).
+      var situacao = status;
+      final ler = widget.lerSituacaoGravada ?? (widget.gravar == null ? situacaoGravada : null);
+      if (r == ResultadoGravacao.enviado && ler != null) {
+        try {
+          situacao = await ler(pedidoAtualizado) ?? status;
+        } catch (e) {
+          // ignore: avoid_print
+          print('[EDIT] não releu a situação gravada: $e');
+        }
+      }
 
       if (!mounted) return;
-      if (r == ResultadoGravacao.pendente) {
-        _showSnack('Pedido salvo. Será enviado quando houver internet.', sucesso: true);
+      final msg = mensagemGravacao(r, situacao);
+      if (msg != null) {
+        _showSnack(msg, sucesso: !gravacaoEhAviso(r));
       }
       // ignore: avoid_print
-      print('[EDIT] concluído ($r) -> pop("$status")');
-      Navigator.pop(context, status);
+      print('[EDIT] concluído ($r) -> pop("$situacao")');
+      Navigator.pop(context, situacao);
+    } on NumeroEmUso catch (e) {
+      // Nada foi gravado: o formulário fica aberto para trocar o número.
+      if (mounted) _showSnack(kMsgNumeroEmUso);
+      // ignore: avoid_print
+      print('[EDIT] $e');
     } catch (e) {
       if (mounted) _showSnack('Erro ao atualizar pedido.');
       // ignore: avoid_print
       print('[EDIT] erro ao atualizar pedido: $e');
     } finally {
       if (mounted) setState(() => processando = false);
-    }
-  }
-
-  void _irParaAssinatura() async {
-    if (processando) return;
-
-    // LOG
-    // ignore: avoid_print
-    print('[EDIT] indo para tela de assinatura | atual=${_assinatura == null ? 0 : _assinatura!.length} bytes (${_assinatura == null ? 'null' : imageTypeFromBytes(_assinatura!)})');
-
-    final dynamic ret = await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => AssinaturaPage(assinatura: _assinatura)),
-    );
-    if (!mounted) return;
-
-    // Aceita qualquer formato retornado e normaliza para imagem
-    final img = signatureToImageBytes(ret);
-    if (img != null && img.isNotEmpty) {
-      setState(() => _assinatura = img);
-      _showSnack('Assinatura salva!', sucesso: true);
-      // ignore: avoid_print
-      print('[EDIT] retorno da AssinaturaPage: ${ret.runtimeType}');
-    } else {
-      _showSnack('Falha ao obter a assinatura.');
-      // ignore: avoid_print
-      print('[EDIT] assinatura retornada inválida ou vazia.');
     }
   }
 
@@ -486,7 +728,8 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
             ),
             child: MdContentWidth(
               maxWidth: 640,
-              child: ResumoPedido(
+              // StatefulBuilder: a prévia da assinatura atualiza na folha aberta.
+              child: StatefulBuilder(builder: (folha, setFolha) => ResumoPedido(
                 numero: numeroPedidoCtrl.text,
                 cliente: nomeCtrl.text,
                 ultimoPedido: _ultimoPedido,
@@ -508,18 +751,46 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
                     (nome: e.key.nome, quantidade: e.value, subtotal: e.key.preco * e.value),
                 ],
                 total: total,
-                assinatura: _assinatura,
+                assinatura: _assinaturaPedidoNova ?? _assinaturaPedidoAtual,
                 ocupado: processando,
-                onAssinar: _irParaAssinatura,
-                onSalvar: () {
-                  Navigator.of(context).pop();
-                  _atualizarPedido(status: 'salvo');
+                onAssinar: () async {
+                  if (processando) return;
+                  final bytes = await _pedirAssinatura(TipoAssinatura.pedido);
+                  if (!mounted || bytes == null) return;
+                  setState(() => _guardarAssinaturaPedido(bytes));
+                  if (folha.mounted) setFolha(() {});
                 },
-                onFinalizar: () {
-                  Navigator.of(context).pop();
-                  _atualizarPedido(status: 'finalizado');
-                },
-              ),
+                principal: (
+                  rotulo: 'Registrar entrega',
+                  icone: Icons.local_shipping_outlined,
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _registrarEntrega();
+                  },
+                ),
+                // entregue pelo Controle sem assinatura: só registra a entrega
+                secundario: _soEntrega
+                    ? null
+                    : (
+                        rotulo: 'Salvar alterações',
+                        icone: Icons.save_outlined,
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          _salvarAlteracoes();
+                        },
+                      ),
+                // rascunho do aparelho: pode continuar rascunho (não envia)
+                terciario: ehRascunhoDoAparelho(widget.pedido)
+                    ? (
+                        rotulo: 'Salvar rascunho',
+                        icone: Icons.save_as_outlined,
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          _salvarRascunho();
+                        },
+                      )
+                    : null,
+              )),
             ),
           ),
         );
@@ -534,6 +805,7 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     TextInputType? keyboardType,
     int maxLines = 1,
     VoidCallback? suffixIconTap,
+    bool readOnly = false,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: MdSpace.md),
@@ -544,6 +816,7 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
             controller: controller,
             keyboardType: keyboardType,
             maxLines: maxLines,
+            readOnly: readOnly,
             decoration: InputDecoration(
               prefixIcon: Icon(icon),
               suffixIcon: suffixIconTap != null
@@ -617,7 +890,11 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
         ],
       ),
       bottomNavigationBar: mostrarForm && total > 0
-          ? BarraResumo(total: total, onPressed: processando ? null : _abrirPopupResumo)
+          ? BarraResumo(
+              total: total,
+              onPressed: processando ? null : _abrirPopupResumo,
+              ocupado: processando,
+            )
           : null,
       body: carregandoProdutos
           ? const Center(child: CircularProgressIndicator())
@@ -651,6 +928,7 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
                                   label: 'Nº Pedido',
                                   controller: numeroPedidoCtrl,
                                   keyboardType: TextInputType.number,
+                                  readOnly: !numeroEditavel(widget.pedido),
                                 ),
                                 _campoCliente(
                                   icon: Icons.person_outline,

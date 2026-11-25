@@ -8,10 +8,12 @@ import 'package:sqflite/sqflite.dart' as sq;
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:convert/convert.dart' as hex_conv;
 
+import 'id_aparelho.dart';
+
 sq.Database? _db;
 
 /// ⬆️ aumente quando mudar o schema
-const _dbVersion = 16;
+const _dbVersion = 18;
 
 /// Faixa reservada para IDs de pedidos criados SOMENTE localmente (rascunhos).
 ///
@@ -37,14 +39,32 @@ Future<int> proximoIdLocalSeguro(sq.DatabaseExecutor db) async {
   return base + 1;
 }
 
-/// Move rascunhos (status='salvo') com id "baixo" para a faixa reservada,
-/// evitando colisão com os ids do Supabase na próxima sincronização.
-/// Idempotente (só age sobre id < [kLocalIdBase]).
-Future<void> _relocarRascunhosParaFaixaSegura(sq.DatabaseExecutor db) async {
+/// Move rascunhos antigos (status='salvo', id "baixo", que NUNCA chegaram ao
+/// servidor) para a faixa reservada, evitando colisão com os ids do Supabase
+/// na próxima sincronização. Idempotente (só age sobre id < [kLocalIdBase]).
+///
+/// Desde a fase A um `salvo` de id baixo também pode ser um pedido em aberto
+/// que veio do servidor (sync ou eco): esse tem `enviado_em` (cópia do
+/// servidor, sempre preenchida lá) e NÃO é movido — movê-lo tiraria o pedido
+/// do estado "no servidor" (número destravado, sem "Cancelar pedido", e um
+/// reenvio duplicaria o pedido). Sem a coluna (upgrade antigo, antes da v17)
+/// todo `salvo` de id baixo é rascunho, como antes.
+///
+/// Com a coluna `so_local` (v17+), o rascunho movido que não está pendente de
+/// envio fica `so_local = 1` (a marcação da v17 só olha a faixa local e não o
+/// teria visto): senão ficaria nem enviável nem apagável.
+Future<void> _relocarRascunhosParaFaixaSegura(sq.Database db) async {
   try {
+    final cols = await _getTableColumns(db, 'pedidos');
+    final soNuncaEnviados = cols.contains('enviado_em')
+        ? " AND (enviado_em IS NULL OR enviado_em = '')"
+        : '';
+    final marcarSoLocal = cols.contains('so_local') && cols.contains('pendente_envio')
+        ? ', so_local = CASE WHEN pendente_envio = 1 THEN so_local ELSE 1 END'
+        : '';
     await db.execute(
-      "UPDATE pedidos SET id = id + $kLocalIdBase "
-      "WHERE status = 'salvo' AND id < $kLocalIdBase",
+      "UPDATE pedidos SET id = id + $kLocalIdBase$marcarSoLocal "
+      "WHERE status = 'salvo' AND id < $kLocalIdBase$soNuncaEnviados",
     );
   } catch (e) {
     debugPrint('Falha ao relocar rascunhos para faixa segura: $e');
@@ -157,9 +177,24 @@ Future<sq.Database> getDb() async {
           cliente_nome_fantasia TEXT,
           cliente_whatsapp TEXT,
           cliente_email TEXT,
-          pendente_envio INTEGER NOT NULL DEFAULT 0
+          pendente_envio INTEGER NOT NULL DEFAULT 0,
+          id_aparelho TEXT,
+          so_local INTEGER NOT NULL DEFAULT 0,
+          erro_envio TEXT,
+          enviado_em TEXT,
+          alterado_em TEXT,
+          finalizado_em TEXT,
+          finalizado_por TEXT,
+          finalizado_manual TEXT,
+          cancelado_em TEXT,
+          cancelado_por TEXT,
+          assinatura_pedido TEXT,      -- hex "0x..." da assinatura do pedido
+          assinatura_pedido_path TEXT, -- arquivo local da assinatura do pedido
+          pronto_em TEXT,
+          pronto_por TEXT
         );
       ''');
+      await _criarTabelaDescartados(db);
 
       // Índices úteis
       await db.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_cliente_data ON pedidos(cliente_id, datahora);');
@@ -203,6 +238,20 @@ Future<sq.Database> getDb() async {
         );
         await _recriarVendedoresSemSenha(db);
       }
+      if (oldV < 17) {
+        // v17: pedido aberto/cancelado também sobe ao servidor; todo pedido
+        // ganha id_aparelho. Rascunhos antigos (nunca enviados) ficam so_local.
+        await _garantirSchemaV17(db);
+        await db.execute(
+          "UPDATE pedidos SET so_local = 1 "
+          "WHERE status = 'salvo' AND id >= $kLocalIdBase AND pendente_envio = 0",
+        );
+      }
+      if (oldV < 18) {
+        // v18: assinatura do pedido (separada da de entrega) e a situação
+        // `pronto`, gravada pelo Controle. Só colunas novas.
+        await _garantirSchemaV18(db);
+      }
     },
     onOpen: (db) async {
       await _ensureColumn(db, 'produtos', 'codigo', 'TEXT');
@@ -220,9 +269,12 @@ Future<sq.Database> getDb() async {
       // Garante coluna nova mesmo se a base já existia (idempotente)
       await _ensureColumn(db, 'pedidos', 'assinatura_path', 'TEXT');
       await _ensureColumn(db, 'pedidos', 'pendente_envio', 'INTEGER NOT NULL DEFAULT 0');
+      await _garantirSchemaV17(db);
+      await _garantirSchemaV18(db);
 
       // Segurança extra: garante que rascunhos antigos estejam na faixa de id
-      // reservada (caso o app tenha pulado o onUpgrade por algum motivo).
+      // reservada (caso a relocação da v15 tenha falhado). Só mexe no que
+      // nunca chegou ao servidor: pedido em aberto do servidor fica onde está.
       await _relocarRascunhosParaFaixaSegura(db);
     },
   );
@@ -230,6 +282,48 @@ Future<sq.Database> getDb() async {
 }
 
 /// ---------- Utils de migração/colunas ----------
+
+Future<void> _criarTabelaDescartados(sq.DatabaseExecutor db) async {
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS pedidos_descartados (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      descartado_em TEXT,
+      motivo TEXT,
+      pedido_json TEXT
+    );
+  ''');
+}
+
+/// Colunas e tabela da v17 (idempotente).
+Future<void> _garantirSchemaV17(sq.Database db) async {
+  await _ensureColumn(db, 'pedidos', 'id_aparelho', 'TEXT');
+  await _ensureColumn(db, 'pedidos', 'so_local', 'INTEGER NOT NULL DEFAULT 0');
+  await _ensureColumn(db, 'pedidos', 'erro_envio', 'TEXT');
+  for (final c in const [
+    'enviado_em',
+    'alterado_em',
+    'finalizado_em',
+    'finalizado_por',
+    'finalizado_manual',
+    'cancelado_em',
+    'cancelado_por',
+  ]) {
+    await _ensureColumn(db, 'pedidos', c, 'TEXT');
+  }
+  await _criarTabelaDescartados(db);
+}
+
+/// Colunas da v18 (idempotente).
+Future<void> _garantirSchemaV18(sq.Database db) async {
+  for (final c in const [
+    'assinatura_pedido',
+    'assinatura_pedido_path',
+    'pronto_em',
+    'pronto_por',
+  ]) {
+    await _ensureColumn(db, 'pedidos', c, 'TEXT');
+  }
+}
 
 Future<Set<String>> _getTableColumns(sq.Database db, String table) async {
   final info = await db.rawQuery('PRAGMA table_info($table)');
@@ -280,9 +374,11 @@ String? _bytesToHex0x(dynamic assinatura) {
     return '0x${hex_conv.hex.encode(Uint8List.fromList(assinatura))}';
   }
   if (assinatura is String) {
-    final s = assinatura.startsWith('0x') ? assinatura.substring(2) : assinatura;
+    // "0x..." (SQLite) ou "\x..." (bytea como o PostgREST devolve).
+    final temPrefixo = assinatura.startsWith('0x') || assinatura.startsWith(r'\x');
+    final s = temPrefixo ? assinatura.substring(2) : assinatura;
     final isHex = RegExp(r'^[0-9a-fA-F]+$').hasMatch(s);
-    if (isHex) return assinatura.startsWith('0x') ? assinatura : '0x$s';
+    if (isHex) return '0x$s';
   }
   return null;
 }
@@ -376,7 +472,194 @@ Future<void> salvarProdutoLocal(Map<String, dynamic> produto) async {
 
 /// -------- PEDIDOS --------
 
-Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
+/// Campos que só o app local controla: so_local, pendente_envio, id_aparelho
+/// (e, no REPLACE, os campos locais/cópias do servidor que não vieram no mapa).
+/// [map] precisa ter 'id'.
+Future<void> _aplicarCamposLocais(
+  sq.Database db,
+  Map<String, dynamic> map,
+  Map<String, dynamic> pedido, {
+  required bool replace,
+}) async {
+  final ex = await db.query('pedidos', where: 'id = ?', whereArgs: [map['id']], limit: 1);
+  final antigo = ex.isEmpty ? null : ex.first;
+
+  int soLocal;
+  if (pedido.containsKey('so_local') && pedido['so_local'] != null) {
+    final v = pedido['so_local'];
+    soLocal = (v == true || v == 1 || '$v' == '1') ? 1 : 0;
+  } else {
+    soLocal = (antigo?['so_local'] as num?)?.toInt() ?? 0;
+  }
+  map['so_local'] = soLocal;
+  map['pendente_envio'] = soLocal == 1 ? 0 : 1;
+
+  final guardado = antigo?['id_aparelho']?.toString() ?? '';
+  final vindo = pedido['id_aparelho']?.toString() ?? '';
+  map['id_aparelho'] = guardado.isNotEmpty
+      ? guardado
+      : (vindo.isNotEmpty ? vindo : novoIdAparelho());
+
+  if (replace && antigo != null) {
+    // INSERT OR REPLACE apagaria o que não está no mapa: preserva.
+    for (final c in _colunasCopiaDoServidor) {
+      if (pedido.containsKey(c)) {
+        map[c] = pedido[c]?.toString();
+      } else {
+        map[c] = antigo[c];
+      }
+    }
+  } else {
+    for (final c in _colunasCopiaDoServidor) {
+      if (pedido.containsKey(c)) map[c] = pedido[c]?.toString();
+    }
+  }
+
+  // Assinatura do pedido: sem bytes, nunca apaga a guardada (como o servidor,
+  // que faz coalesce). O caminho só muda se veio a chave (null limpa: a tela
+  // manda null quando colheu bytes novos sem arquivo).
+  // [kLimparAssinaturaPedido]: o rascunho foi salvo com itens ou cliente que
+  // a assinatura guardada não cobre; apaga bytes e caminho.
+  if (pedido[kLimparAssinaturaPedido] == true) {
+    map['assinatura_pedido'] = null;
+    map['assinatura_pedido_path'] = null;
+    return;
+  }
+  if (map['assinatura_pedido'] == null) {
+    if (replace && antigo != null) {
+      map['assinatura_pedido'] = antigo['assinatura_pedido'];
+    } else {
+      map.remove('assinatura_pedido');
+    }
+  }
+  if (!pedido.containsKey('assinatura_pedido_path')) {
+    if (replace && antigo != null) {
+      map['assinatura_pedido_path'] = antigo['assinatura_pedido_path'];
+    } else {
+      map.remove('assinatura_pedido_path');
+    }
+  }
+}
+
+/// Colunas que o app guarda como cópia (texto) do que o servidor preencheu,
+/// mais o `erro_envio` local. O INSERT OR REPLACE as preserva quando o mapa
+/// não as traz.
+const List<String> _colunasCopiaDoServidor = [
+  'erro_envio',
+  'enviado_em',
+  'alterado_em',
+  'finalizado_em',
+  'finalizado_por',
+  'finalizado_manual',
+  'cancelado_em',
+  'cancelado_por',
+  'pronto_em',
+  'pronto_por',
+];
+
+/// Chave (não é coluna) do mapa que as telas gravam: `true` apaga a
+/// assinatura do pedido guardada no aparelho (bytes e caminho). Usada pelo
+/// "Salvar rascunho" quando a assinatura não cobre mais os itens ou o cliente
+/// do rascunho. Nunca vai ao servidor.
+const String kLimparAssinaturaPedido = 'limpar_assinatura_pedido';
+
+/// Valor de `erro_envio` quando o número já é de outro pedido no servidor.
+const String kErroNumeroEmUso = 'numero';
+
+/// Valor de `erro_envio` quando o pedido já tinha chegado ao servidor e foi
+/// apagado no Controle: sai da fila de envio (`pendente_envio = 0`), mas a
+/// linha fica no aparelho até o vendedor apagá-la.
+const String kErroApagadoNoControle = 'apagado';
+
+/// O `(numero, vendedor_codigo)` já é de outro pedido: no servidor (com outro
+/// `id_aparelho`, lançada pelo envio) ou no aparelho (um pedido já enviado ou
+/// outra linha local, lançada pela gravação local antes de escrever qualquer
+/// coisa: o índice único local apagaria a outra linha). Nada é perdido; o
+/// vendedor precisa trocar o número.
+class NumeroEmUso implements Exception {
+  const NumeroEmUso(this.numero, this.vendedorCodigo);
+  final String numero;
+  final String vendedorCodigo;
+
+  @override
+  String toString() =>
+      'NumeroEmUso: o número $numero do vendedor $vendedorCodigo já é de outro pedido';
+}
+
+/// Linha local que um pedido NOVO pode reaproveitar (mesmo numero+vendedor):
+/// só as que nunca chegaram ao servidor.
+bool _reaproveitavel(Map<String, Object?> l) {
+  final id = (l['id'] as num?)?.toInt() ?? 0;
+  if ((l['so_local'] as num?)?.toInt() == 1) return true;
+  if (id < kLocalIdBase) return false;
+  return (l['pendente_envio'] as num?)?.toInt() == 1 || l['status']?.toString() == 'salvo';
+}
+
+/// Outra linha (id diferente de [id]) com o mesmo (numero, vendedor), ou null.
+Future<Map<String, Object?>?> _outraComMesmoNumero(
+    sq.DatabaseExecutor db, String? numero, String? vend, int? id) async {
+  if (numero == null || numero.isEmpty || vend == null || vend.isEmpty) return null;
+  final r = await db.query(
+    'pedidos',
+    columns: ['id', 'so_local', 'pendente_envio', 'status', 'id_aparelho'],
+    where: id == null
+        ? 'numero = ? AND vendedor_codigo = ?'
+        : 'numero = ? AND vendedor_codigo = ? AND id <> ?',
+    whereArgs: id == null ? [numero, vend] : [numero, vend, id],
+    limit: 1,
+  );
+  return r.isEmpty ? null : r.first;
+}
+
+/// Id em que a gravação de um pedido com [id] deve cair.
+/// 1. Não existe mais linha com [id] e alguma linha tem o mesmo id_aparelho
+///    (não vazio): é o mesmo pedido, cujo eco trocou o id local pelo do
+///    servidor enquanto a tela estava aberta (o número pode ter mudado na
+///    tela). A gravação vai para o id dessa linha.
+/// 2. Outra linha (fora o alvo) com o mesmo (numero, vendedor):
+///    [NumeroEmUso] (gravar apagaria a outra pelo índice único).
+/// 3. Senão: o alvo.
+Future<int> _idDaGravacao(sq.DatabaseExecutor db, int id, String? numero,
+    String? vend, Object? idAparelho) async {
+  var alvo = id;
+  final existe = await db.query('pedidos',
+      columns: ['id'], where: 'id = ?', whereArgs: [id], limit: 1);
+  final meu = idAparelho?.toString().trim() ?? '';
+  if (existe.isEmpty && meu.isNotEmpty) {
+    final mesmo = await db.query('pedidos',
+        columns: ['id'], where: 'id_aparelho = ?', whereArgs: [meu], limit: 1);
+    if (mesmo.isNotEmpty) alvo = (mesmo.first['id'] as num).toInt();
+  }
+  if (await _outraComMesmoNumero(db, numero, vend, alvo) != null) {
+    throw NumeroEmUso(numero!, vend!);
+  }
+  return alvo;
+}
+
+/// O pedido já existe no servidor (id serial baixo, fora da faixa local).
+bool jaChegouAoServidor(Map<String, dynamic> pedido) {
+  final raw = pedido['id'];
+  final id = raw is int ? raw : int.tryParse('${raw ?? ''}');
+  return id != null && id < kLocalIdBase;
+}
+
+/// Guarda uma cópia (JSON) de uma versão local que foi substituída/descartada.
+/// Dentro de uma transação, passe-a em [em] (usar o banco direto travaria).
+Future<void> guardarVersaoDescartada(
+  Map<String, dynamic> pedido,
+  String motivo, {
+  sq.DatabaseExecutor? em,
+}) async {
+  final db = em ?? await getDb();
+  await db.insert('pedidos_descartados', {
+    'descartado_em': DateTime.now().toUtc().toIso8601String(),
+    'motivo': motivo,
+    'pedido_json': jsonEncode(pedido, toEncodable: (o) => o.toString()),
+  });
+}
+
+/// Grava o pedido e devolve o id da linha gravada.
+Future<int> salvarPedidoLocal(Map<String, dynamic> pedido) async {
   final db = await getDb();
   final map = <String, dynamic>{
     'numero': pedido['numero']?.toString(),
@@ -393,6 +676,8 @@ Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
     'cliente_nome': pedido['cliente_nome']?.toString(),
     'assinatura': _bytesToHex0x(pedido['assinatura']),       // legado (mantido)
     'assinatura_path': pedido['assinatura_path']?.toString(),// ✅ NOVO: caminho do arquivo
+    'assinatura_pedido': _bytesToHex0x(pedido['assinatura_pedido']),
+    'assinatura_pedido_path': pedido['assinatura_pedido_path']?.toString(),
     'cliente_telefone': pedido['cliente_telefone']?.toString(),
     'cliente_endereco': pedido['cliente_endereco']?.toString(),
     'cliente_cidade': pedido['cliente_cidade']?.toString(),
@@ -403,49 +688,47 @@ Future<void> salvarPedidoLocal(Map<String, dynamic> pedido) async {
     'cliente_nome_fantasia': pedido['cliente_nome_fantasia']?.toString(),
     'cliente_whatsapp': pedido['cliente_whatsapp']?.toString(),
     'cliente_email': pedido['cliente_email']?.toString(),
-    'pendente_envio': ((pedido['status'] ?? 'salvo').toString() == 'finalizado') ? 1 : 0,
   };
 
   // Define o id do registro local.
   // - Se o pedido já tem id (ex.: veio do servidor), respeita-o.
-  // - Se é um rascunho novo, usa um id na faixa local segura (>= kLocalIdBase),
-  //   reaproveitando o id de um rascunho (ou pedido aguardando envio) já
-  //   existente de mesmo (numero, vendedor) para não trocar o id a cada novo
-  //   salvamento.
+  // - Se é um pedido novo, usa um id na faixa local segura (>= kLocalIdBase),
+  //   reaproveitando o id de uma linha de mesmo (numero, vendedor) que nunca
+  //   chegou ao servidor (rascunho so_local, ou salvo/pendente na faixa
+  //   local), para não trocar o id a cada novo salvamento.
+  // - Se o (numero, vendedor) é de outra linha que não pode ser reaproveitada
+  //   (pedido já enviado), lança [NumeroEmUso] ANTES de escrever: o
+  //   `INSERT OR REPLACE` pelo índice único local apagaria aquele pedido.
+  final numero = map['numero'] as String?;
+  final vend = map['vendedor_codigo'] as String?;
   final int? idExistente = (pedido['id'] is int)
       ? pedido['id'] as int
       : int.tryParse('${pedido['id'] ?? ''}');
   if (idExistente != null) {
-    map['id'] = idExistente;
+    map['id'] = await _idDaGravacao(db, idExistente, numero, vend, pedido['id_aparelho']);
   } else {
     int? reusar;
-    final numero = map['numero'];
-    final vend = map['vendedor_codigo'];
-    if (numero != null &&
-        '$numero'.isNotEmpty &&
-        vend != null &&
-        '$vend'.isNotEmpty) {
-      // Rascunho ou pedido ainda aguardando envio: finalizar de novo o mesmo
-      // (numero, vendedor) atualiza a mesma linha em vez de criar outra.
-      final ex = await db.query(
-        'pedidos',
-        columns: ['id'],
-        where: "numero = ? AND vendedor_codigo = ? AND (status = 'salvo' OR pendente_envio = 1)",
-        whereArgs: [numero, vend],
-        limit: 1,
-      );
-      if (ex.isNotEmpty) reusar = ex.first['id'] as int?;
+    final ex = await _outraComMesmoNumero(db, numero, vend, null);
+    if (ex != null) {
+      if (!_reaproveitavel(ex)) throw NumeroEmUso(numero!, vend!);
+      reusar = (ex['id'] as num).toInt();
     }
     map['id'] = reusar ?? await proximoIdLocalSeguro(db);
   }
 
+  await _aplicarCamposLocais(db, map, pedido, replace: true);
   await _insertOrReplaceFiltered(db, 'pedidos', map);
+  return map['id'] as int;
 }
 
-Future<void> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
+/// Atualiza o pedido e devolve o id da linha gravada (pode ser outro que o
+/// do mapa: veja [_idDaGravacao]).
+Future<int> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
   final db = await getDb();
-  final id = pedido['id'];
-  if (id == null) { await salvarPedidoLocal(pedido); return; }
+  final idMapa = pedido['id'];
+  if (idMapa == null) return salvarPedidoLocal(pedido);
+  final idPedido = idMapa is int ? idMapa : int.tryParse('$idMapa');
+  if (idPedido == null) return salvarPedidoLocal({...pedido, 'id': null});
 
   final map = <String, dynamic>{
     'numero': pedido['numero']?.toString(),
@@ -461,6 +744,8 @@ Future<void> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
     'cliente_nome': pedido['cliente_nome']?.toString(),
     'assinatura': _bytesToHex0x(pedido['assinatura']),       // legado
     'assinatura_path': pedido['assinatura_path']?.toString(),// ✅ NOVO
+    'assinatura_pedido': _bytesToHex0x(pedido['assinatura_pedido']),
+    'assinatura_pedido_path': pedido['assinatura_pedido_path']?.toString(),
     'cliente_telefone': pedido['cliente_telefone']?.toString(),
     'cliente_endereco': pedido['cliente_endereco']?.toString(),
     'cliente_cidade': pedido['cliente_cidade']?.toString(),
@@ -471,17 +756,26 @@ Future<void> atualizarPedidoLocal(Map<String, dynamic> pedido) async {
     'cliente_nome_fantasia': pedido['cliente_nome_fantasia']?.toString(),
     'cliente_whatsapp': pedido['cliente_whatsapp']?.toString(),
     'cliente_email': pedido['cliente_email']?.toString(),
-    'pendente_envio': ((pedido['status'] ?? 'salvo').toString() == 'finalizado') ? 1 : 0,
   };
 
+  // Trocar o número para o de outra linha apagaria a outra (índice único);
+  // o mesmo pedido já trocado de id pelo eco é seguido.
+  final id = await _idDaGravacao(db, idPedido, map['numero'] as String?,
+      map['vendedor_codigo'] as String?, pedido['id_aparelho']);
+  map['id'] = id;
+  await _aplicarCamposLocais(db, map, pedido, replace: false);
+  map.remove('id');
   final filtered = await _filterToTableColumns(db, 'pedidos', map);
-  await db.update(
+  final n = await db.update(
     'pedidos',
     filtered,
     where: 'id = ?',
     whereArgs: [id],
     conflictAlgorithm: sq.ConflictAlgorithm.replace,
   );
+  // Nunca dá a gravação por feita quando nada foi escrito.
+  if (n == 0) throw StateError('Pedido $id não existe mais no aparelho; nada foi gravado.');
+  return id;
 }
 
 Future<List<Map<String, dynamic>>> listarPedidosLocais() async {
@@ -512,7 +806,13 @@ Future<List<Map<String, dynamic>>> listarPedidosLocaisPorVendedor(
   }
 }
 
-/// Pedidos finalizados que ainda precisam ser enviados ao servidor.
+/// Pedidos do vendedor com um status exato ('salvo' | 'finalizado' | 'cancelado').
+Future<List<Map<String, dynamic>>> listarPedidosLocaisPorStatus(
+    String vendedorCodigo, String status) {
+  return listarPedidosLocaisPorVendedor(vendedorCodigo, status: status);
+}
+
+/// Pedidos que ainda precisam ser enviados ao servidor.
 Future<List<Map<String, dynamic>>> listarPedidosPendentesEnvio(String vendedorCodigo) async {
   final db = await getDb();
   return db.query(
@@ -552,6 +852,14 @@ Future<int> atualizarStatusPedido(int id, String status) async {
 Future<int> apagarPedidoLocal(int id) async {
   final db = await getDb();
   return db.delete('pedidos', where: 'id = ?', whereArgs: [id]);
+}
+
+/// `true` se alguma linha do aparelho (fora a de [ignorarId], o próprio
+/// pedido) já tem esse `(numero, vendedor_codigo)`.
+Future<bool> numeroUsadoNoAparelho(String numero, String vendedorCodigo,
+    {int? ignorarId}) async {
+  final db = await getDb();
+  return await _outraComMesmoNumero(db, numero, vendedorCodigo, ignorarId) != null;
 }
 
 /// Busca o maior número numérico de pedido (campo texto).

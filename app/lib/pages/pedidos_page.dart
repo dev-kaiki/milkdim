@@ -15,7 +15,16 @@ import '../utils/db.dart';
 import '../utils/moeda.dart';
 import '../utils/json_utils.dart';
 import '../utils/pdf_utils.dart';
+import '../utils/regras_pedido.dart';
+import '../utils/supabase_helper.dart';
 import '../utils/convert.dart'; // assinaturaToBytes / signatureToImageBytes
+
+/// Recarregar sem servidor: a lista continua com o que está no aparelho.
+const String kMsgSemServidorMeusPedidos =
+    'Sem conexão com o servidor. Mostrando os pedidos do aparelho.';
+
+Future<void> _baixarDoSupabase(String vendedorCodigo) =>
+    sincronizarPedidos(vendedorCodigo: vendedorCodigo);
 
 class PedidosPage extends StatefulWidget {
   /// Código do vendedor para filtrar os pedidos. Se null/vazio, mostra todos.
@@ -25,7 +34,21 @@ class PedidosPage extends StatefulWidget {
   /// lê o SQLite ao abrir.
   final List<Map<String, dynamic>>? pedidosParaCaptura;
 
-  const PedidosPage({super.key, this.vendedorCodigo, this.pedidosParaCaptura});
+  /// Só para a captura visual: aba aberta (0 Em aberto, 1 Entregues, 2 Cancelados).
+  final int abaInicialParaCaptura;
+
+  /// Baixa do servidor os pedidos do vendedor (o que a fábrica mudou: pronto,
+  /// finalizado manual, cancelado). Roda ao abrir e no Recarregar; nos testes,
+  /// troca a chamada ao Supabase.
+  final Future<void> Function(String vendedorCodigo) baixarPedidos;
+
+  const PedidosPage({
+    super.key,
+    this.vendedorCodigo,
+    this.pedidosParaCaptura,
+    this.abaInicialParaCaptura = 0,
+    this.baixarPedidos = _baixarDoSupabase,
+  });
 
   @override
   State<PedidosPage> createState() => _PedidosPageState();
@@ -63,7 +86,31 @@ class _PedidosPageState extends State<PedidosPage>
       }
       return;
     }
-    _carregar();
+    _abrir();
+  }
+
+  /// Mostra logo o que está no aparelho e depois traz o servidor, sem aviso
+  /// se não houver conexão.
+  Future<void> _abrir() async {
+    await _carregar();
+    await _atualizarDoServidor(silencioso: true);
+  }
+
+  /// Baixa os pedidos do vendedor e relê o aparelho. Sem servidor, a lista
+  /// fica como está (e avisa, se não for [silencioso]).
+  Future<void> _atualizarDoServidor({bool silencioso = false}) async {
+    final codigo = widget.vendedorCodigo;
+    if (codigo == null || codigo.isEmpty) return _carregar();
+    var ok = true;
+    try {
+      await widget.baixarPedidos(codigo);
+    } catch (e) {
+      ok = false;
+      debugPrint('Meus pedidos: não deu para baixar do servidor: $e');
+    }
+    if (!mounted) return;
+    await _carregar(mostrarCarregando: false);
+    if (!ok && !silencioso && mounted) _snack(kMsgSemServidorMeusPedidos);
   }
 
   @override
@@ -107,10 +154,15 @@ class _PedidosPageState extends State<PedidosPage>
     return (img != null && img.isNotEmpty) ? img : null;
   }
 
+  /// Assinatura do pedido para o PDF: o arquivo do aparelho, senão os bytes
+  /// (a sincronização limpa o caminho e traz os bytes do servidor).
+  Uint8List? _assinaturaPedidoAsBytes(Map<String, dynamic> pedido) => imagemDaAssinatura(pedido,
+      chaveBytes: 'assinatura_pedido', chaveCaminho: 'assinatura_pedido_path');
+
   // ---------------- Data ----------------
 
-  Future<void> _carregar() async {
-    setState(() => _carregando = true);
+  Future<void> _carregar({bool mostrarCarregando = true}) async {
+    if (mostrarCarregando) setState(() => _carregando = true);
     try {
       final db = await getDb();
       final hasFiltro =
@@ -138,12 +190,17 @@ class _PedidosPageState extends State<PedidosPage>
     final id = pedido['id'] as int?;
     if (id == null) return;
 
+    // Apagado no Controle: o servidor não tem mais o pedido (a cópia ficou em
+    // pedidos_descartados); só sai da lista do aparelho.
+    final apagado = apagadoNoControle(pedido);
     final confirmou = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Apagar rascunho?'),
-        content: const Text(
-            'Esse pedido ainda não foi finalizado. Deseja removê-lo do aparelho?'),
+        title: Text(apagado ? 'Apagar do aparelho?' : 'Apagar rascunho?'),
+        content: Text(apagado
+            ? 'Este pedido foi apagado no Controle e não será enviado. '
+                'Deseja removê-lo do aparelho?'
+            : 'Esse pedido ainda não foi finalizado. Deseja removê-lo do aparelho?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -169,7 +226,7 @@ class _PedidosPageState extends State<PedidosPage>
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('Rascunho apagado.'),
+        content: Text(apagado ? 'Pedido apagado do aparelho.' : 'Rascunho apagado.'),
         action: SnackBarAction(
           label: 'DESFAZER',
           onPressed: () async {
@@ -185,6 +242,136 @@ class _PedidosPageState extends State<PedidosPage>
         duration: const Duration(seconds: 3),
       ),
     );
+  }
+
+  /// Botão do item: apaga rascunho antigo do aparelho ou cancela o pedido.
+  Future<void> _remover(Map<String, dynamic> pedido) async {
+    switch (acaoRemover(pedido)) {
+      case AcaoRemover.apagarDoAparelho:
+        return _apagarPedidoSalvo(pedido);
+      case AcaoRemover.cancelar:
+        return _cancelarPedido(pedido);
+      case AcaoRemover.nenhuma:
+        return;
+    }
+  }
+
+  /// Pedido que o servidor recusou por número repetido (qualquer status): só o
+  /// número muda, sem abrir a edição completa.
+  Future<void> _trocarNumero(Map<String, dynamic> pedido) async {
+    final vend = (pedido['vendedor_codigo'] ?? '').toString();
+    final sugerido = await proximoNumeroLivreDoVendedor(vend);
+    if (!mounted) return;
+    final ctrl = TextEditingController(text: sugerido ?? '');
+    String? erro;
+    var conferindo = false;
+    final novo = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) => AlertDialog(
+          title: const Text('Trocar número'),
+          content: TextField(
+            controller: ctrl,
+            keyboardType: TextInputType.number,
+            autofocus: true,
+            decoration: InputDecoration(labelText: 'Nº Pedido', errorText: erro),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Voltar'),
+            ),
+            FilledButton(
+              onPressed: conferindo
+                  ? null
+                  : () async {
+                      final n = ctrl.text.trim();
+                      if (n.isEmpty) return;
+                      setD(() => conferindo = true);
+                      final livre = n != (pedido['numero'] ?? '').toString().trim() &&
+                          await numeroLivreParaVendedor(n, vend);
+                      if (!ctx.mounted) return;
+                      if (livre) {
+                        Navigator.pop(ctx, n);
+                      } else {
+                        setD(() {
+                          conferindo = false;
+                          erro = kMsgNumeroEmUso;
+                        });
+                      }
+                    },
+              child: const Text('Trocar número'),
+            ),
+          ],
+        ),
+      ),
+    );
+    ctrl.dispose();
+    if (novo == null) return;
+
+    try {
+      final status = (pedido['status'] ?? 'salvo').toString();
+      final r = await gravarPedidoEEnviar(
+        {...pedido, 'numero': novo, 'erro_envio': null, 'so_local': 0},
+        novo: false,
+      );
+      await _carregar();
+      if (!mounted) return;
+      final msg = mensagemGravacao(r, status);
+      _snack(msg ?? 'Número trocado.', ok: !gravacaoEhAviso(r));
+    } on NumeroEmUso {
+      if (mounted) _snack(kMsgNumeroEmUso);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[PEDIDOS] erro ao trocar número: $e');
+      if (mounted) _snack('Erro ao trocar número.');
+    }
+  }
+
+  Future<void> _cancelarPedido(Map<String, dynamic> pedido) async {
+    final confirmou = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancelar pedido?'),
+        content: const Text('O pedido sai da produção e vai para a aba Cancelados.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Voltar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: MdColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Cancelar pedido'),
+          ),
+        ],
+      ),
+    );
+    if (confirmou != true) return;
+
+    try {
+      final r = await gravarPedidoEEnviar(
+        {...pedido, 'status': 'cancelado', 'so_local': 0},
+        novo: false,
+      );
+      await _carregar();
+      if (!mounted) return;
+      switch (r) {
+        case ResultadoGravacao.fechadoNoControle:
+        case ResultadoGravacao.canceladoNoControle:
+        case ResultadoGravacao.numeroEmUso:
+        case ResultadoGravacao.apagadoNoControle:
+        case ResultadoGravacao.pendente:
+          _snack(mensagemGravacao(r, 'cancelado')!, ok: r == ResultadoGravacao.pendente);
+        case ResultadoGravacao.enviado:
+        case ResultadoGravacao.rascunho:
+          _snack('Pedido cancelado.', ok: true);
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('[PEDIDOS] erro ao cancelar: $e');
+      if (mounted) _snack('Erro ao cancelar pedido.');
+    }
   }
 
   void _snack(String msg, {bool ok = false}) {
@@ -206,6 +393,7 @@ class _PedidosPageState extends State<PedidosPage>
       final bytes = await gerarPdfPedido(
         pedido: pedido,
         assinaturaBytes: assinatura,
+        assinaturaPedidoBytes: _assinaturaPedidoAsBytes(pedido),
       );
       await Printing.layoutPdf(onLayout: (format) async => bytes);
     } catch (e) {
@@ -222,6 +410,7 @@ class _PedidosPageState extends State<PedidosPage>
       final pdfBytes = await gerarPdfPedido(
         pedido: pedido,
         assinaturaBytes: assinatura,
+        assinaturaPedidoBytes: _assinaturaPedidoAsBytes(pedido),
       );
       final pdfFile = File('${dir.path}/pedido_${numero}_$id.pdf');
       await pdfFile.writeAsBytes(pdfBytes, flush: true);
@@ -438,9 +627,13 @@ class _PedidosPageState extends State<PedidosPage>
     return byKey.values.toList();
   }
 
+  /// Pedidos da aba: 'salvo' é "Em aberto" (salvo e pronto, [estaEmAberto]);
+  /// as outras abas filtram pela situação exata.
   List<Map<String, dynamic>> _filtrarPorStatus(String statusAlvo, String query) {
     final base = _pedidos.where(
-          (p) => (p['status'] ?? '').toString().toLowerCase() == statusAlvo,
+      (p) => statusAlvo == 'salvo'
+          ? estaEmAberto(p)
+          : (p['status'] ?? '').toString().toLowerCase() == statusAlvo,
     );
 
     final listBase = statusAlvo == 'finalizado'
@@ -519,22 +712,47 @@ class _PedidosPageState extends State<PedidosPage>
     return '${nomes.take(maxNames).join(', ')} +$rest';
   }
 
-  /// Selo de status do pedido: finalizado ainda não enviado aparece como
-  /// "Aguardando envio"; finalizado enviado, "Finalizado"; rascunho, "Salvo".
+  /// Selo de status do pedido: aberto, pronto ou finalizado ainda não enviado
+  /// aparece como "Aguardando envio"; pronto para entrega, "Pronto";
+  /// finalizado enviado, "Entregue"; em aberto, "Em aberto".
   Widget _seloStatus(Map<String, dynamic> p) {
     final status = (p['status'] ?? '-').toString();
     final pendente = (p['pendente_envio'] ?? 0).toString() == '1';
+    if (apagadoNoControle(p)) {
+      return const MdStatusChip(
+          tipo: MdTipo.erro, texto: 'Apagado no Controle', icone: Icons.delete_outline);
+    }
+    if (p['erro_envio']?.toString() == kErroNumeroEmUso) {
+      return const MdStatusChip(
+          tipo: MdTipo.erro, texto: kMsgNumeroEmUso, icone: Icons.error_outline);
+    }
+    if ('${p['so_local'] ?? 0}' == '1') {
+      return const MdStatusChip(
+          tipo: MdTipo.atencao, texto: 'Não enviado', icone: Icons.cloud_off_outlined);
+    }
+    if (status == 'cancelado') {
+      return const MdStatusChip(
+          tipo: MdTipo.neutro, texto: 'Cancelado', icone: Icons.block);
+    }
+    if (estaEmAberto(p) && pendente) {
+      return const MdStatusChip(
+          tipo: MdTipo.atencao, texto: 'Aguardando envio', icone: Icons.cloud_upload_outlined);
+    }
+    if (estaPronto(p)) {
+      return const MdStatusChip(
+          tipo: MdTipo.sucesso, texto: 'Pronto', icone: Icons.local_shipping_outlined);
+    }
     if (status == 'finalizado' && pendente) {
       return const MdStatusChip(
           tipo: MdTipo.atencao, texto: 'Aguardando envio', icone: Icons.cloud_upload_outlined);
     }
     if (status == 'finalizado') {
       return const MdStatusChip(
-          tipo: MdTipo.sucesso, texto: 'Finalizado', icone: Icons.check_circle_outline);
+          tipo: MdTipo.sucesso, texto: 'Entregue', icone: Icons.check_circle_outline);
     }
     if (status == 'salvo') {
       return const MdStatusChip(
-          tipo: MdTipo.neutro, texto: 'Salvo', icone: Icons.edit_note);
+          tipo: MdTipo.neutro, texto: 'Em aberto', icone: Icons.edit_note);
     }
     return MdStatusChip(tipo: MdTipo.info, texto: status);
   }
@@ -580,7 +798,7 @@ class _PedidosPageState extends State<PedidosPage>
   // Card/item com pré-visualização mais rica
   Widget _pedidoTile(
       Map<String, dynamic> p, {
-        required bool isFinalizado,
+        required bool somenteLeitura,
       }) {
     final tt = Theme.of(context).textTheme;
     final numero = (p['numero'] ?? '-').toString();
@@ -665,7 +883,37 @@ class _PedidosPageState extends State<PedidosPage>
     );
 
     // ações por status
-    final List<Widget> botoes = isFinalizado
+    // Apagado no Controle: só "Apagar do aparelho" (sem editar, enviar,
+    // trocar número nem registrar entrega).
+    final apagado = apagadoNoControle(p);
+    final acao = acaoRemover(p);
+    final trocar = !apagado && podeTrocarNumero(p)
+        ? _acao(
+            label: 'Trocar número',
+            icon: Icons.swap_horiz,
+            onPressed: () => _trocarNumero(p),
+          )
+        : null;
+    // Entregue pelo Controle sem a assinatura da entrega: o vendedor ainda
+    // registra a entrega (a dele vale). O resto dos entregues é só leitura.
+    final registrarEntrega = !apagado && podeRegistrarEntregaDepois(p)
+        ? _acao(
+            label: 'Registrar entrega',
+            icon: Icons.local_shipping_outlined,
+            onPressed: () => _editar(p),
+            principal: true,
+          )
+        : null;
+    final List<Widget> botoes = apagado
+        ? [
+            _acao(
+              label: 'Apagar do aparelho',
+              icon: Icons.delete_outline,
+              onPressed: () => _remover(p),
+              perigo: true,
+            ),
+          ]
+        : somenteLeitura
         ? [
             _acao(
               label: 'Ver',
@@ -690,12 +938,13 @@ class _PedidosPageState extends State<PedidosPage>
               onPressed: () => _editar(p),
               principal: true,
             ),
-            _acao(
-              label: 'Apagar',
-              icon: Icons.delete_outline,
-              onPressed: () => _apagarPedidoSalvo(p),
-              perigo: true,
-            ),
+            if (acao != AcaoRemover.nenhuma)
+              _acao(
+                label: acao == AcaoRemover.cancelar ? 'Cancelar pedido' : 'Apagar do aparelho',
+                icon: acao == AcaoRemover.cancelar ? Icons.block : Icons.delete_outline,
+                onPressed: () => _remover(p),
+                perigo: true,
+              ),
           ];
 
     final actions = Row(
@@ -708,7 +957,11 @@ class _PedidosPageState extends State<PedidosPage>
     );
 
     return MdCard(
-      onTap: isFinalizado ? () => _imprimirPdf(p) : () => _editar(p),
+      onTap: apagado
+          ? null
+          : somenteLeitura
+              ? () => _imprimirPdf(p)
+              : () => _editar(p),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -724,6 +977,14 @@ class _PedidosPageState extends State<PedidosPage>
           const SizedBox(height: MdSpace.md),
           const Divider(),
           const SizedBox(height: MdSpace.md),
+          if (trocar != null) ...[
+            SizedBox(width: double.infinity, child: trocar),
+            const SizedBox(height: MdSpace.sm),
+          ],
+          if (registrarEntrega != null) ...[
+            SizedBox(width: double.infinity, child: registrarEntrega),
+            const SizedBox(height: MdSpace.sm),
+          ],
           actions,
         ],
       ),
@@ -734,10 +995,11 @@ class _PedidosPageState extends State<PedidosPage>
   Widget _aba(String status) {
     final query = _buscaCtrl.text;
     final lista = _filtrarPorStatus(status, query);
-    final isFinalizado = status == 'finalizado';
+    // Em aberto (salvo e pronto) edita e cancela; entregues e cancelados só leitura.
+    bool somenteLeitura(Map<String, dynamic> p) => !estaEmAberto(p);
 
     return RefreshIndicator(
-      onRefresh: _carregar,
+      onRefresh: _atualizarDoServidor,
       child: LayoutBuilder(
         builder: (context, c) {
           if (_carregando) {
@@ -745,10 +1007,16 @@ class _PedidosPageState extends State<PedidosPage>
           }
           if (lista.isEmpty) {
             return MdEmptyState(
-              icone: isFinalizado ? Icons.receipt_long_outlined : Icons.edit_note,
-              titulo: isFinalizado
-                  ? 'Nenhum pedido finalizado.'
-                  : 'Nenhum rascunho salvo.',
+              icone: switch (status) {
+                'finalizado' => Icons.receipt_long_outlined,
+                'cancelado' => Icons.block,
+                _ => Icons.edit_note,
+              },
+              titulo: switch (status) {
+                'finalizado' => 'Nenhum pedido entregue.',
+                'cancelado' => 'Nenhum pedido cancelado.',
+                _ => 'Nenhum pedido em aberto.',
+              },
             );
           }
           const pad = EdgeInsets.fromLTRB(MdSpace.lg, MdSpace.sm, MdSpace.lg, MdSpace.lg);
@@ -758,7 +1026,7 @@ class _PedidosPageState extends State<PedidosPage>
               padding: pad,
               itemCount: lista.length,
               separatorBuilder: (_, __) => const SizedBox(height: MdSpace.md),
-              itemBuilder: (_, i) => _pedidoTile(lista[i], isFinalizado: isFinalizado),
+              itemBuilder: (_, i) => _pedidoTile(lista[i], somenteLeitura: somenteLeitura(lista[i])),
             );
           }
           final largura =
@@ -773,7 +1041,7 @@ class _PedidosPageState extends State<PedidosPage>
                 for (final p in lista)
                   SizedBox(
                     width: largura,
-                    child: _pedidoTile(p, isFinalizado: isFinalizado),
+                    child: _pedidoTile(p, somenteLeitura: somenteLeitura(p)),
                   ),
               ],
             ),
@@ -1107,10 +1375,12 @@ class _PedidosPageState extends State<PedidosPage>
 
     final finalizadosCount =
         _filtrarPorStatus('finalizado', _buscaCtrl.text).length;
-    final salvosCount = _filtrarPorStatus('salvo', _buscaCtrl.text).length;
+    final abertosCount = _filtrarPorStatus('salvo', _buscaCtrl.text).length;
+    final canceladosCount = _filtrarPorStatus('cancelado', _buscaCtrl.text).length;
 
     return DefaultTabController(
-      length: 2,
+      length: 3,
+      initialIndex: widget.abaInicialParaCaptura,
       child: Scaffold(
         appBar: AppBar(
           title: Text(temFiltro ? 'Meus Pedidos' : 'Pedidos'),
@@ -1121,7 +1391,7 @@ class _PedidosPageState extends State<PedidosPage>
               tooltip: 'Filtros',
             ),
             IconButton(
-              onPressed: _carregar,
+              onPressed: _atualizarDoServidor,
               icon: const Icon(Icons.refresh),
               tooltip: 'Recarregar',
             ),
@@ -1129,8 +1399,9 @@ class _PedidosPageState extends State<PedidosPage>
           ],
           bottom: TabBar(
             tabs: [
-              Tab(text: 'Finalizados ($finalizadosCount)'),
-              Tab(text: 'Salvos ($salvosCount)'),
+              Tab(text: 'Em aberto ($abertosCount)'),
+              Tab(text: 'Entregues ($finalizadosCount)'),
+              Tab(text: 'Cancelados ($canceladosCount)'),
             ],
           ),
         ),
@@ -1153,8 +1424,9 @@ class _PedidosPageState extends State<PedidosPage>
             Expanded(
               child: TabBarView(
                 children: [
-                  _aba('finalizado'),
                   _aba('salvo'),
+                  _aba('finalizado'),
+                  _aba('cancelado'),
                 ],
               ),
             ),

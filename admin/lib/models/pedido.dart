@@ -78,7 +78,7 @@ class Pedido {
   final String? numero; // texto (numérico)
   final List<PedidoItem> itens;
   final double total; // total do pedido (2 casas)
-  final String status; // 'salvo' | 'finalizado'
+  final String status; // 'salvo' | 'pronto' | 'finalizado' | 'cancelado'
   final String? datahora; // ISO-8601 (preferir UTC)
   final String? vendedorCodigo;
   final String? vendedorNome;
@@ -96,8 +96,28 @@ class Pedido {
   final String? clienteCep;
   final String? clienteAnotacao;
 
-  /// Para UI; no Supabase vai texto base64 simples (sem data URI)
+  // situacao e auditoria (servidor)
+  final DateTime? enviadoEm;
+  final DateTime? alteradoEm;
+
+  /// `alterado_em` exatamente como o servidor devolveu (texto). É o que se
+  /// manda de volta em `pedido_marcar_pronto`: reserializar o DateTime perde
+  /// precisão (microssegundos) e o servidor recusaria sempre (MD001).
+  final String? alteradoEmBruto;
+  final DateTime? prontoEm;
+  final String? prontoPor;
+  final DateTime? finalizadoEm;
+  final String? finalizadoPor;
+  final bool finalizadoManual;
+  final DateTime? canceladoEm;
+  final String? canceladoPor;
+
+  /// Para UI. No Supabase é bytea: o PostgREST devolve "\x" + hex.
+  /// Assinatura da ENTREGA (coluna `assinatura`).
   final Uint8List? assinaturaBytes;
+
+  /// Assinatura do PEDIDO, colhida ao enviar (coluna `assinatura_pedido`).
+  final Uint8List? assinaturaPedidoBytes;
 
   const Pedido({
     required this.id,
@@ -120,7 +140,18 @@ class Pedido {
     this.clienteInscEstadual,
     this.clienteCep,
     this.clienteAnotacao,
+    this.enviadoEm,
+    this.alteradoEm,
+    this.alteradoEmBruto,
+    this.prontoEm,
+    this.prontoPor,
+    this.finalizadoEm,
+    this.finalizadoPor,
+    this.finalizadoManual = false,
+    this.canceladoEm,
+    this.canceladoPor,
     this.assinaturaBytes,
+    this.assinaturaPedidoBytes,
   });
 
   // ------- helpers -------
@@ -148,11 +179,61 @@ class Pedido {
   static double _toDouble(dynamic v) => PedidoItem._toDouble(v);
   static int _toInt(dynamic v) => PedidoItem._toInt(v);
 
-  static Uint8List? _decodeBase64(String? s) {
+  static DateTime? _toDate(dynamic v) {
+    if (v == null) return null;
+    if (v is DateTime) return v;
+    if (v is String && v.trim().isNotEmpty) return DateTime.tryParse(v.trim());
+    return null;
+  }
+
+  /// Texto como veio do servidor; null se não era texto não vazio.
+  static String? _bruto(dynamic v) => (v is String && v.trim().isNotEmpty) ? v : null;
+
+  static bool _toBoolFlag(dynamic v) {
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    final s = v?.toString().trim().toLowerCase();
+    return s == 'true' || s == '1';
+  }
+
+  /// Assinatura em texto: bytea como o PostgREST devolve (`\x` + hex), ou
+  /// base64 (com ou sem data URI).
+  static Uint8List? _decodeAssinatura(String? s) {
     if (s == null || s.trim().isEmpty) return null;
-    final raw = s.contains(',') ? s.split(',').last : s; // remove data URI, se houver
+    final t = s.trim();
+    if (t.startsWith(r'\x') || t.startsWith(r'\X')) {
+      final bytes = _decodeHex(t.substring(2));
+      if (bytes == null) return null;
+      // bytea gravado a partir de TEXTO base64: o hex traz os caracteres.
+      final interno = _base64DeImagemDentro(bytes);
+      return interno ?? bytes;
+    }
+    final raw = t.contains(',') ? t.split(',').last : t; // remove data URI, se houver
     try {
       return Uint8List.fromList(base64Decode(raw));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Uint8List? _decodeHex(String h) {
+    if (h.isEmpty || h.length.isOdd) return null;
+    final out = Uint8List(h.length ~/ 2);
+    for (var i = 0; i < out.length; i++) {
+      final b = int.tryParse(h.substring(i * 2, i * 2 + 2), radix: 16);
+      if (b == null) return null;
+      out[i] = b;
+    }
+    return out;
+  }
+
+  /// [bytes] é texto ASCII com base64 de PNG/JPEG? Devolve a imagem; senão null.
+  static Uint8List? _base64DeImagemDentro(Uint8List bytes) {
+    if (bytes.any((b) => b < 32 || b > 126)) return null;
+    final texto = String.fromCharCodes(bytes).trim();
+    if (!(texto.startsWith('iVBORw0') || texto.startsWith('/9j/'))) return null;
+    try {
+      return Uint8List.fromList(base64Decode(texto));
     } catch (_) {
       return null;
     }
@@ -174,10 +255,14 @@ class Pedido {
     final produtos = _pick(m, 'produtos', 'itens'); // supabase usa 'produtos'
     final itens = _toItens(produtos);
 
-    // assinatura pode vir como bytes (UI) ou como base64 (supabase)
+    // assinatura pode vir como bytes (UI), bytea "\x..." (supabase) ou base64
     final assinaturaBytes = _pick<Uint8List>(m, 'assinatura_bytes', 'assinaturaBytes') ??
-        _decodeBase64(_pick<String>(m, 'assinatura_base64', 'assinaturaBase64') ??
+        _decodeAssinatura(_pick<String>(m, 'assinatura_base64', 'assinaturaBase64') ??
             _pick<String>(m, 'assinatura', 'signature'));
+
+    final assinaturaPedido =
+        _pick<Uint8List>(m, 'assinatura_pedido_bytes', 'assinaturaPedidoBytes') ??
+            _decodeAssinatura(_pick<String>(m, 'assinatura_pedido', 'assinaturaPedido'));
 
     return Pedido(
       id: _toInt(_pick(m, 'id', 'id')),
@@ -200,7 +285,18 @@ class Pedido {
       clienteInscEstadual: _pick(m, 'cliente_insc_estadual', 'clienteInscEstadual'),
       clienteCep: _pick(m, 'cliente_cep', 'clienteCep'),
       clienteAnotacao: _pick(m, 'cliente_anotacao', 'clienteAnotacao'),
+      enviadoEm: _toDate(_pick(m, 'enviado_em', 'enviadoEm')),
+      alteradoEm: _toDate(_pick(m, 'alterado_em', 'alteradoEm')),
+      alteradoEmBruto: _bruto(_pick(m, 'alterado_em', 'alteradoEm')),
+      prontoEm: _toDate(_pick(m, 'pronto_em', 'prontoEm')),
+      prontoPor: _pick(m, 'pronto_por', 'prontoPor')?.toString(),
+      finalizadoEm: _toDate(_pick(m, 'finalizado_em', 'finalizadoEm')),
+      finalizadoPor: _pick(m, 'finalizado_por', 'finalizadoPor')?.toString(),
+      finalizadoManual: _toBoolFlag(_pick(m, 'finalizado_manual', 'finalizadoManual')),
+      canceladoEm: _toDate(_pick(m, 'cancelado_em', 'canceladoEm')),
+      canceladoPor: _pick(m, 'cancelado_por', 'canceladoPor')?.toString(),
       assinaturaBytes: assinaturaBytes,
+      assinaturaPedidoBytes: assinaturaPedido,
     );
   }
 
@@ -293,7 +389,18 @@ class Pedido {
     String? clienteInscEstadual,
     String? clienteCep,
     String? clienteAnotacao,
+    DateTime? enviadoEm,
+    DateTime? alteradoEm,
+    String? alteradoEmBruto,
+    DateTime? prontoEm,
+    String? prontoPor,
+    DateTime? finalizadoEm,
+    String? finalizadoPor,
+    bool? finalizadoManual,
+    DateTime? canceladoEm,
+    String? canceladoPor,
     Uint8List? assinaturaBytes,
+    Uint8List? assinaturaPedidoBytes,
   }) {
     final newItens = itens ?? this.itens;
     final newTotal = total ?? _calcTotal(newItens, this.total);
@@ -318,8 +425,46 @@ class Pedido {
       clienteInscEstadual: clienteInscEstadual ?? this.clienteInscEstadual,
       clienteCep: clienteCep ?? this.clienteCep,
       clienteAnotacao: clienteAnotacao ?? this.clienteAnotacao,
+      enviadoEm: enviadoEm ?? this.enviadoEm,
+      alteradoEm: alteradoEm ?? this.alteradoEm,
+      alteradoEmBruto: alteradoEmBruto ?? this.alteradoEmBruto,
+      prontoEm: prontoEm ?? this.prontoEm,
+      prontoPor: prontoPor ?? this.prontoPor,
+      finalizadoEm: finalizadoEm ?? this.finalizadoEm,
+      finalizadoPor: finalizadoPor ?? this.finalizadoPor,
+      finalizadoManual: finalizadoManual ?? this.finalizadoManual,
+      canceladoEm: canceladoEm ?? this.canceladoEm,
+      canceladoPor: canceladoPor ?? this.canceladoPor,
       assinaturaBytes: assinaturaBytes ?? this.assinaturaBytes,
+      assinaturaPedidoBytes: assinaturaPedidoBytes ?? this.assinaturaPedidoBytes,
     );
+  }
+
+  /// Foi alterado depois de enviado.
+  bool get alteradoDepoisDeEnviar =>
+      alteradoEm != null && enviadoEm != null && alteradoEm!.isAfter(enviadoEm!);
+
+  /// Em aberto, marcado pronto antes e alterado depois disso: a fábrica
+  /// precisa conferir o que mudou.
+  bool get alteradoDepoisDePronto =>
+      status == 'salvo' &&
+      prontoEm != null &&
+      alteradoEm != null &&
+      alteradoEm!.isAfter(prontoEm!);
+
+  String get situacaoTexto {
+    switch (status) {
+      case 'salvo':
+        return 'Em aberto';
+      case 'pronto':
+        return 'Pronto para entrega';
+      case 'finalizado':
+        return 'Entregue';
+      case 'cancelado':
+        return 'Cancelado';
+      default:
+        return status;
+    }
   }
 
   // opcional: utilitários
