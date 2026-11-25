@@ -10,6 +10,7 @@ import '../services/auth_admin.dart';
 import '../tabs/vendedores_tab.dart';
 import '../tabs/clientes_tab.dart';
 import '../tabs/producao_tab.dart';
+import '../tabs/financeiro_tab.dart';
 
 // Use aliases para separar os nomes
 import '../tabs/produtos_tab.dart' as prod;
@@ -22,7 +23,7 @@ const double _larguraTrilho = 900;
 const double _larguraTrilhoEstendido = 1200;
 
 class HomePage extends StatefulWidget {
-  /// Só para captura visual (sem Supabase): troca as cinco abas e desliga as
+  /// Só para captura visual (sem Supabase): troca as abas e desliga as
   /// checagens de sessão. Nulo (padrão) mantém o comportamento normal.
   @visibleForTesting
   final List<Widget>? abasDeTeste;
@@ -49,6 +50,7 @@ class _HomePageState extends State<HomePage> {
         const prod.ProdutosTab(),
         const ped.PedidosTab(),
         const ClientesTab(),
+        const FinanceiroTab(),
       ];
 
   static const List<String> _titles = [
@@ -57,6 +59,7 @@ class _HomePageState extends State<HomePage> {
     'Produtos',
     'Pedidos',
     'Clientes',
+    'Financeiro',
   ];
 
   static const List<IconData> _tabIcons = [
@@ -65,6 +68,7 @@ class _HomePageState extends State<HomePage> {
     Icons.shopping_bag_rounded,
     Icons.receipt_long_rounded,
     Icons.groups_rounded,
+    Icons.account_balance_wallet_rounded,
   ];
 
   @override
