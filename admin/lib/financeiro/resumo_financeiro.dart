@@ -37,7 +37,7 @@ class ResumoMes {
   int get resultadoCentavos => vendasCentavos - saidasCentavos;
 }
 
-List<LinhaValor> _ordenar(Map<String, List<int>> g) {
+List<LinhaValor> ordenarLinhas(Map<String, List<int>> g) {
   final l = [
     for (final e in g.entries)
       LinhaValor(rotulo: e.key, centavos: e.value[0], quantidade: e.value[1]),
@@ -49,7 +49,7 @@ List<LinhaValor> _ordenar(Map<String, List<int>> g) {
   return l;
 }
 
-void _somar(Map<String, List<int>> g, String rotulo, int cent, int qtd) {
+void somarLinha(Map<String, List<int>> g, String rotulo, int cent, int qtd) {
   final v = g.putIfAbsent(rotulo, () => [0, 0]);
   v[0] += cent;
   v[1] += qtd;
@@ -69,10 +69,13 @@ ResumoMes resumirMes({
     final cent = centavos(p.total);
     totalVendas += cent;
     final nome = (p.vendedorNome ?? '').trim();
-    final rotulo = nome.isNotEmpty ? nome : (p.vendedorCodigo ?? '').trim();
-    _somar(vendedores, rotulo, cent, 1);
+    final codigo = (p.vendedorCodigo ?? '').trim();
+    final rotulo = nome.isNotEmpty
+        ? nome
+        : (codigo.isNotEmpty ? codigo : 'Sem vendedor');
+    somarLinha(vendedores, rotulo, cent, 1);
     for (final it in p.itens) {
-      _somar(produtos, it.nome.trim(), centavos(it.subtotal), it.quantidade);
+      somarLinha(produtos, it.nome.trim(), centavos(it.subtotal), it.quantidade);
     }
   }
 
@@ -80,7 +83,7 @@ ResumoMes resumirMes({
   var totalSaidas = 0;
   for (final s in saidas) {
     totalSaidas += s.valorCentavos;
-    _somar(categorias, nomesCategorias[s.categoriaId] ?? 'Sem categoria',
+    somarLinha(categorias, nomesCategorias[s.categoriaId] ?? 'Sem categoria',
         s.valorCentavos, 1);
   }
 
@@ -88,9 +91,9 @@ ResumoMes resumirMes({
     vendasCentavos: totalVendas,
     pedidos: vendas.length,
     saidasCentavos: totalSaidas,
-    porVendedor: _ordenar(vendedores),
-    porProduto: _ordenar(produtos),
-    porCategoria: _ordenar(categorias),
+    porVendedor: ordenarLinhas(vendedores),
+    porProduto: ordenarLinhas(produtos),
+    porCategoria: ordenarLinhas(categorias),
     aReceberPedidos: prontos.length,
     aReceberCentavos: prontos.fold(0, (s, p) => s + centavos(p.total)),
   );
