@@ -13,7 +13,7 @@ import 'id_aparelho.dart';
 sq.Database? _db;
 
 /// ⬆️ aumente quando mudar o schema
-const _dbVersion = 18;
+const _dbVersion = 19;
 
 /// Faixa reservada para IDs de pedidos criados SOMENTE localmente (rascunhos).
 ///
@@ -191,7 +191,8 @@ Future<sq.Database> getDb() async {
           assinatura_pedido TEXT,      -- hex "0x..." da assinatura do pedido
           assinatura_pedido_path TEXT, -- arquivo local da assinatura do pedido
           pronto_em TEXT,
-          pronto_por TEXT
+          pronto_por TEXT,
+          codigo_qr TEXT
         );
       ''');
       await _criarTabelaDescartados(db);
@@ -252,6 +253,10 @@ Future<sq.Database> getDb() async {
         // `pronto`, gravada pelo Controle. Só colunas novas.
         await _garantirSchemaV18(db);
       }
+      if (oldV < 19) {
+        // v19: código secreto do pedido (vem do servidor), lido do QR da etiqueta.
+        await _garantirSchemaV19(db);
+      }
     },
     onOpen: (db) async {
       await _ensureColumn(db, 'produtos', 'codigo', 'TEXT');
@@ -271,6 +276,7 @@ Future<sq.Database> getDb() async {
       await _ensureColumn(db, 'pedidos', 'pendente_envio', 'INTEGER NOT NULL DEFAULT 0');
       await _garantirSchemaV17(db);
       await _garantirSchemaV18(db);
+      await _garantirSchemaV19(db);
 
       // Segurança extra: garante que rascunhos antigos estejam na faixa de id
       // reservada (caso a relocação da v15 tenha falhado). Só mexe no que
@@ -323,6 +329,31 @@ Future<void> _garantirSchemaV18(sq.Database db) async {
   ]) {
     await _ensureColumn(db, 'pedidos', c, 'TEXT');
   }
+}
+
+/// Coluna e índice da v19 (idempotente).
+Future<void> _garantirSchemaV19(sq.Database db) async {
+  await _ensureColumn(db, 'pedidos', 'codigo_qr', 'TEXT');
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_pedidos_codigo_qr ON pedidos(codigo_qr);');
+}
+
+/// Pedido do celular com esse `codigo_qr` (uuid) e do vendedor logado, ou null.
+/// O celular guarda pedidos de mais de um vendedor (sair não apaga nada): o
+/// pedido de outro vendedor nunca abre como local, vai pelo servidor.
+/// Não filtra por `pendente_envio`: pedido aguardando envio também é local.
+/// O código chega minúsculo (`codigoDoQrEntrega` e o servidor), então a busca
+/// é por igualdade e usa o índice `idx_pedidos_codigo_qr`.
+Future<Map<String, dynamic>?> buscarPedidoLocalPorCodigoQr(
+    String codigoQr, String vendedorCodigo) async {
+  if (vendedorCodigo.isEmpty) return null;
+  final db = await getDb();
+  final r = await db.query(
+    'pedidos',
+    where: 'codigo_qr = ? AND vendedor_codigo = ?',
+    whereArgs: [codigoQr, vendedorCodigo],
+    limit: 1,
+  );
+  return r.isEmpty ? null : Map<String, dynamic>.from(r.first);
 }
 
 Future<Set<String>> _getTableColumns(sq.Database db, String table) async {
@@ -513,6 +544,15 @@ Future<void> _aplicarCamposLocais(
     for (final c in _colunasCopiaDoServidor) {
       if (pedido.containsKey(c)) map[c] = pedido[c]?.toString();
     }
+  }
+
+  // codigo_qr: o servidor gera e nunca muda; o app nunca o apaga. O INSERT OR
+  // REPLACE apagaria o guardado quando o mapa não o traz.
+  final qrVindo = pedido['codigo_qr']?.toString() ?? '';
+  if (qrVindo.isNotEmpty) {
+    map['codigo_qr'] = qrVindo;
+  } else if (replace && antigo != null) {
+    map['codigo_qr'] = antigo['codigo_qr'];
   }
 
   // Assinatura do pedido: sem bytes, nunca apaga a guardada (como o servidor,

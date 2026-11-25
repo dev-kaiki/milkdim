@@ -7,5 +7,6 @@ library;
 export 'src/components/md_basicos.dart';
 export 'src/components/md_logo_title.dart';
 export 'src/components/md_tipo.dart';
+export 'src/qr_entrega.dart';
 export 'src/theme.dart';
 export 'src/tokens.dart';

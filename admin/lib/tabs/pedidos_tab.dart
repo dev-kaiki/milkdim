@@ -4,6 +4,7 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../models/pedido.dart';
+import '../services/supabase_service.dart';
 import '../widgets/detalhe_pedido.dart';
 import '../widgets/lista_adaptavel.dart';
 
@@ -21,7 +22,12 @@ class PedidosTab extends StatefulWidget {
   @visibleForTesting
   final Future<DetalheDoPedido> Function(int id)? buscarDetalhe;
 
-  const PedidosTab({super.key, this.carregar, this.buscarDetalhe});
+  /// Só para testes: nomes dos vendedores por código; nulo usa
+  /// [SupabaseService.buscarVendedores].
+  @visibleForTesting
+  final Future<Map<String, String>> Function()? buscarNomes;
+
+  const PedidosTab({super.key, this.carregar, this.buscarDetalhe, this.buscarNomes});
 
   @override
   State<PedidosTab> createState() => _PedidosTabState();
@@ -42,6 +48,9 @@ class _PedidosTabState extends State<PedidosTab> {
   bool _loading = true;
   List<Pedido> _pedidos = [];
   List<Pedido> _filtered = [];
+
+  /// Nome dos vendedores por código, para "Entregue por" no detalhe.
+  Map<String, String> _nomes = const {};
 
   /// Situação escolhida no filtro: null = todos; senão o status ('salvo', ...).
   String? _situacao;
@@ -86,9 +95,11 @@ class _PedidosTabState extends State<PedidosTab> {
             .toList();
       }
 
+      final nomes = await _buscarNomes();
       if (!mounted) return;
       setState(() {
         _pedidos = list;
+        _nomes = nomes;
       });
       _aplicarFiltros();
     } catch (e) {
@@ -96,6 +107,17 @@ class _PedidosTabState extends State<PedidosTab> {
       showMdSnack(context, 'Erro ao carregar pedidos: $e', tipo: MdTipo.erro);
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Falha ao buscar os vendedores não atrapalha a lista: só some o nome.
+  Future<Map<String, String>> _buscarNomes() async {
+    try {
+      if (widget.buscarNomes != null) return await widget.buscarNomes!();
+      final vs = await SupabaseService().buscarVendedores();
+      return {for (final v in vs) v.codigo: v.nome};
+    } catch (_) {
+      return const {};
     }
   }
 
@@ -245,7 +267,7 @@ class _PedidosTabState extends State<PedidosTab> {
 
     return MdCard(
       onTap: () => abrirDetalhesPedido(context, p,
-          buscar: widget.buscarDetalhe, apagar: _confirmDelete),
+          buscar: widget.buscarDetalhe, apagar: _confirmDelete, nomesPorCodigo: _nomes),
       padding: const EdgeInsets.fromLTRB(MdSpace.lg, MdSpace.md, MdSpace.xs, MdSpace.md),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

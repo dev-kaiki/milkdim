@@ -11,7 +11,10 @@ import 'package:intl/intl.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../etiqueta/estado_etiqueta.dart';
+import '../etiqueta/imprimir_etiqueta.dart';
 import '../models/pedido.dart';
+import '../services/supabase_service.dart';
 
 /// Linha crua do Supabase (todas as colunas) e o `Pedido` dela.
 typedef DetalheDoPedido = ({Map<String, dynamic> raw, Pedido parsed});
@@ -19,8 +22,11 @@ typedef DetalheDoPedido = ({Map<String, dynamic> raw, Pedido parsed});
 /// Busca 1) linha crua do Supabase (todas as colunas) e
 /// 2) mapeia para `Pedido` para renderização bonita.
 Future<DetalheDoPedido> buscarDetalhePedido(int id) async {
-  final raw =
-      await Supabase.instance.client.from('pedidos').select('*').eq('id', id).single();
+  final raw = await Supabase.instance.client
+      .from('pedidos')
+      .select('*')
+      .eq('id', id)
+      .single();
   final map = Map<String, dynamic>.from(raw as Map);
   return (raw: map, parsed: Pedido.fromMap(map));
 }
@@ -59,15 +65,62 @@ MdTipo tipoDaSituacao(String status) {
 Widget chipSituacao(Pedido p) =>
     MdStatusChip(tipo: tipoDaSituacao(p.status), texto: p.situacaoTexto);
 
-String vendedorTextoPedido(Pedido p) =>
-    (p.vendedorCodigo ?? '') +
-    ((p.vendedorNome ?? '').isNotEmpty ? ' (${p.vendedorNome})' : '');
+/// O vendedor do pedido pelo nome; sem nome, pelo código.
+String vendedorTextoPedido(Pedido p) {
+  final nome = (p.vendedorNome ?? '').trim();
+  return nome.isNotEmpty ? nome : (p.vendedorCodigo ?? '').trim();
+}
 
 bool temVendedorPedido(Pedido p) =>
     (p.vendedorCodigo ?? '').isNotEmpty || (p.vendedorNome ?? '').isNotEmpty;
 
+/// Quem fez uma ação no pedido (pronto_por, finalizado_por, cancelado_por,
+/// etiqueta_impressa_por), pelo nome. Esses campos guardam o código do
+/// vendedor ou, em conta admin sem código, um e-mail: o nome vem de
+/// [nomesPorCodigo] ou, se for o vendedor do pedido, do nome gravado nele; sem
+/// nome, fica o que está gravado. null se vazio.
+String? nomeDeQuem(String? codigo, Pedido p, Map<String, String> nomesPorCodigo) {
+  final c = (codigo ?? '').trim();
+  if (c.isEmpty) return null;
+  final daLista = (nomesPorCodigo[c] ?? '').trim();
+  if (daLista.isNotEmpty) return daLista;
+  final doPedido = (p.vendedorNome ?? '').trim();
+  if (c == (p.vendedorCodigo ?? '').trim() && doPedido.isNotEmpty) return doPedido;
+  return c;
+}
+
+/// "<nome> (outro vendedor)" / "<nome> (manual)" / "<nome>" para pedido
+/// finalizado; null se não está finalizado ou não se sabe quem.
+/// " (outro vendedor)" quando não é o dono do pedido e a entrega não foi
+/// manual; " (manual)" quando foi manual.
+String? quemEntregou(Pedido p, Map<String, String> nomesPorCodigo) {
+  final por = (p.finalizadoPor ?? '').trim();
+  if (p.status != 'finalizado' || por.isEmpty) return null;
+  final sufixo = p.finalizadoManual
+      ? ' (manual)'
+      : (por != p.vendedorCodigo ? ' (outro vendedor)' : '');
+  return '${nomeDeQuem(por, p, nomesPorCodigo)}$sufixo';
+}
+
+/// "Entregue por <nome>…" (ver [quemEntregou]).
+String? textoEntreguePor(Pedido p, Map<String, String> nomesPorCodigo) {
+  final quem = quemEntregou(p, nomesPorCodigo);
+  return quem == null ? null : 'Entregue por $quem';
+}
+
+/// Nome dos vendedores por código; a falha só deixa os códigos à mostra.
+Future<Map<String, String>> buscarNomesDosVendedores() async {
+  final vs = await SupabaseService().buscarVendedores();
+  return {for (final v in vs) v.codigo: v.nome};
+}
+
 /// Abre o detalhe do pedido [p] (busca a linha completa no servidor).
 /// - [buscar]: troca a busca (testes); nulo usa [buscarDetalhePedido].
+/// - [nomesPorCodigo]: nome dos vendedores por código (para "Entregue por",
+///   "Pronto por" etc.). Vazio: a folha busca com [buscarNomes] (nulo usa
+///   [buscarNomesDosVendedores]); se a busca falhar, ficam os códigos.
+/// - [marcarEtiqueta]/[enviarParaImpressora]: etiqueta do pedido pronto; nulo
+///   usa o [SupabaseService].
 /// - [apagar]: mostra o botão "Apagar pedido" e o chama; devolve true se
 ///   apagou (a folha fecha). Nulo: sem o botão.
 void abrirDetalhesPedido(
@@ -75,7 +128,22 @@ void abrirDetalhesPedido(
   Pedido p, {
   Future<DetalheDoPedido> Function(int id)? buscar,
   Future<bool> Function(Pedido p)? apagar,
+  Map<String, String> nomesPorCodigo = const {},
+  Future<Map<String, String>> Function()? buscarNomes,
+  Future<void> Function(int id, String? alteradoEmBruto)? marcarEtiqueta,
+  EnviarParaImpressora? enviarParaImpressora,
 }) {
+  // Uma busca por folha aberta, só quando a aba não mandou os nomes.
+  final Future<Map<String, String>> nomes = nomesPorCodigo.isNotEmpty
+      ? Future.value(nomesPorCodigo)
+      : () async {
+          try {
+            return await (buscarNomes ?? buscarNomesDosVendedores)();
+          } catch (_) {
+            return const <String, String>{};
+          }
+        }();
+
   Future<DetalheDoPedido?> carregar() async {
     try {
       return await (buscar ?? buscarDetalhePedido)(p.id);
@@ -94,9 +162,13 @@ void abrirDetalhesPedido(
     builder: (_) {
       return SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(MdSpace.xl, 0, MdSpace.xl, MdSpace.lg),
-          child: FutureBuilder<DetalheDoPedido?>(
-            future: carregar(),
+          padding:
+              const EdgeInsets.fromLTRB(MdSpace.xl, 0, MdSpace.xl, MdSpace.lg),
+          child: FutureBuilder<(DetalheDoPedido?, Map<String, String>)>(
+            future: () async {
+              final d = await carregar();
+              return (d, await nomes);
+            }(),
             builder: (_, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
                 return const SizedBox(
@@ -104,7 +176,8 @@ void abrirDetalhesPedido(
                   child: Center(child: CircularProgressIndicator()),
                 );
               }
-              final data = snap.data;
+              final data = snap.data?.$1;
+              final nomesDaFolha = snap.data?.$2 ?? nomesPorCodigo;
               if (data == null) {
                 return const Padding(
                   padding: EdgeInsets.all(16),
@@ -116,6 +189,10 @@ void abrirDetalhesPedido(
                 ped: data.parsed,
                 contextoDaAba: context,
                 apagar: apagar,
+                nomesPorCodigo: nomesDaFolha,
+                marcarEtiqueta: marcarEtiqueta,
+                enviarParaImpressora: enviarParaImpressora,
+                recarregar: carregar,
               );
             },
           ),
@@ -125,12 +202,16 @@ void abrirDetalhesPedido(
   );
 }
 
-class _FolhaDetalhe extends StatelessWidget {
+class _FolhaDetalhe extends StatefulWidget {
   const _FolhaDetalhe({
     required this.raw,
     required this.ped,
     required this.contextoDaAba,
     required this.apagar,
+    required this.nomesPorCodigo,
+    required this.marcarEtiqueta,
+    required this.enviarParaImpressora,
+    required this.recarregar,
   });
 
   final Map<String, dynamic> raw;
@@ -139,20 +220,70 @@ class _FolhaDetalhe extends StatelessWidget {
   /// Onde aparecem os avisos de "copiado".
   final BuildContext contextoDaAba;
   final Future<bool> Function(Pedido p)? apagar;
+  final Map<String, String> nomesPorCodigo;
+  final Future<void> Function(int id, String? alteradoEmBruto)? marcarEtiqueta;
+  final EnviarParaImpressora? enviarParaImpressora;
+
+  /// Busca o detalhe de novo (para mostrar a etiqueta recém-impressa).
+  final Future<DetalheDoPedido?> Function() recarregar;
+
+  @override
+  State<_FolhaDetalhe> createState() => _FolhaDetalheState();
+}
+
+class _FolhaDetalheState extends State<_FolhaDetalhe> {
+  late Map<String, dynamic> raw = widget.raw;
+  late Pedido ped = widget.ped;
+  Map<String, String> get nomesPorCodigo => widget.nomesPorCodigo;
+  BuildContext get contextoDaAba => widget.contextoDaAba;
+  Future<bool> Function(Pedido p)? get apagar => widget.apagar;
+  bool _imprimindo = false;
+
+  Future<void> _imprimirEtiqueta() async {
+    if (_imprimindo) return;
+    setState(() => _imprimindo = true);
+    try {
+      await imprimirEtiquetaComConfirmacao(
+        context,
+        ped,
+        marcar: widget.marcarEtiqueta ??
+            (id, bruto) => SupabaseService().marcarEtiqueta(id, alteradoEmBruto: bruto),
+        enviar: widget.enviarParaImpressora,
+      );
+    } catch (e) {
+      if (mounted) {
+        final msg =
+            e is RepoFailure ? e.message : 'Erro ao imprimir a etiqueta: $e';
+        showMdSnack(context, msg, tipo: MdTipo.erro);
+      }
+    } finally {
+      if (mounted) setState(() => _imprimindo = false);
+    }
+    final novo = await widget.recarregar();
+    if (novo != null && mounted) {
+      setState(() {
+        raw = novo.raw;
+        ped = novo.parsed;
+      });
+    }
+  }
 
   Future<void> _copy(String label, String? value) async {
     final v = (value ?? '').trim();
     if (v.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: v));
-    if (!contextoDaAba.mounted) return;
-    showMdSnack(contextoDaAba, '$label copiado');
+    if (!mounted || !widget.contextoDaAba.mounted) return;
+    showMdSnack(widget.contextoDaAba, '$label copiado');
   }
 
   Widget _rotulo(BuildContext context, String label) => SizedBox(
         width: 140,
         child: Text(
           label,
-          style: Theme.of(context).textTheme.bodyMedium!.copyWith(color: MdColors.textMuted),
+          style: Theme.of(context)
+              .textTheme
+              .bodyMedium!
+              .copyWith(color: MdColors.textMuted),
         ),
       );
 
@@ -167,13 +298,15 @@ class _FolhaDetalhe extends StatelessWidget {
         padding: const EdgeInsets.all(MdSpace.md),
         child: SelectableText(
           texto,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.3),
+          style: const TextStyle(
+              fontFamily: 'monospace', fontSize: 13, height: 1.3),
         ),
       );
 
   // Mostra um rótulo + valor, aceitando qualquer tipo.
   // Se for Map/List, mostra um bloco JSON identado e selecionável.
-  Widget _infoRow(BuildContext context, String label, Object? value, {bool dense = false}) {
+  Widget _infoRow(BuildContext context, String label, Object? value,
+      {bool dense = false}) {
     String v;
     bool isJsonBlock = false;
 
@@ -209,7 +342,8 @@ class _FolhaDetalhe extends StatelessWidget {
     );
   }
 
-  Widget _infoRowWidget(BuildContext context, String label, Widget value, {bool dense = false}) {
+  Widget _infoRowWidget(BuildContext context, String label, Widget value,
+      {bool dense = false}) {
     return Padding(
       padding: EdgeInsets.symmetric(vertical: dense ? 4 : 6),
       child: Row(
@@ -235,7 +369,8 @@ class _FolhaDetalhe extends StatelessWidget {
       maxChildSize: 0.95,
       builder: (context, controller) {
         final clienteTitulo =
-            (ped.clienteNome ?? ped.clienteNomeFantasia ?? 'Cliente').toString();
+            (ped.clienteNome ?? ped.clienteNomeFantasia ?? 'Cliente')
+                .toString();
         return ListView(
           controller: controller,
           children: [
@@ -253,7 +388,8 @@ class _FolhaDetalhe extends StatelessWidget {
                     onPressed: () async {
                       final deleted = await apagar!(ped);
                       if (deleted && context.mounted) {
-                        Navigator.of(context).pop(); // fecha a folha de detalhes
+                        Navigator.of(context)
+                            .pop(); // fecha a folha de detalhes
                       }
                     },
                   ),
@@ -266,7 +402,8 @@ class _FolhaDetalhe extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 chipSituacao(ped),
-                if ((ped.numero ?? '').isNotEmpty) Chip(label: Text('Nº ${ped.numero}')),
+                if ((ped.numero ?? '').isNotEmpty)
+                  Chip(label: Text('Nº ${ped.numero}')),
                 Chip(label: Text('ID ${ped.id}')),
                 Chip(label: Text('Total: ${fmtMoedaPedido(ped.total)}')),
                 Chip(label: Text('Itens: ${ped.totalItens}')),
@@ -278,6 +415,34 @@ class _FolhaDetalhe extends StatelessWidget {
                 Chip(label: Text('Quando: ${fmtDataPedido(ped.datahora)}')),
               ],
             ),
+            if (textoEntreguePor(ped, nomesPorCodigo) != null) ...[
+              const SizedBox(height: MdSpace.sm),
+              Text(textoEntreguePor(ped, nomesPorCodigo)!, style: tt.bodyLarge),
+            ],
+            if (ped.status == 'pronto') ...[
+              const SizedBox(height: MdSpace.md),
+              Wrap(
+                spacing: MdSpace.md,
+                runSpacing: MdSpace.sm,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  chipEtiqueta(ped,
+                      quem: nomeDeQuem(ped.etiquetaImpressaPor, ped, nomesPorCodigo)),
+                  Tooltip(
+                    message: ped.codigoQr == null
+                        ? 'Atualize o banco para imprimir etiquetas'
+                        : '',
+                    child: OutlinedButton.icon(
+                      onPressed: (_imprimindo || ped.codigoQr == null)
+                          ? null
+                          : _imprimirEtiqueta,
+                      icon: const Icon(Icons.print_outlined),
+                      label: const Text('Imprimir etiqueta'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: MdSpace.lg),
             const Divider(),
 
@@ -300,8 +465,10 @@ class _FolhaDetalhe extends StatelessWidget {
             Align(
               alignment: Alignment.centerRight,
               child: Padding(
-                padding: const EdgeInsets.only(top: MdSpace.md, right: MdSpace.xs),
-                child: Text('Total: ${fmtMoedaPedido(ped.total)}', style: tt.titleMedium),
+                padding:
+                    const EdgeInsets.only(top: MdSpace.md, right: MdSpace.xs),
+                child: Text('Total: ${fmtMoedaPedido(ped.total)}',
+                    style: tt.titleMedium),
               ),
             ),
 
@@ -310,10 +477,16 @@ class _FolhaDetalhe extends StatelessWidget {
             const Divider(),
             const SizedBox(height: MdSpace.md),
             const MdSectionHeader(titulo: 'Assinaturas'),
-            _infoRowWidget(context, 'Assinatura do pedido',
-                _AssinaturaImagem(bytes: ped.assinaturaPedidoBytes, chave: 'pedido')),
-            _infoRowWidget(context, 'Assinatura da entrega',
-                _AssinaturaImagem(bytes: ped.assinaturaBytes, chave: 'entrega')),
+            _infoRowWidget(
+                context,
+                'Assinatura do pedido',
+                _AssinaturaImagem(
+                    bytes: ped.assinaturaPedidoBytes, chave: 'pedido')),
+            _infoRowWidget(
+                context,
+                'Assinatura da entrega',
+                _AssinaturaImagem(
+                    bytes: ped.assinaturaBytes, chave: 'entrega')),
 
             // CLIENTE
             const SizedBox(height: MdSpace.lg),
@@ -322,7 +495,8 @@ class _FolhaDetalhe extends StatelessWidget {
             const MdSectionHeader(titulo: 'Dados do cliente'),
             _infoRow(context, 'Código (ID)', ped.clienteId, dense: true),
             _infoRow(context, 'Nome', ped.clienteNome, dense: true),
-            _infoRow(context, 'Nome fantasia', ped.clienteNomeFantasia, dense: true),
+            _infoRow(context, 'Nome fantasia', ped.clienteNomeFantasia,
+                dense: true),
             _infoRowWidget(
               context,
               'Telefone/WhatsApp',
@@ -346,7 +520,8 @@ class _FolhaDetalhe extends StatelessWidget {
             _infoRow(context, 'Endereço', ped.clienteEndereco, dense: true),
             _infoRow(context, 'Cidade', ped.clienteCidade, dense: true),
             _infoRow(context, 'CPF/CNPJ', ped.clienteCpfCnpj, dense: true),
-            _infoRow(context, 'Inscr. Estadual', ped.clienteInscEstadual, dense: true),
+            _infoRow(context, 'Inscr. Estadual', ped.clienteInscEstadual,
+                dense: true),
             _infoRow(context, 'CEP', ped.clienteCep, dense: true),
             _infoRow(context, 'Anotação', ped.clienteAnotacao),
 
@@ -369,23 +544,25 @@ class _FolhaDetalhe extends StatelessWidget {
             _infoRow(
               context,
               'Pronto em',
-              ped.prontoEm == null ? null : _dateFmt.format(ped.prontoEm!.toLocal()),
+              ped.prontoEm == null
+                  ? null
+                  : _dateFmt.format(ped.prontoEm!.toLocal()),
             ),
-            _infoRow(context, 'Pronto por', ped.prontoPor),
+            _infoRow(context, 'Pronto por', nomeDeQuem(ped.prontoPor, ped, nomesPorCodigo)),
             _infoRow(
               context,
               'Finalizado em',
-              ped.finalizadoEm == null ? null : _dateFmt.format(ped.finalizadoEm!.toLocal()),
+              ped.finalizadoEm == null
+                  ? null
+                  : _dateFmt.format(ped.finalizadoEm!.toLocal()),
             ),
             _infoRow(
-              context,
-              'Finalizado por',
-              ped.finalizadoPor == null
-                  ? null
-                  : '${ped.finalizadoPor}${ped.finalizadoManual ? ' (manual)' : ''}',
-            ),
+                context,
+                'Finalizado por',
+                quemEntregou(ped, nomesPorCodigo) ??
+                    nomeDeQuem(ped.finalizadoPor, ped, nomesPorCodigo)),
             _infoRow(context, 'Cancelado em', ped.canceladoEm),
-            _infoRow(context, 'Cancelado por', ped.canceladoPor),
+            _infoRow(context, 'Cancelado por', nomeDeQuem(ped.canceladoPor, ped, nomesPorCodigo)),
 
             // DADOS BRUTOS / TODAS AS COLUNAS
             const SizedBox(height: MdSpace.lg),
@@ -398,7 +575,8 @@ class _FolhaDetalhe extends StatelessWidget {
                 onPressed: () async {
                   await Clipboard.setData(ClipboardData(text: jsonStr));
                   if (!context.mounted) return;
-                  showMdSnack(context, 'JSON copiado para a área de transferência.');
+                  showMdSnack(
+                      context, 'JSON copiado para a área de transferência.');
                 },
                 icon: const Icon(Icons.copy_rounded),
               ),
@@ -454,7 +632,8 @@ class _ItemPedidoLinha extends StatelessWidget {
     final tt = Theme.of(context).textTheme;
     final q = item.quantidade;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: MdSpace.lg, vertical: MdSpace.md),
+      padding: const EdgeInsets.symmetric(
+          horizontal: MdSpace.lg, vertical: MdSpace.md),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

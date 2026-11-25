@@ -296,3 +296,20 @@ bool podeRegistrarEntregaDepois(Map p,
     _status(p) == 'finalizado' &&
     _finalizadoManual(p['finalizado_manual']) &&
     !temAssinaturaDaEntrega(p, arquivoExiste: arquivoExiste);
+
+/// Meus pedidos só abre o editor (Editar / Registrar entrega) quando o pedido
+/// não foi apagado no Controle e está em aberto, ou foi entregue pelo
+/// Controle sem a assinatura da entrega. A leitura da etiqueta usa a mesma
+/// regra.
+bool podeAbrirPelaEtiqueta(Map<String, dynamic> p,
+        {bool Function(String caminho) arquivoExiste = arquivoExisteNoAparelho}) =>
+    !apagadoNoControle(p) &&
+    (estaEmAberto(p) || podeRegistrarEntregaDepois(p, arquivoExiste: arquivoExiste));
+
+/// Mensagem para quando [podeAbrirPelaEtiqueta] é falso.
+String motivoNaoAbrirPelaEtiqueta(Map<String, dynamic> p) {
+  if (apagadoNoControle(p)) return kMsgApagadoNoControle;
+  return _status(p) == 'cancelado'
+      ? 'Este pedido foi cancelado.'
+      : 'Este pedido já foi entregue.';
+}

@@ -48,6 +48,9 @@ dependencies:
   # Visual compartilhado (tokens, tema e componentes) com o app de controle
   milkdim_ui:
     path: ../packages/milkdim_ui
+  mobile_scanner: ^7.5.0
+  # Link da etiqueta aberto pela câmera do celular (utils/link_etiqueta.dart)
+  app_links: ^3.5.1
 
 dev_dependencies:
   flutter_test:

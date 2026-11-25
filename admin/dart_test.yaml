@@ -2,3 +2,8 @@
 # para rodar só eles: flutter test --tags visual
 tags:
   visual:
+  # Amostra da etiqueta, gravada em build/amostra_etiqueta/. Pulada na suíte
+  # normal; para gerar:
+  #   flutter test --tags amostra --run-skipped test/etiqueta_test.dart
+  amostra:
+    skip: "amostra: use --tags amostra --run-skipped"

@@ -13,6 +13,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart'; // sqfliteFfiInit + databa
 
 import 'utils/auth.dart';
 import 'utils/http_prazo.dart';
+import 'utils/link_etiqueta.dart';
 import 'pages/home_page.dart';
 import 'pages/login_page.dart';
 
@@ -40,6 +41,9 @@ void main() async {
       httpClient: ClienteHttpComPrazo(),
     );
     debugPrint('🟢 Supabase inicializado com sucesso');
+
+    // QR da etiqueta lido pela câmera do celular: o Android abre o app com o link.
+    ouvirLinksDeEtiqueta();
 
     runApp(const MilkDimApp());
   } catch (e) {

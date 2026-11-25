@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:milkdim_app/pages/pedido_edit_page.dart';
+import 'package:milkdim_app/pages/ler_etiqueta_page.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
@@ -896,7 +897,7 @@ class _PedidosPageState extends State<PedidosPage>
         : null;
     // Entregue pelo Controle sem a assinatura da entrega: o vendedor ainda
     // registra a entrega (a dele vale). O resto dos entregues é só leitura.
-    final registrarEntrega = !apagado && podeRegistrarEntregaDepois(p)
+    final registrarEntrega = !estaEmAberto(p) && podeAbrirPelaEtiqueta(p)
         ? _acao(
             label: 'Registrar entrega',
             icon: Icons.local_shipping_outlined,
@@ -1385,6 +1386,18 @@ class _PedidosPageState extends State<PedidosPage>
         appBar: AppBar(
           title: Text(temFiltro ? 'Meus Pedidos' : 'Pedidos'),
           actions: [
+            if (leituraDeEtiquetaDisponivel)
+            IconButton(
+              onPressed: () async {
+                await Navigator.push(context,
+                    MaterialPageRoute(
+                        builder: (_) => LerEtiquetaPage(
+                            vendedorCodigo: widget.vendedorCodigo ?? '')));
+                if (mounted) await _carregar();
+              },
+              icon: const Icon(Icons.qr_code_scanner),
+              tooltip: 'Ler etiqueta',
+            ),
             IconButton(
               onPressed: _abrirFiltros,
               icon: const Icon(Icons.tune),

@@ -18,6 +18,8 @@ import '../utils/supabase_helper.dart';
 import 'pedido_page.dart';
 import 'pedidos_page.dart';
 import 'configuracoes_page.dart';
+import 'ler_etiqueta_page.dart';
+import '../widgets/ouvir_etiqueta_pendente.dart';
 
 class HomePage extends StatefulWidget {
   final Map<String, dynamic> vendedor;
@@ -277,8 +279,12 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // Etiqueta lida pela câmera do celular, fora do app: abre o pedido daqui.
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      OuvirEtiquetaPendente(vendedorCodigo: _codigo, child: Builder(builder: _tela));
+
+  Widget _tela(BuildContext context) {
     final tt = Theme.of(context).textTheme;
     return Scaffold(
       appBar: AppBar(
@@ -328,6 +334,15 @@ class _HomePageState extends State<HomePage> {
                         subtitulo: 'Ver, editar e compartilhar',
                         onTap: () => _abrir(PedidosPage(vendedorCodigo: _codigo)),
                       ),
+                      if (leituraDeEtiquetaDisponivel) ...[
+                        const SizedBox(height: MdSpace.md),
+                        MdActionTile(
+                          icone: Icons.qr_code_scanner,
+                          titulo: 'Ler etiqueta',
+                          subtitulo: 'Registrar a entrega pelo QR',
+                          onTap: () => _abrir(LerEtiquetaPage(vendedorCodigo: _codigo)),
+                        ),
+                      ],
                       if (_sincronizando) ...[
                         const SizedBox(height: MdSpace.xl),
                         _linhaSincronizando(tt),

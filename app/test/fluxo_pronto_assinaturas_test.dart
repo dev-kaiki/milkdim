@@ -749,7 +749,7 @@ void main() {
     await v17.close();
 
     final db = await getDb();
-    expect(await db.getVersion(), 18);
+    expect(await db.getVersion(), 19);
     final cols = (await db.rawQuery('PRAGMA table_info(pedidos)'))
         .map((r) => r['name'] as String)
         .toSet();
