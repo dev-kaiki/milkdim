@@ -184,6 +184,63 @@ void main() {
     }
   });
 
+  testWidgets('Resumo: card de Saídas mostra o mês todo, seta usa o recorte',
+      (t) async {
+    final f = _Fonte(saidas: [
+      _saida(10000, DateTime(2026, 10, 10)),
+      _saida(20000, DateTime(2026, 11, 10)),
+      _saida(30000, DateTime(2026, 11, 28)), // futura: fora da seta
+    ]);
+    await _abrir(t, f, agora);
+    expect(find.text('R\$ 500,00'), findsWidgets, reason: 'mês todo no card');
+    final seta = find.textContaining('▲ 100%');
+    expect(seta, findsOneWidget, reason: '200 vs 100 no recorte');
+    final card = find.ancestor(of: seta, matching: find.byType(MdCard));
+    expect(find.descendant(of: card, matching: find.text('Saídas')),
+        findsOneWidget);
+    expect(find.descendant(of: card, matching: find.text('R\$ 500,00')),
+        findsOneWidget);
+    final cor = t.widget<Text>(seta).style!.color;
+    expect(cor, Theme.of(t.element(seta)).colorScheme.error);
+  });
+
+  testWidgets('Saídas do mês não lista saída do mês anterior', (t) async {
+    final f = _Fonte(saidas: [
+      Saida(
+          id: 1,
+          data: DateTime(2026, 10, 20),
+          categoriaId: 1,
+          descricao: 'Conta antiga',
+          valorCentavos: 1111),
+      Saida(
+          id: 2,
+          data: DateTime(2026, 11, 5),
+          categoriaId: 1,
+          descricao: 'Conta nova',
+          valorCentavos: 2222),
+    ]);
+    await _abrir(t, f, agora);
+    await _aba(t, 'Saídas');
+    expect(find.textContaining('Conta nova'), findsWidgets);
+    expect(find.textContaining('Conta antiga'), findsNothing);
+  });
+
+  testWidgets('pedido finalizado 31/10 23:30 local não conta em novembro',
+      (t) async {
+    final instante = DateTime(2026, 10, 31, 23, 30).toUtc();
+    await _abrir(t, _Fonte(entregues: [_ped(1, 100, instante)]), agora);
+    expect(find.textContaining('0 pedidos · ticket médio —'), findsOneWidget);
+  });
+
+  testWidgets('pedido finalizado 31/10 23:30 local conta em outubro',
+      (t) async {
+    final instante = DateTime(2026, 10, 31, 23, 30).toUtc();
+    await _abrir(t, _Fonte(entregues: [_ped(1, 100, instante)]),
+        DateTime(2026, 10, 31, 23, 45));
+    expect(find.textContaining('1 pedido · ticket médio R\$ 100,00'),
+        findsOneWidget);
+  });
+
   testWidgets('carga busca 12 meses', (t) async {
     final f = _Fonte();
     await _abrir(t, f, agora);

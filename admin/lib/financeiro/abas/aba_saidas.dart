@@ -62,7 +62,7 @@ class AbaSaidas extends StatelessWidget {
         else
           BarrasHorizontais(
             linhas: resumo.porCategoria,
-            cor: MdColors.textMuted,
+            cor: MdColors.neutroGrafico,
             totalCentavos: resumo.saidasCentavos,
           ),
         const SizedBox(height: MdSpace.lg),

@@ -26,9 +26,15 @@ class AbaAno extends StatelessWidget {
             {bool direita = true, TextStyle? estilo}) =>
         SizedBox(
           width: w,
-          child: Text(t,
-              textAlign: direita ? TextAlign.right : TextAlign.left,
-              style: estilo ?? tt.bodyMedium),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: direita ? Alignment.centerRight : Alignment.centerLeft,
+            child: Text(t,
+                maxLines: 1,
+                softWrap: false,
+                textAlign: direita ? TextAlign.right : TextAlign.left,
+                style: estilo ?? tt.bodyMedium),
+          ),
         );
 
     Widget linha(List<Widget> filhos) => Padding(
@@ -44,9 +50,9 @@ class AbaAno extends StatelessWidget {
     final linhas = <Widget>[
       linha([
         cel('Mês', 80, direita: false, estilo: cab),
-        cel('Vendas', 100, estilo: cab),
-        cel('Saídas', 100, estilo: cab),
-        cel('Resultado', 100, estilo: cab),
+        cel('Vendas', 120, estilo: cab),
+        cel('Saídas', 120, estilo: cab),
+        cel('Resultado', 120, estilo: cab),
         cel('Margem', 70, estilo: cab),
         cel('Pedidos', 70, estilo: cab),
       ]),
@@ -55,8 +61,8 @@ class AbaAno extends StatelessWidget {
         if (m.temDado)
           linha([
             cel('${mesesAbrev[m.mes - 1]}/${m.ano % 100}', 80, direita: false),
-            cel(fmtCentavos(m.vendasCentavos), 100),
-            cel(fmtCentavos(m.saidasCentavos), 100),
+            cel(fmtCentavos(m.vendasCentavos), 120),
+            cel(fmtCentavos(m.saidasCentavos), 120),
             cel(fmtCentavos(m.resultadoCentavos), 100,
                 estilo: corRes(m.resultadoCentavos)),
             cel(m.margemPct == null ? '—' : '${m.margemPct}%', 70),
@@ -66,15 +72,15 @@ class AbaAno extends StatelessWidget {
           linha([
             cel('${mesesAbrev[m.mes - 1]}/${m.ano % 100}', 80,
                 direita: false, estilo: mudo),
-            for (final w in [100.0, 100.0, 100.0, 70.0, 70.0])
+            for (final w in [120.0, 120.0, 120.0, 70.0, 70.0])
               cel('—', w, estilo: mudo),
           ]),
         const Divider(height: 1),
       ],
       linha([
         cel('Total', 80, direita: false, estilo: cab),
-        cel(fmtCentavos(vendas), 100, estilo: cab),
-        cel(fmtCentavos(saidas), 100, estilo: cab),
+        cel(fmtCentavos(vendas), 120, estilo: cab),
+        cel(fmtCentavos(saidas), 120, estilo: cab),
         cel(fmtCentavos(resultado), 100,
             estilo: cab.copyWith(color: resultado < 0 ? erro : null)),
         cel(margem == null ? '—' : '$margem%', 70, estilo: cab),

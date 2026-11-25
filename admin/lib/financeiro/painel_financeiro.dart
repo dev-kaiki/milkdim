@@ -80,7 +80,7 @@ Variacao? calcularVariacao(
 }) {
   if (anterior == 0) return null;
   if (trocaDeSinal) {
-    if (anterior < 0 && atual >= 0) {
+    if (anterior < 0 && atual > 0) {
       return const Variacao(texto: 'virou positivo', sentido: 1);
     }
     if (anterior > 0 && atual < 0) {
@@ -89,7 +89,7 @@ Variacao? calcularVariacao(
   }
   final pct = ((atual - anterior) * 100 / anterior.abs()).round();
   final int sentido;
-  if (atual == anterior) {
+  if (atual == anterior || pct == 0) {
     sentido = 0;
   } else {
     final melhorou = maiorEhMelhor ? atual > anterior : atual < anterior;

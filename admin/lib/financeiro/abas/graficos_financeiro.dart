@@ -7,7 +7,7 @@ import '../modelos_financeiro.dart';
 import '../painel_financeiro.dart';
 
 const Color _corMarca = MdColors.primary;
-const Color _corSaidas = Color(0xFFA8A29A);
+const Color _corSaidas = MdColors.neutroGrafico;
 
 /// Pontos da curva do resultado: x = índice do mês, y = resultado em reais.
 /// Mês sem dado vira [FlSpot.nullSpot] (buraco na linha).

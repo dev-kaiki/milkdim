@@ -57,8 +57,8 @@ Regras que valem para as abas:
     negativo"** (vermelho), sem porcentagem.
   - Se o mês anterior for zero, a seta **não aparece** (não dá para calcular).
 - **"—" na tela.** Significa que não há dado:
-  - na aba **Ano**, o mês sem pedido entregue e sem saída (por exemplo, antes de ago/2025)
-    aparece com "—" em todas as colunas, sem barra no gráfico e com um buraco na curva do
+  - na aba **Ano**, os meses sem pedido entregue nem saída (por exemplo, antes de ago/2025)
+    aparecem com "—" em todas as colunas, sem barra no gráfico e com um buraco na curva do
     resultado. O **Total** soma só os meses com dado;
   - **ticket médio** sem pedidos, **margem** sem vendas e os **Destaques** sem dados também
     mostram "—".
@@ -128,9 +128,9 @@ passos valem em qualquer data: "mês atual" é o mês em que você está testand
 - [ ] **3. Vendas.** Tocar na aba **Vendas**. Conferir **Melhores clientes**, **Vendas por
       produto** e **Vendas por vendedor**. Um mês sem vendas mostra **"Sem registros no mês."**
 - [ ] **4. Ano.** Tocar na aba **Ano**. Deve aparecer o gráfico de barras e a tabela dos 12 meses
-      que terminam no mês da tela, com a linha **Total**. Meses sem dado (antes de ago/2025)
+      que terminam no mês da tela, com a linha **Total**. Meses sem pedido entregue nem saída
       aparecem com **"—"**, não com zero.
-- [ ] **5. Mês de histórico.** Tocar em **Mês anterior** até um mês de 2025. Deve aparecer o aviso
+- [ ] **5. Mês de histórico.** Tocar em **Mês anterior** até um mês antigo. Deve aparecer o aviso
       **"Até 23/11/2026, a data é a do pedido."** e, no **Resumo**, **não** aparecer **A
       receber**. Um mês sem nada mostra R$ 0,00 (e ticket médio e margem com "—") e não dá erro.
       Voltar ao mês atual.

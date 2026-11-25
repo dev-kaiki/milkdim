@@ -107,14 +107,22 @@ class FinanceiroService implements FonteFinanceiro {
   Future<List<Saida>> saidasEntre(DateTime inicioLocal, DateTime fimLocal) {
     final f = filtroSaidas(inicioLocal, fimLocal);
     return _run('buscar saídas', () async {
-      final List<dynamic> raw = await _sb
-          .from('saidas')
-          .select()
-          .gte('data', f.de)
-          .lt('data', f.ate)
-          .order('data', ascending: false)
-          .order('id', ascending: false);
-      return raw.map((e) => Saida.fromMap(JsonMap.from(e as Map))).toList();
+      final out = <Saida>[];
+      var i = 0;
+      while (true) {
+        final List<dynamic> raw = await _sb
+            .from('saidas')
+            .select()
+            .gte('data', f.de)
+            .lt('data', f.ate)
+            .order('data', ascending: false)
+            .order('id', ascending: false)
+            .range(i, i + _bloco - 1);
+        out.addAll(raw.map((e) => Saida.fromMap(JsonMap.from(e as Map))));
+        if (raw.length < _bloco) break;
+        i += _bloco;
+      }
+      return out;
     });
   }
 

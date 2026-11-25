@@ -77,6 +77,24 @@ void main() {
     expect(calcularVariacao(300, -100, trocaDeSinal: true)!.texto,
         'virou positivo');
   });
+  test('calcularVariacao: variação que arredonda para 0% é neutra', () {
+    final v = calcularVariacao(100004, 100000)!;
+    expect(v.pct, 0);
+    expect(v.sentido, 0);
+    final s = calcularVariacao(99996, 100000, maiorEhMelhor: false)!;
+    expect(s.pct, 0);
+    expect(s.sentido, 0);
+  });
+  test('calcularVariacao: resultado de -500 para 0 não "virou positivo"', () {
+    final a = calcularVariacao(0, -500, trocaDeSinal: true)!;
+    expect(a.texto, isNull);
+    expect(a.pct, 100);
+    expect(a.sentido, 1);
+    final b = calcularVariacao(0, 500, trocaDeSinal: true)!;
+    expect(b.texto, isNull);
+    expect(b.pct, -100);
+    expect(b.sentido, -1);
+  });
   test('compararMes no mês atual usa o recorte nos dois lados', () {
     final r = compararMes(
       ano: 2026,
@@ -120,6 +138,22 @@ void main() {
     expect(r.vendas!.pct, 50); // 300 vs 200
     expect(r.saidas!.pct, -50); // 50 vs 100
     expect(r.saidas!.sentido, 1);
+    expect(r.resultado!.pct, 150); // 250 vs 100
+    expect(r.resultado!.sentido, 1);
+  });
+  test('compararMes: limite 31/03 cobre fevereiro inteiro', () {
+    final r = compararMes(
+      ano: 2026,
+      mes: 3,
+      agora: DateTime(2026, 3, 31, 12),
+      entregues: const [],
+      saidas: [
+        _s(DateTime(2026, 2, 28), 100),
+        _s(DateTime(2026, 3, 5), 150),
+      ],
+    );
+    expect(r.saidas!.pct, 50);
+    expect(r.saidas!.sentido, -1);
   });
   test('compararMes ignora pedido não finalizado ou sem data', () {
     final r = compararMes(
