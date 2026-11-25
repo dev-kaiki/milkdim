@@ -122,6 +122,57 @@ Em 25/11, o dono da MilkDim aprovou a etiqueta do pedido ("ficou top") e pediu u
 - **PDF:** um documento com uma página por volume, no tamanho escolhido, num único envio
   para a impressora.
 
+## Decisões de construção (minhas, depois da revisão do desenho)
+
+1. **Volumes antigos.** Os volumes guardam só a divisão dos itens. Cliente, endereço e
+   vendedor são sempre lidos do pedido na hora de imprimir, então a mudança deles nunca
+   deixa a etiqueta velha.
+   - **Quando os volumes salvos valem:** só se a soma por produto ainda bate com os itens
+     atuais do pedido. Se não bate, a tela avisa "O pedido mudou depois que as caixas foram
+     montadas" e sugere de novo.
+   - **`pedido_alterado_em`:** fica guardado só como informação.
+2. **Gravação só por RPC.** A função `pedido_salvar_volumes(p_id, p_solto, p_volumes)` é
+   `security definer` e só administrador pode chamá-la.
+   - **O servidor confere:** que a soma de cada produto nos volumes é igual à do pedido; que
+     não há volume vazio nem quantidade ≤ 0; e que o pedido está `salvo` ou `pronto`.
+   - **Se a conferência falha:** o servidor recusa com código próprio e mensagem em
+     português.
+   - **Leitura:** a tabela `pedido_volumes` só pode ser lida por administrador; ninguém
+     escreve nela diretamente.
+3. **Status do pedido.** Montar ou alterar volumes só é possível com o pedido `salvo` ou
+   `pronto`.
+   - **Pedido entregue:** pode reimprimir, usando os volumes salvos, mas sem mudar nada. Sem
+     volumes salvos, sai a etiqueta única de hoje.
+   - **Pedido cancelado:** não imprime.
+4. **Ordem da impressão:**
+   1. Salvar os volumes (RPC).
+   2. Imprimir todos os volumes num PDF.
+   3. Perguntar "As etiquetas saíram certas?":
+      - **Sim** marca a etiqueta impressa do pedido, como hoje;
+      - **Imprimir de novo** deixa escolher "Todas" ou um volume específico (por exemplo,
+        só o 2/3).
+5. **Produto com nome repetido.** O item é ligado ao produto **ativo** de menor `id` com o
+   mesmo nome. Sem produto ativo, vale o inativo de menor `id`. Sem nenhum, o item vai para
+   os avulsos, com aviso.
+6. **Tipo de caixa inativo:**
+   - não aparece mais para escolher no cadastro de produtos;
+   - na sugestão, o produto com tipo inativo vai para os avulsos.
+   - **Volumes já salvos** guardam o nome do tipo como texto, então mostram o nome antigo
+     mesmo se o tipo for renomeado. É aceito.
+7. **Sugestão em detalhe:**
+   - **Ordem das caixas:** os tipos aparecem na ordem do primeiro item de cada tipo no
+     pedido. Dentro do tipo, os itens seguem a ordem do pedido.
+   - **Mistura ligada:** as unidades enchem caixas cheias passando de um sabor para o outro.
+   - **Mistura desligada:** cada produto enche só as próprias caixas cheias.
+   - **Sobra:** nos dois casos, a sobra **não** vira caixa parcial; vai para os avulsos.
+   - **Avulsos:** um volume só, que junta todos os tipos e fica **por último**.
+8. **Numeração:**
+   - **"N/M":** conta todos os volumes, caixas e o de avulsos, se houver. Sem avulsos, conta
+     só as caixas.
+   - **Pedido só de produtos sem caixa:** vira "Avulsos 1/1".
+   - **Pedido solto:** sai "Pedido solto", sem numeração, numa etiqueta só com todos os
+     itens.
+
 ## Perguntas em aberto (com o cliente)
 
 O desenho já aceita qualquer uma das respostas, sem mudar código:
