@@ -112,6 +112,22 @@ JsonMap pedidoDbParaModelo(JsonMap m) => {
   'etiqueta_impressa_por' : m['etiqueta_impressa_por'],
 };
 
+/// Mapeia uma linha de `produtos` para o formato de [Produto.fromMap].
+JsonMap produtoDbParaModelo(JsonMap m) {
+  final a = m['ativo'];
+  return {
+    'id': m['id'],
+    'codigo': m['codigo'],
+    'nome': m['nome'],
+    'unidade': m['unidade'],
+    'preco': m['preco'],
+    'descricao': m['descricao'],
+    'ativo': a is bool ? a : (a is num ? a != 0 : a?.toString().toLowerCase() == 'true'),
+    'datahora': m['datahora'],
+    'tipo_caixa_id': m['tipo_caixa_id'],
+  };
+}
+
 class SupabaseService {
   final SupabaseClient _sb;
   SupabaseService([SupabaseClient? injected]) : _sb = injected ?? Supabase.instance.client;
@@ -133,16 +149,7 @@ class SupabaseService {
   }
 
   // --------- mapeamentos DB <-> modelo (normaliza chaves) ---------
-  JsonMap _produtoDbToModel(JsonMap m) => {
-    'id'       : m['id'],
-    'codigo'   : m['codigo'],
-    'nome'     : m['nome'],
-    'unidade'  : m['unidade'],
-    'preco'    : m['preco'],
-    'descricao': m['descricao'],
-    'ativo'    : _toBool(m['ativo']),
-    'datahora' : m['datahora'],
-  };
+  JsonMap _produtoDbToModel(JsonMap m) => produtoDbParaModelo(m);
 
   JsonMap _vendedorDbToModel(JsonMap m) => {
     'id'      : m['id'],

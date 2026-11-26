@@ -8,6 +8,7 @@ class Produto {
   final double preco;
   final bool ativo;
   final String? datahora; // ISO UTC opcional
+  final int? tipoCaixaId; // tipos_caixa.id, opcional
 
   const Produto({
     required this.id,
@@ -17,7 +18,15 @@ class Produto {
     required this.preco,
     required this.ativo,
     this.datahora,
+    this.tipoCaixaId,
   });
+
+  static int? _toIntOrNull(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v.toString().trim());
+  }
 
   static double _toDouble(dynamic v) {
     if (v is double) return v;
@@ -53,6 +62,7 @@ class Produto {
     preco  : _toDouble(_pick(m, 'preco', 'preco')),
     ativo  : _toBool(_pick(m, 'ativo', 'ativo')),
     datahora: _pick(m, 'datahora', 'datahora'),
+    tipoCaixaId: _toIntOrNull(m['tipo_caixa_id']),
   );
 
   factory Produto.fromJson(Map<String, dynamic> j) => Produto.fromMap(j);
@@ -65,5 +75,6 @@ class Produto {
     'preco'  : preco,
     'ativo'  : ativo,
     'datahora': datahora,
+    'tipo_caixa_id': tipoCaixaId,
   }..removeWhere((k, v) => v == null);
 }

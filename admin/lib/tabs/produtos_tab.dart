@@ -5,7 +5,10 @@ import 'package:intl/intl.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../etiqueta/dialogo_tipos_caixa.dart';
+import '../etiqueta/volumes.dart';
 import '../models/produto.dart';
+import '../services/caixas_service.dart';
 import '../services/supabase_service.dart';
 import '../widgets/lista_adaptavel.dart';
 
@@ -15,7 +18,15 @@ class ProdutosTab extends StatefulWidget {
   @visibleForTesting
   final Future<List<Produto>> Function()? carregar;
 
-  const ProdutosTab({super.key, this.carregar});
+  /// Só para testes: fonte dos tipos de caixa no lugar do Supabase.
+  @visibleForTesting
+  final FonteCaixas? fonteCaixas;
+
+  /// Só para testes: grava o produto (insere se [id] é nulo) e devolve o id.
+  @visibleForTesting
+  final Future<int> Function(Map<String, dynamic> campos, int? id)? gravar;
+
+  const ProdutosTab({super.key, this.carregar, this.fonteCaixas, this.gravar});
 
   @override
   State<ProdutosTab> createState() => _ProdutosTabState();
@@ -26,6 +37,13 @@ class _ProdutosTabState extends State<ProdutosTab> {
   final _searchCtrl = TextEditingController();
 
   final _brl = NumberFormat.simpleCurrency(locale: 'pt_BR');
+
+  FonteCaixas? _caixas;
+  FonteCaixas get _fonteCaixas =>
+      _caixas ??= widget.fonteCaixas ?? CaixasService();
+  List<TipoCaixa> _tipos = [];
+  // Os tipos não carregaram: o campo de tipo fica indisponível no cadastro.
+  bool _tiposFalhou = false;
 
   List<Produto> _produtos = [];
   List<Produto> _filtered = [];
@@ -59,7 +77,18 @@ class _ProdutosTabState extends State<ProdutosTab> {
       final data = await (widget.carregar?.call() ?? _service.buscarProdutos()); // List<Produto>
       if (!mounted) return;
       data.sort((a, b) => a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));
+      var tipos = <TipoCaixa>[];
+      var falhou = false;
+      try {
+        tipos = await _fonteCaixas.tiposCaixa();
+      } catch (_) {
+        // Sem os tipos a lista segue funcionando; só não mostra o nome do tipo.
+        falhou = true;
+      }
+      if (!mounted) return;
       setState(() {
+        _tipos = tipos;
+        _tiposFalhou = falhou;
         _produtos = data;
         _filtered = data;
         _loading = false;
@@ -150,6 +179,27 @@ class _ProdutosTabState extends State<ProdutosTab> {
     return t.isEmpty ? null : t;
   }
 
+  String _textoCaixa(Produto p) {
+    final id = p.tipoCaixaId;
+    if (id == null) return 'Avulso';
+    for (final t in _tipos) {
+      if (t.id == id) return 'Caixa: ${t.nome} (${t.capacidade})';
+    }
+    return 'Caixa';
+  }
+
+  Future<int> _gravarProduto(Map<String, dynamic> map, int? id) async {
+    final g = widget.gravar;
+    if (g != null) return g(map, id);
+    final t = Supabase.instance.client.from('produtos');
+    if (id == null) {
+      final row = await t.insert(map).select('id').single();
+      return (row['id'] as num).toInt();
+    }
+    await t.update(map).eq('id', id);
+    return id;
+  }
+
   void _toast(String msg, {bool error = false}) {
     if (!mounted) return;
     showMdSnack(context, msg, tipo: error ? MdTipo.erro : MdTipo.sucesso);
@@ -205,6 +255,12 @@ class _ProdutosTabState extends State<ProdutosTab> {
     final unidadeCtrl = TextEditingController(text: produto?.unidade ?? '');
     final precoCtrl   = TextEditingController(text: _formatInicialPreco(produto?.preco ?? 0.0));
     bool ativo        = produto?.ativo ?? true;
+    int? tipoSel      = produto?.tipoCaixaId;
+    final tipoOriginal = produto?.tipoCaixaId;
+    String? falhaTipo;
+    final tiposIndisponiveis = _tiposFalhou;
+    // Tipos ativos; o tipo atual do produto aparece mesmo se estiver inativo.
+    final opcoesTipo = _tipos.where((t) => t.ativo || t.id == tipoOriginal).toList();
 
     final saved = await showDialog<bool>(
       context: context,
@@ -303,6 +359,42 @@ class _ProdutosTabState extends State<ProdutosTab> {
                         },
                         textInputAction: TextInputAction.done,
                       ),
+                      const SizedBox(height: MdSpace.md),
+                      if (tiposIndisponiveis)
+                        TextFormField(
+                          enabled: false,
+                          initialValue: 'Tipos de caixa indisponíveis',
+                          decoration: const InputDecoration(
+                            labelText: 'Tipo de caixa',
+                            prefixIcon: Icon(Icons.inventory),
+                          ),
+                        )
+                      else
+                      DropdownButtonFormField<int?>(
+                        isExpanded: true,
+                        initialValue: tipoSel,
+                        decoration: const InputDecoration(
+                          labelText: 'Tipo de caixa',
+                          prefixIcon: Icon(Icons.inventory),
+                        ),
+                        items: [
+                          const DropdownMenuItem<int?>(
+                              value: null, child: Text('Sem caixa (avulso)')),
+                          for (final t in opcoesTipo)
+                            DropdownMenuItem<int?>(
+                              value: t.id,
+                              child: Text(
+                                '${t.nome} (${t.capacidade})${t.ativo ? '' : ' (desativado)'}',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          if (tipoOriginal != null &&
+                              !opcoesTipo.any((t) => t.id == tipoOriginal))
+                            DropdownMenuItem<int?>(
+                                value: tipoOriginal, child: const Text('Tipo atual')),
+                        ],
+                        onChanged: (v) => setStateSB(() => tipoSel = v),
+                      ),
                       const SizedBox(height: 8.0),
                       Row(
                         children: [
@@ -339,10 +431,13 @@ class _ProdutosTabState extends State<ProdutosTab> {
                   };
 
                   try {
-                    if (produto == null) {
-                      await Supabase.instance.client.from('produtos').insert(map);
-                    } else {
-                      await Supabase.instance.client.from('produtos').update(map).eq('id', produto.id);
+                    final id = await _gravarProduto(map, produto?.id);
+                    if (!tiposIndisponiveis && tipoSel != tipoOriginal) {
+                      try {
+                        await _fonteCaixas.definirTipoDoProduto(id, tipoSel);
+                      } catch (e) {
+                        falhaTipo = e is RepoFailure ? e.message : '$e';
+                      }
                     }
                     if (context.mounted) Navigator.pop(context, true);
                   } on PostgrestException catch (e) {
@@ -361,9 +456,19 @@ class _ProdutosTabState extends State<ProdutosTab> {
     );
 
     if (saved == true) {
-      _toast(produto == null ? 'Produto adicionado' : 'Produto atualizado');
+      if (falhaTipo != null) {
+        _toast('Produto salvo, mas o tipo de caixa não foi gravado: $falhaTipo',
+            error: true);
+      } else {
+        _toast(produto == null ? 'Produto adicionado' : 'Produto atualizado');
+      }
       await _fetchProdutos();
     }
+  }
+
+  Future<void> _abrirTiposCaixa() async {
+    await mostrarDialogoTiposCaixa(context, _fonteCaixas);
+    if (mounted) _fetchProdutos();
   }
 
   // -------------------- UI --------------------
@@ -392,6 +497,11 @@ class _ProdutosTabState extends State<ProdutosTab> {
                 const SizedBox(height: 2),
                 Text(
                   'Código: ${p.codigo ?? '-'} • Unidade: ${p.unidade ?? '-'}',
+                  style: tt.bodyMedium!.copyWith(color: MdColors.textMuted),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _textoCaixa(p),
                   style: tt.bodyMedium!.copyWith(color: MdColors.textMuted),
                 ),
                 const SizedBox(height: MdSpace.sm),
@@ -448,6 +558,18 @@ class _ProdutosTabState extends State<ProdutosTab> {
         hint: 'Buscar por nome, código ou unidade...',
       ),
       acoes: [
+        if (isWide)
+          OutlinedButton.icon(
+            onPressed: _abrirTiposCaixa,
+            icon: const Icon(Icons.inventory),
+            label: const Text('Tipos de caixa'),
+          )
+        else
+          IconButton(
+            tooltip: 'Tipos de caixa',
+            onPressed: _abrirTiposCaixa,
+            icon: const Icon(Icons.inventory),
+          ),
         if (isWide)
           FilledButton.icon(
             onPressed: () => _showAddOrEditDialog(),
