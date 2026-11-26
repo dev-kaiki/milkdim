@@ -4,7 +4,7 @@ Data: 25/11/2026. Aprovado na conversa com o Kaiki.
 
 ## Por quê
 
-Nos áudios de 20/11, o Janderson pediu uma aba de financeiro com duas coisas:
+Nos áudios de 20/11, o dono da MilkDim pediu uma aba de financeiro com duas coisas:
 
 - o **resultado de vendas**;
 - um campo para a esposa **lançar todas as saídas** de dinheiro.
@@ -13,7 +13,7 @@ Hoje o Controle não tem nada disso: os pedidos guardam o total, mas ninguém v�
 fábrica vendeu no mês, nem quanto gastou.
 
 Esta é a parte da Fase D que **não depende da Fase C** (a forma de cobrança). Ela começa
-agora porque a Fase C espera uma resposta do Janderson: a escolha entre dinheiro, cupom e
+agora porque a Fase C espera uma resposta do cliente: a escolha entre dinheiro, cupom e
 nota é feita ao terminar a fabricação ou depois da entrega?
 
 ## Objetivos
@@ -74,7 +74,7 @@ nota é feita ao terminar a fabricação ou depois da entrega?
 - **Forma de cobrança** (dinheiro, cupom ou nota): fica para a Fase C. Quando ela chegar,
   entra no relatório como mais um quadro, "Vendas por cobrança".
 - **Contas a receber detalhadas:** prazos, Pix, boleto, quem pagou e quem não pagou. O
-  Janderson não pediu.
+  cliente não pediu.
 - **Emissão fiscal:** fica para a Fase E.
 - **DRE formal**, com impostos sobre a venda e custo da mercadoria: por enquanto o
   resultado é só vendas − saídas.
