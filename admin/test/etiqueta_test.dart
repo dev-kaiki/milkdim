@@ -397,6 +397,12 @@ void main() {
           paginarItens(25, TamanhoEtiqueta.m60x40, comVolume: true).length);
     });
 
+    test('rodapé de várias páginas: "Folha 1/2" com volume, "1/2" sem', () {
+      expect(rodapeDaPagina(comVolume: true, pagina: 1, total: 2), 'Folha 1/2');
+      expect(rodapeDaPagina(comVolume: false, pagina: 2, total: 2), '2/2');
+      expect(rodapeDaPagina(comVolume: true, pagina: 1, total: 1), isNull);
+    });
+
     test('lista de etiquetas vazia é erro', () {
       expect(() => gerarEtiquetasPdf([], TamanhoEtiqueta.m100x100),
           throwsArgumentError);

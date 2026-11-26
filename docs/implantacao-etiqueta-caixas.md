@@ -18,7 +18,9 @@ vem primeiro, depois o Controle novo. O app dos celulares **não muda**.
 A migração é o arquivo `supabase/migrations/20261126000001_etiqueta_caixas.sql`. O teste dela é
 `supabase/tests/etiqueta_caixas_test.sql`. O teste já rodou dentro de uma transação desfeita
 (26/11/2026) e passou, inclusive com a migração aplicada uma segunda vez (ela pode ser
-repetida sem estragar nada). Ainda **não foi aplicada**.
+repetida sem estragar tabelas nem pedidos; só atenção: repetir religa de novo os produtos
+com tipo vazio cujo nome bate com as regras da seção 2, inclusive os deixados de propósito em
+"Sem caixa"). Ainda **não foi aplicada**.
 
 - [ ] **1.** Abrir o arquivo da migração e mostrar o SQL ao dono. Explicar em uma frase: cria a
       tabela de tipos de caixa, a tabela das caixas montadas por pedido, a coluna "tipo de caixa"
@@ -75,10 +77,15 @@ as caixas já sugeridas:
 - com a mistura de sabores ligada, a caixa cheia pode ter sabores diferentes; desligada, cada
   produto enche só as próprias caixas;
 - **pote e copo nunca se misturam** na mesma caixa;
-- os rótulos são **"Caixa 1/3 · Copo"**, **"Avulsos 3/3"** e, no pedido solto, **"Pedido solto"**.
+- os rótulos são **"Caixa 1/3 · Copo"**, **"Avulsos 3/3"** e, no pedido solto, **"Pedido solto"**;
+- se um volume tem tantos itens que não cabe numa folha, ele sai em mais de uma folha e cada
+  uma traz **"Folha 1/2"**, **"Folha 2/2"** (não confundir com a contagem de caixas).
 
 Na tela dá para: ligar **"Pedido solto (sem caixas)"**, **"Nova caixa"**, **"Apagar caixa"**,
-**"Adicionar produto"**, mudar a quantidade de cada linha e remover linhas. O botão **Imprimir**
+**"Adicionar produto"**, mudar a quantidade de cada linha e remover linhas. O botão **Avulsos**
+(ao lado de **Nova caixa**) aparece quando não há volume de avulsos, para tirar itens de caixas
+cheias. Um avulsos que ficou sem itens some sozinho e as caixas se renumeram; também dá para
+apagá-lo com **Apagar**. O botão **Imprimir**
 só libera quando a soma de cada produto bate com o pedido. **Cancelar** fecha sem imprimir.
 
 Caixa com mais unidades que a capacidade só mostra um aviso: não bloqueia.
@@ -105,8 +112,8 @@ Precisa de um pedido de teste e da impressora funcionando. **Não apagar nada no
       caixas)"**. Sai **uma** etiqueta, **"Pedido solto"**, sem numeração.
 - [ ] **4. Reimprimir só um volume.** No pedido do passo 1, tocar **Imprimir etiqueta** de novo
       (as caixas salvas voltam como estavam). Imprimir, e em **"As etiquetas saíram certas?"**
-      tocar **Imprimir de novo** e escolher **"Volume 2/3 · Caixa 2/3 · Copo"**. Sai só a
-      etiqueta da caixa 2/3.
+      tocar **Imprimir de novo** e escolher **"Caixa 2/3 · Copo"** na lista (as opções são os
+      rótulos dos volumes, mais **Todas**). Sai só a etiqueta da caixa 2/3.
 - [ ] **5. Pedido alterado depois.** Com as caixas salvas do passo 1, o vendedor altera uma
       quantidade e reenvia o pedido, e a fábrica dá **Produção concluída** de novo. Ao tocar
       **Imprimir etiqueta**, a tela mostra o aviso **"O pedido mudou depois que as caixas foram
@@ -114,12 +121,11 @@ Precisa de um pedido de teste e da impressora funcionando. **Não apagar nada no
 - [ ] **6. Soma errada.** Na tela de volumes, tirar uma unidade de um produto. Aparece o erro
       do tipo **"Copo …: faltam 1"** e o botão **Imprimir** fica bloqueado. Devolver a unidade:
       libera.
-- [ ] **7. Pedido entregue (só leitura).** Para um pedido **já entregue** com caixas salvas, a
-      tela de volumes abre **sem edição** (sem "Pedido solto", "Nova caixa" nem "Apagar caixa") e
-      reimprime as caixas salvas. Entregue **sem** caixas salvas: sai a etiqueta única de antes.
-      Pedido cancelado não imprime. Hoje o botão **Imprimir etiqueta** só aparece para pedido
-      **pronto**; se o botão não estiver disponível para um entregue, este passo não se aplica
-      na tela (fica coberto pelos testes automáticos).
+- [ ] **7. Pedido entregue (só leitura).** No detalhe de um pedido **já entregue**, tocar
+      **Reimprimir etiqueta**. Com caixas salvas, a tela de volumes abre **sem edição** (sem
+      "Pedido solto", "Nova caixa" nem "Apagar caixa") e reimprime as caixas salvas; sem caixas
+      salvas, sai a etiqueta única de antes. Em ambos, a pergunta **"Sim"** só fecha: **não marca**
+      nada no pedido. Pedido cancelado não imprime.
 - [ ] **8. Etiqueta pequena.** Se usarem 60 × 40 mm, testar um volume com muitos itens: o
       conteúdo passa para mais páginas, sem perder item, e o rótulo do volume aparece em todas.
 
@@ -137,7 +143,10 @@ Precisa de um pedido de teste e da impressora funcionando. **Não apagar nada no
 | Já existe um tipo de caixa com esse nome. | Escolher outro nome ou editar o tipo que já existe. |
 | Informe o nome | Falta o nome do tipo de caixa. |
 | (produto): faltam N / sobram N | Na tela de volumes: a soma das caixas está diferente do pedido. Ajustar até zerar; o Imprimir só libera então. |
-| Caixa N está vazia / Avulsos está vazio | Volume sem itens. Apagar a caixa ou colocar produto nela. |
+| Caixa 2/3 · Copo está vazia | Caixa sem itens. Apagar a caixa ou colocar produto nela. |
+| Avulsos (vazio) | Volume de avulsos sem itens: ele some sozinho do resultado e as caixas se renumeram. Pode apagar com **Apagar** ou pôr produto nele. |
+| Sem cadastro: … (foi para os avulsos). | Aviso (amarelo). Algum item do pedido não tem produto com esse nome no cadastro (nome diferente ou produto apagado). Ele foi para os avulsos; conferir o nome em **Produtos** se deveria ir em caixa. |
+| Tipos de caixa indisponíveis | No cadastro de um produto, no lugar do campo **Tipo de caixa**: os tipos não carregaram. O produto ainda pode ser salvo, mas o tipo não muda. Fechar, atualizar a lista e abrir de novo. |
 | Caixa N/M tem X unidades (cabem Y) | Aviso. Não bloqueia: só diz que a caixa passa da capacidade. |
 | Produto salvo, mas o tipo de caixa não foi gravado: … | No cadastro de Produtos, o produto foi salvo mas o tipo falhou. Abrir o produto de novo e escolher o tipo. |
 
@@ -149,8 +158,10 @@ Precisa de um pedido de teste e da impressora funcionando. **Não apagar nada no
   em **Produtos, Tipo de caixa**.
 - **Um produto novo não entra em caixa.** Produto criado depois da migração nasce sem tipo.
   Definir o tipo no cadastro.
-- **Pedido com dois nomes quase iguais.** A conferência soma pelo nome do item, sem diferenciar
-  maiúsculas nem espaços nas pontas. Duas linhas do mesmo produto entram na mesma conta.
+- **Pedido com dois nomes quase iguais.** A conferência compara os nomes **exatamente** (só os
+  espaços nas pontas são ignorados): "Copo X" e "copo x" contam como itens diferentes. Só a
+  ligação do item com o produto (para achar o tipo de caixa) ignora maiúsculas. Duas linhas com
+  o mesmo nome exato entram na mesma conta.
 - **Impressora, tamanho da etiqueta e QR.** Iguais à Fase B (`docs/implantacao-fase-b.md`).
 
 ## 8. Combinar com o cliente (perguntas em aberto)

@@ -42,6 +42,8 @@ class _ProdutosTabState extends State<ProdutosTab> {
   FonteCaixas get _fonteCaixas =>
       _caixas ??= widget.fonteCaixas ?? CaixasService();
   List<TipoCaixa> _tipos = [];
+  // Os tipos não carregaram: o campo de tipo fica indisponível no cadastro.
+  bool _tiposFalhou = false;
 
   List<Produto> _produtos = [];
   List<Produto> _filtered = [];
@@ -76,14 +78,17 @@ class _ProdutosTabState extends State<ProdutosTab> {
       if (!mounted) return;
       data.sort((a, b) => a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));
       var tipos = <TipoCaixa>[];
+      var falhou = false;
       try {
         tipos = await _fonteCaixas.tiposCaixa();
       } catch (_) {
         // Sem os tipos a lista segue funcionando; só não mostra o nome do tipo.
+        falhou = true;
       }
       if (!mounted) return;
       setState(() {
         _tipos = tipos;
+        _tiposFalhou = falhou;
         _produtos = data;
         _filtered = data;
         _loading = false;
@@ -253,6 +258,7 @@ class _ProdutosTabState extends State<ProdutosTab> {
     int? tipoSel      = produto?.tipoCaixaId;
     final tipoOriginal = produto?.tipoCaixaId;
     String? falhaTipo;
+    final tiposIndisponiveis = _tiposFalhou;
     // Tipos ativos; o tipo atual do produto aparece mesmo se estiver inativo.
     final opcoesTipo = _tipos.where((t) => t.ativo || t.id == tipoOriginal).toList();
 
@@ -354,6 +360,16 @@ class _ProdutosTabState extends State<ProdutosTab> {
                         textInputAction: TextInputAction.done,
                       ),
                       const SizedBox(height: MdSpace.md),
+                      if (tiposIndisponiveis)
+                        TextFormField(
+                          enabled: false,
+                          initialValue: 'Tipos de caixa indisponíveis',
+                          decoration: const InputDecoration(
+                            labelText: 'Tipo de caixa',
+                            prefixIcon: Icon(Icons.inventory),
+                          ),
+                        )
+                      else
                       DropdownButtonFormField<int?>(
                         isExpanded: true,
                         initialValue: tipoSel,
@@ -416,7 +432,7 @@ class _ProdutosTabState extends State<ProdutosTab> {
 
                   try {
                     final id = await _gravarProduto(map, produto?.id);
-                    if (tipoSel != tipoOriginal) {
+                    if (!tiposIndisponiveis && tipoSel != tipoOriginal) {
                       try {
                         await _fonteCaixas.definirTipoDoProduto(id, tipoSel);
                       } catch (e) {
@@ -448,6 +464,11 @@ class _ProdutosTabState extends State<ProdutosTab> {
       }
       await _fetchProdutos();
     }
+  }
+
+  Future<void> _abrirTiposCaixa() async {
+    await mostrarDialogoTiposCaixa(context, _fonteCaixas);
+    if (mounted) _fetchProdutos();
   }
 
   // -------------------- UI --------------------
@@ -539,14 +560,14 @@ class _ProdutosTabState extends State<ProdutosTab> {
       acoes: [
         if (isWide)
           OutlinedButton.icon(
-            onPressed: () => mostrarDialogoTiposCaixa(context, _fonteCaixas),
+            onPressed: _abrirTiposCaixa,
             icon: const Icon(Icons.inventory),
             label: const Text('Tipos de caixa'),
           )
         else
           IconButton(
             tooltip: 'Tipos de caixa',
-            onPressed: () => mostrarDialogoTiposCaixa(context, _fonteCaixas),
+            onPressed: _abrirTiposCaixa,
             icon: const Icon(Icons.inventory),
           ),
         if (isWide)

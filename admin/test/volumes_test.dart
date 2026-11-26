@@ -163,8 +163,8 @@ void main() {
     expect(conferirVolumes(itens, v), [
       'Copo X: faltam 3',
       'Pote Y: sobram 2',
-      'Caixa 2 está vazia',
-      'Avulsos está vazio',
+      'Caixa 2/3 · Copo está vazia',
+      'Avulsos 3/3 está vazio',
     ]);
     final ok = sugerirVolumes(itens, {});
     expect(conferirVolumes(itens, ok), isEmpty);

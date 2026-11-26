@@ -455,6 +455,24 @@ class _FolhaDetalheState extends State<_FolhaDetalhe> {
                 ],
               ),
             ],
+            if (ped.status == 'finalizado') ...[
+              const SizedBox(height: MdSpace.md),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Tooltip(
+                  message: ped.codigoQr == null
+                      ? 'Atualize o banco para imprimir etiquetas'
+                      : '',
+                  child: OutlinedButton.icon(
+                    onPressed: (_imprimindo || ped.codigoQr == null)
+                        ? null
+                        : _imprimirEtiqueta,
+                    icon: const Icon(Icons.print_outlined),
+                    label: const Text('Reimprimir etiqueta'),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: MdSpace.lg),
             const Divider(),
 

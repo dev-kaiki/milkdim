@@ -60,12 +60,15 @@ enum _Resposta { sim, denovo, cancelar }
 /// Gera a etiqueta, envia para a impressora e pergunta se saiu certa. Só o
 /// "Sim" chama [marcar], com o `alterado_em` (texto bruto) do pedido de onde
 /// a etiqueta saiu: o servidor recusa se o pedido mudou depois. Devolve true
-/// se marcou.
+/// se marcou. Com [marcarAoConfirmar] falso (reimpressão de pedido já
+/// entregue) o "Sim" só fecha a pergunta e [marcar] nunca é chamado; o
+/// retorno é false.
 Future<bool> imprimirEtiquetaComConfirmacao(
   BuildContext context,
   Pedido p, {
   required Future<void> Function(int id, String? alteradoEmBruto) marcar,
   EnviarParaImpressora? enviar,
+  bool marcarAoConfirmar = true,
 }) async {
   TamanhoEtiqueta tamanho;
   try {
@@ -105,6 +108,7 @@ Future<bool> imprimirEtiquetaComConfirmacao(
     );
     switch (r) {
       case _Resposta.sim:
+        if (!marcarAoConfirmar) return false;
         await marcar(p.id, p.alteradoEmBruto);
         return true;
       case _Resposta.denovo:
@@ -166,7 +170,10 @@ Future<bool> imprimirEtiquetasDoPedido(
   } catch (_) {
     if (!context.mounted) return false;
     showMdSnack(context, _avisoSemCaixas);
-    return imprimirEtiquetaComConfirmacao(context, p, marcar: marcar, enviar: enviar);
+    return imprimirEtiquetaComConfirmacao(context, p,
+        marcar: marcar,
+        enviar: enviar,
+        marcarAoConfirmar: p.status != 'finalizado');
   }
   if (!context.mounted) return false;
   return imprimirEtiquetasComVolumes(
@@ -201,28 +208,45 @@ Future<bool> imprimirEtiquetasComVolumes(
   } catch (_) {
     if (!context.mounted) return false;
     showMdSnack(context, _avisoSemCaixas);
-    return imprimirEtiquetaComConfirmacao(context, p, marcar: marcar, enviar: enviar);
+    return imprimirEtiquetaComConfirmacao(context, p,
+        marcar: marcar, enviar: enviar, marcarAoConfirmar: !finalizado);
   }
   if (!context.mounted) return false;
 
   final salvosValem = salvos != null && volumesValem(p.itens, salvos);
   // Pedido finalizado só reimprime o que foi salvo; sem isso, etiqueta única.
   if (finalizado && !salvosValem) {
-    return imprimirEtiquetaComConfirmacao(context, p, marcar: marcar, enviar: enviar);
+    return imprimirEtiquetaComConfirmacao(context, p,
+        marcar: marcar, enviar: enviar, marcarAoConfirmar: false);
   }
 
-  final sugestao = sugerirVolumes(p.itens, tiposPorNomeDeProduto(produtos, tipos));
+  final porProduto = tiposPorNomeDeProduto(produtos, tipos);
+  final sugestao = sugerirVolumes(p.itens, porProduto);
   final inicial = salvosValem ? salvos : sugestao;
-  final aviso = (salvos != null && !salvosValem)
-      ? 'O pedido mudou depois que as caixas foram montadas.'
-      : null;
+  final avisos = <String>[
+    if (salvos != null && !salvosValem)
+      'O pedido mudou depois que as caixas foram montadas.',
+    // Item sem produto cadastrado vai para os avulsos; a tela avisa.
+    if (!salvosValem) ...() {
+      final vistos = <String>{};
+      final nomes = <String>[];
+      for (final i in p.itens) {
+        final k = chaveNome(i.nome);
+        if (!porProduto.containsKey(k) && vistos.add(k)) nomes.add(i.nome.trim());
+      }
+      return [
+        if (nomes.isNotEmpty)
+          'Sem cadastro: ${nomes.join(', ')} (foi para os avulsos).'
+      ];
+    }(),
+  ];
 
   final volumes = await mostrarTelaVolumes(
     context,
     pedido: p,
     inicial: inicial,
     tiposPorNome: {for (final t in tipos) t.nome: t},
-    aviso: aviso,
+    avisos: avisos,
     somenteLeitura: finalizado,
     sugestao: sugestao,
   );
@@ -284,6 +308,8 @@ Future<bool> imprimirEtiquetasComVolumes(
     );
     switch (r) {
       case _Resposta.sim:
+        // Pedido entregue só reimprime: nada a marcar.
+        if (finalizado) return false;
         await marcar(p.id, p.alteradoEmBruto);
         return true;
       case _Resposta.denovo:
@@ -319,7 +345,7 @@ Future<int?> _escolherVolume(BuildContext context, VolumesPedido v) {
         for (var i = 0; i < v.volumes.length; i++)
           SimpleDialogOption(
             onPressed: () => Navigator.of(ctx).pop(i),
-            child: Text('Volume ${i + 1}/${v.volumes.length} · ${rotuloVolume(v, i)}'),
+            child: Text(rotuloVolume(v, i)),
           ),
       ],
     ),

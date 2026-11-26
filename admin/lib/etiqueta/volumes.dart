@@ -271,7 +271,7 @@ List<String> conferirVolumes(List<PedidoItem> itens, VolumesPedido v) {
   for (var i = 0; i < v.volumes.length; i++) {
     final vol = v.volumes[i];
     if (vol.itens.isEmpty) {
-      msgs.add(vol.caixa ? 'Caixa ${i + 1} está vazia' : 'Avulsos está vazio');
+      msgs.add('${rotuloVolume(v, i)} está vazi${vol.caixa ? 'a' : 'o'}');
     }
   }
   return msgs;

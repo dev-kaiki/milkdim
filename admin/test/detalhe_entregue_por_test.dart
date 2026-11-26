@@ -166,6 +166,77 @@ void main() {
       expect(marcadas, [7]);
     });
 
+    testWidgets(
+        'finalizado: Reimprimir etiqueta abre somente leitura e o Sim não marca',
+        (t) async {
+      t.view.physicalSize = const Size(1000, 2400);
+      t.view.devicePixelRatio = 1;
+      addTearDown(t.view.reset);
+      final p = _p(status: 'finalizado');
+      final fonte = FonteCaixasFalsa(
+        tipos: const [
+          TipoCaixa(id: 1, nome: 'Caixa teste', capacidade: 1, misturaSabores: true, ativo: true)
+        ],
+        salvos: const VolumesPedido(solto: false, volumes: [
+          Volume(caixa: true, tipoNome: 'Caixa teste', itens: [
+            ItemVolume(nome: 'Pudim', quantidade: 1),
+          ]),
+        ]),
+        log: [],
+      );
+      final marcadas = <int>[], envios = <Uint8List>[];
+      await t.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (ctx) => Scaffold(
+            body: TextButton(
+              onPressed: () => abrirDetalhesPedido(
+                ctx,
+                p,
+                buscar: (id) async => (raw: <String, dynamic>{'id': id}, parsed: p),
+                buscarNomes: () async => const {},
+                fonteCaixas: fonte,
+                carregarProdutos: () async => const [
+                  Produto(id: 1, nome: 'Pudim', preco: 10, ativo: true, tipoCaixaId: 1)
+                ],
+                marcarEtiqueta: (id, bruto) async => marcadas.add(id),
+                enviarParaImpressora: (Uint8List pdf, TamanhoEtiqueta tam) async {
+                  envios.add(pdf);
+                  return true;
+                },
+              ),
+              child: const Text('abrir'),
+            ),
+          ),
+        ),
+      ));
+      await t.tap(find.text('abrir'));
+      await t.pumpAndSettle();
+      expect(find.text('Imprimir etiqueta'), findsNothing);
+      await t.tap(find.text('Reimprimir etiqueta'));
+      await t.pumpAndSettle();
+      expect(find.text('Volumes do pedido 42'), findsOneWidget);
+      expect(find.text('Nova caixa'), findsNothing);
+      await t.tap(find.text('Imprimir'));
+      for (var i = 0; i < 200 && envios.isEmpty; i++) {
+        await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+        await t.pump(const Duration(milliseconds: 100));
+      }
+      await t.pumpAndSettle();
+      expect(envios.length, 1);
+      await t.tap(find.text('Sim'));
+      await t.pumpAndSettle();
+      expect(marcadas, isEmpty);
+      expect(fonte.log, isEmpty);
+      expect(find.text('As etiquetas saíram certas?'), findsNothing);
+    });
+
+    testWidgets('finalizado sem codigo_qr: Reimprimir etiqueta desabilitado', (t) async {
+      await abrir(t, _p(status: 'finalizado', codigoQr: null));
+      final b = t.widget<OutlinedButton>(
+          find.widgetWithText(OutlinedButton, 'Reimprimir etiqueta'));
+      expect(b.onPressed, isNull);
+    });
+
     testWidgets('sem codigo_qr o botao fica desabilitado', (t) async {
       await abrir(t, _p(status: 'pronto', codigoQr: null));
       final b = t.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Imprimir etiqueta'));

@@ -184,6 +184,15 @@ double _alturaItens(TamanhoEtiqueta t, {bool comVolume = false}) {
   return util - topo - total - base;
 }
 
+/// Rodapé das etiquetas que passam de uma página: "Folha 1/2" quando é um
+/// volume (para não confundir com a contagem de caixas, "Caixa 1/3"), "1/2"
+/// na etiqueta única. Null quando cabe numa página só.
+String? rodapeDaPagina(
+    {required bool comVolume, required int pagina, required int total}) {
+  if (total <= 1) return null;
+  return comVolume ? 'Folha $pagina/$total' : '$pagina/$total';
+}
+
 /// Altura da linha do rótulo do volume (mesma fonte do nome do cliente).
 double _alturaVolume(_Medidas m) => m.fonteCliente * _alturaTexto;
 
@@ -459,8 +468,8 @@ Future<Uint8List> gerarEtiquetasPdf(
               _fonteItemMin,
               math.min(
                   m.fonteItemMax, alturaItens / (idx.length * _alturaLinha)));
-      final rodapePagina =
-          paginas.length > 1 ? '${p + 1}/${paginas.length}' : null;
+      final rodapePagina = rodapeDaPagina(
+          comVolume: comVolume, pagina: p + 1, total: paginas.length);
 
       final lista = pw.SizedBox(
         height: alturaItens,

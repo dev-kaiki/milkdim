@@ -231,7 +231,7 @@ void main() {
     expect(h.resultado, isTrue);
   });
 
-  testWidgets('"Imprimir de novo" com Volume 2/3 envia só esse volume e pergunta de novo',
+  testWidgets('"Imprimir de novo" com Caixa 2/3 envia só esse volume e pergunta de novo',
       (tester) async {
     final h = await _abrir(tester, _pedido(), _fonte0());
     await tester.tap(find.text('Imprimir'));
@@ -239,7 +239,7 @@ void main() {
     await tester.tap(find.text('Imprimir de novo'));
     await tester.pumpAndSettle();
     expect(find.text('Todas'), findsOneWidget);
-    await tester.tap(find.textContaining('Volume 2/3'));
+    await tester.tap(find.text('Caixa 2/3 · Copo'));
     await _esperar(tester, () => h.envios.length >= 2);
     expect(h.envios.length, 2);
     expect(_paginas(h.envios[1]), 1);
@@ -352,7 +352,7 @@ void main() {
     await tester.tap(find.text('Nova caixa'));
     await tester.pumpAndSettle();
     expect(find.text('Caixa 2/3 · Copo'), findsOneWidget);
-    expect(find.textContaining('Caixa 2 está vazia'), findsOneWidget);
+    expect(find.textContaining('Caixa 2/3 · Copo está vazia'), findsOneWidget);
     await tester.tap(find.text('Adicionar produto').at(1));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Copo X').last);
@@ -361,6 +361,141 @@ void main() {
     await tester.pump();
     expect(find.textContaining('faltam'), findsNothing);
     expect(_imprimir(tester).onPressed, isNotNull);
+  });
+
+  testWidgets(
+      'avulsos que ficam sem linhas somem: mover os 10 para uma caixa nova imprime 3 caixas',
+      (tester) async {
+    final fonte = _fonte0();
+    final h = await _abrir(tester, _pedido(), fonte);
+    await tester.tap(find.text('Nova caixa'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Adicionar produto').at(2));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Copo X').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('qtd-2-Copo X')), '10');
+    await tester.pump();
+    await tester.tap(find.byTooltip('Remover Copo X').last);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('está vazi'), findsNothing);
+    expect(find.text('Caixa 1/3 · Copo'), findsOneWidget);
+    expect(find.text('Caixa 2/3 · Copo'), findsOneWidget);
+    expect(find.text('Caixa 3/3 · Copo'), findsOneWidget);
+    expect(_imprimir(tester).onPressed, isNotNull);
+    await tester.tap(find.text('Imprimir'));
+    await _esperar(tester, () => h.envios.isNotEmpty);
+    expect(fonte.gravados.single.volumes.length, 3);
+    expect(fonte.gravados.single.volumes.every((v) => v.caixa), isTrue);
+    expect(_paginas(h.envios.single), 3);
+  });
+
+  testWidgets('"Apagar" no avulsos remove o volume avulso', (tester) async {
+    await _abrir(tester, _pedido(), _fonte0());
+    expect(find.text('Avulsos'), findsNothing);
+    await tester.tap(find.text('Apagar'));
+    await tester.pumpAndSettle();
+    expect(find.text('Avulsos 3/3'), findsNothing);
+    expect(find.text('Caixa 2/2 · Copo'), findsOneWidget);
+    expect(find.textContaining('faltam 10'), findsOneWidget);
+    expect(_imprimir(tester).onPressed, isNull);
+    // Sem avulsos, o botão "Avulsos" volta.
+    expect(find.text('Avulsos'), findsOneWidget);
+  });
+
+  testWidgets('botão "Avulsos" cria o volume quando não existe e tira item da caixa',
+      (tester) async {
+    final fonte = FonteCaixasFalsa(
+        tipos: const [_copo], salvos: _caixas([25, 25]), log: []);
+    final h = await _abrir(tester, _pedido(), fonte);
+    await tester.tap(find.text('Avulsos'));
+    await tester.pumpAndSettle();
+    expect(find.text('Avulsos'), findsNothing); // botão some: já existe
+    // Vazio ainda não conta: o pedido segue batendo e Imprimir segue ativo.
+    expect(find.text('Avulsos (vazio)'), findsOneWidget);
+    expect(_imprimir(tester).onPressed, isNotNull);
+    await tester.tap(find.text('Adicionar produto').at(2));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Copo X').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('qtd-2-Copo X')), '5');
+    await tester.enterText(find.byKey(const ValueKey('qtd-1-Copo X')), '20');
+    await tester.pump();
+    expect(find.text('Avulsos 3/3'), findsOneWidget);
+    expect(_imprimir(tester).onPressed, isNotNull);
+    await tester.tap(find.text('Imprimir'));
+    await _esperar(tester, () => h.envios.isNotEmpty);
+    final v = fonte.gravados.single.volumes;
+    expect(v.length, 3);
+    expect(v.last.caixa, isFalse);
+  });
+
+  Pedido pedidoComItens(List<PedidoItem> itens) => Pedido(
+        id: 7,
+        numero: '7',
+        status: 'pronto',
+        total: 10,
+        alteradoEmBruto: '2026-11-24T10:00:00+00:00',
+        codigoQr: '11111111-1111-1111-1111-111111111111',
+        itens: itens,
+      );
+
+  testWidgets('item sem produto cadastrado: banner "Sem cadastro" e vai para os avulsos',
+      (tester) async {
+    final p = pedidoComItens([
+      const PedidoItem(nome: 'Copo X', preco: 1, quantidade: 20),
+      const PedidoItem(nome: ' Zzz Novo ', preco: 1, quantidade: 2),
+      const PedidoItem(nome: 'zzz novo', preco: 1, quantidade: 1),
+      const PedidoItem(nome: 'Outro Y', preco: 1, quantidade: 1),
+    ]);
+    await _abrir(tester, p, _fonte0());
+    final aviso = find.text('Sem cadastro: Zzz Novo, Outro Y (foi para os avulsos).');
+    expect(aviso, findsOneWidget);
+    final banner =
+        tester.widget<MdBanner>(find.ancestor(of: aviso, matching: find.byType(MdBanner)));
+    expect(banner.tipo, MdTipo.atencao);
+    expect(find.text('Avulsos 2/2'), findsOneWidget);
+  });
+
+  testWidgets('produto cadastrado sem caixa não é "Sem cadastro"', (tester) async {
+    final p = pedidoComItens([const PedidoItem(nome: 'Copo X', preco: 1, quantidade: 3)]);
+    await _abrir(tester, p, _fonte0());
+    expect(find.textContaining('Sem cadastro'), findsNothing);
+  });
+
+  testWidgets('"pedido mudou" e "Sem cadastro" aparecem juntos', (tester) async {
+    final p = pedidoComItens([
+      const PedidoItem(nome: 'Copo X', preco: 1, quantidade: 20),
+      const PedidoItem(nome: 'Zzz', preco: 1, quantidade: 1),
+    ]);
+    await _abrir(tester, p,
+        FonteCaixasFalsa(tipos: const [_copo], salvos: _caixas([10, 10])));
+    expect(find.text('O pedido mudou depois que as caixas foram montadas.'),
+        findsOneWidget);
+    expect(find.text('Sem cadastro: Zzz (foi para os avulsos).'), findsOneWidget);
+  });
+
+  testWidgets('finalizado: o Sim não chama marcar (volumes salvos)', (tester) async {
+    final h = await _abrir(
+        tester,
+        _pedido(status: 'finalizado'),
+        FonteCaixasFalsa(tipos: const [_copo], salvos: _caixas([25, 25])));
+    await tester.tap(find.text('Imprimir'));
+    await _esperar(tester, () => h.envios.isNotEmpty);
+    await tester.tap(find.text('Sim'));
+    await tester.pumpAndSettle();
+    expect(h.marcadas, isEmpty);
+    expect(find.text('As etiquetas saíram certas?'), findsNothing);
+  });
+
+  testWidgets('finalizado sem volumes salvos: o Sim da etiqueta única não marca',
+      (tester) async {
+    final h = await _abrir(tester, _pedido(status: 'finalizado'), _fonte0());
+    await _esperar(tester, () => h.envios.isNotEmpty);
+    await tester.tap(find.text('Sim'));
+    await tester.pumpAndSettle();
+    expect(h.marcadas, isEmpty);
+    expect(h.resultado, isFalse);
   });
 
   testWidgets('em 360 px a tela não estoura', (tester) async {

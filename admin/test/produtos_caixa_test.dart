@@ -13,14 +13,29 @@ class _Fonte implements FonteCaixas {
   final criados = <(String, int, bool)>[];
   final alterados = <TipoCaixa>[];
   Object? erroCriar;
-  _Fonte(this.tipos);
+  bool falhaTipos;
+  int leituras = 0;
+  _Fonte(this.tipos, {this.falhaTipos = false});
 
   @override
-  Future<List<TipoCaixa>> tiposCaixa() async => tipos;
+  Future<List<TipoCaixa>> tiposCaixa() async {
+    leituras++;
+    if (falhaTipos) throw Exception('sem rede');
+    return tipos;
+  }
   @override
   Future<void> criarTipo(String nome, int capacidade, bool mistura) async {
     if (erroCriar != null) throw erroCriar!;
     criados.add((nome, capacidade, mistura));
+    tipos = [
+      ...tipos,
+      TipoCaixa(
+          id: 50,
+          nome: nome,
+          capacidade: capacidade,
+          misturaSabores: mistura,
+          ativo: true)
+    ];
   }
 
   @override
@@ -177,6 +192,48 @@ void main() {
     await tester.tap(find.text('Salvar'));
     await tester.pumpAndSettle();
     expect(find.text('Já existe um tipo de caixa com esse nome.'), findsOneWidget);
+  });
+
+  testWidgets('fechar o diálogo de tipos recarrega: tipo novo aparece no cadastro',
+      (tester) async {
+    final f = _Fonte([_copo]);
+    await _abrir(tester, f, [_p(1, 'A')]);
+    final antes = f.leituras;
+    await tester.tap(find.text('Tipos de caixa'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Novo tipo'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextFormField, 'Nome *'), 'Grande');
+    await tester.enterText(
+        find.widgetWithText(TextFormField, 'Capacidade (unidades) *'), '12');
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fechar'));
+    await tester.pumpAndSettle();
+    expect(f.leituras, greaterThan(antes));
+    await tester.tap(find.text('A'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<int?>));
+    await tester.pumpAndSettle();
+    expect(find.text('Grande (12)'), findsOneWidget);
+  });
+
+  testWidgets('tipos indisponíveis: campo desabilitado e salvar não mexe no tipo',
+      (tester) async {
+    final f = _Fonte([_copo], falhaTipos: true);
+    final gravados = <Map<String, dynamic>>[];
+    await _abrir(tester, f, [_p(1, 'Copo leite', tipo: 7)], gravar: (m, id) async {
+      gravados.add(m);
+      return id ?? 99;
+    });
+    await tester.tap(find.text('Copo leite'));
+    await tester.pumpAndSettle();
+    expect(find.text('Tipos de caixa indisponíveis'), findsOneWidget);
+    expect(find.byType(DropdownButtonFormField<int?>), findsNothing);
+    await tester.tap(find.text('Salvar'));
+    await tester.pumpAndSettle();
+    expect(gravados.length, 1);
+    expect(f.defs, isEmpty);
   });
 
   testWidgets('360 px: lista e diálogos sem estourar', (tester) async {

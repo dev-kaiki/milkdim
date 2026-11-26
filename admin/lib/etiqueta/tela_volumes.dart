@@ -12,7 +12,7 @@ import 'volumes.dart';
 ///
 /// - [tiposPorNome]: tipos de caixa por [TipoCaixa.nome]; só os ativos podem
 ///   ser escolhidos em "Nova caixa".
-/// - [aviso]: texto de aviso no topo (ex.: pedido mudou depois das caixas).
+/// - [avisos]: textos de aviso no topo (ex.: pedido mudou depois das caixas).
 /// - [somenteLeitura]: só "Imprimir" e "Cancelar".
 /// - [sugestao]: volumes para voltar quando se desliga "Pedido solto" e a
 ///   tela abriu em pedido solto.
@@ -21,7 +21,7 @@ Future<VolumesPedido?> mostrarTelaVolumes(
   required Pedido pedido,
   required VolumesPedido inicial,
   required Map<String, TipoCaixa> tiposPorNome,
-  String? aviso,
+  List<String> avisos = const [],
   bool somenteLeitura = false,
   VolumesPedido? sugestao,
 }) {
@@ -32,7 +32,7 @@ Future<VolumesPedido?> mostrarTelaVolumes(
         pedido: pedido,
         inicial: inicial,
         tiposPorNome: tiposPorNome,
-        aviso: aviso,
+        avisos: avisos,
         somenteLeitura: somenteLeitura,
         sugestao: sugestao,
       ),
@@ -70,7 +70,7 @@ class TelaVolumes extends StatefulWidget {
   final Pedido pedido;
   final VolumesPedido inicial;
   final Map<String, TipoCaixa> tiposPorNome;
-  final String? aviso;
+  final List<String> avisos;
   final bool somenteLeitura;
   final VolumesPedido? sugestao;
 
@@ -79,7 +79,7 @@ class TelaVolumes extends StatefulWidget {
     required this.pedido,
     required this.inicial,
     required this.tiposPorNome,
-    this.aviso,
+    this.avisos = const [],
     this.somenteLeitura = false,
     this.sugestao,
   });
@@ -116,9 +116,16 @@ class _TelaVolumesState extends State<TelaVolumes> {
     super.dispose();
   }
 
+  /// Avulsos sem nenhuma linha não vira volume: some do resultado e a
+  /// numeração das caixas se recalcula.
+  bool _fora(_Vol v) => !_solto && !v.caixa && v.linhas.isEmpty;
+
   VolumesPedido get _atual => VolumesPedido(
         solto: _solto,
-        volumes: [for (final v in _vols) v.paraVolume()],
+        volumes: [
+          for (final v in _vols)
+            if (!_fora(v)) v.paraVolume()
+        ],
       );
 
   /// Nomes do pedido, um por produto (trim), na ordem do pedido.
@@ -183,7 +190,13 @@ class _TelaVolumesState extends State<TelaVolumes> {
     });
   }
 
-  void _apagarCaixa(int i) {
+  void _novoAvulso() {
+    setState(() {
+      if (!_vols.any((v) => !v.caixa)) _vols.add(_Vol(false, null, []));
+    });
+  }
+
+  void _apagarVolume(int i) {
     setState(() {
       final v = _vols.removeAt(i);
       _descartar([v]);
@@ -231,12 +244,19 @@ class _TelaVolumesState extends State<TelaVolumes> {
   Widget build(BuildContext context) {
     final atual = _atual;
     final conferencia = conferirVolumes(widget.pedido.itens, atual);
+    // Posição de cada cartão em [atual]; null = avulsos vazio (fora).
+    final pos = <int?>[];
+    var n = 0;
+    for (final v in _vols) {
+      pos.add(_fora(v) ? null : n++);
+    }
     // O servidor recusa quantidade <= 0: bloqueia aqui também.
     final invalidas = [
       for (var i = 0; i < _vols.length; i++)
-        for (final l in _vols[i].linhas)
-          if (l.quantidade <= 0)
-            '${rotuloVolume(atual, i)}: ${l.nome.trim()} precisa de quantidade maior que zero',
+        if (pos[i] != null)
+          for (final l in _vols[i].linhas)
+            if (l.quantidade <= 0)
+              '${rotuloVolume(atual, pos[i]!)}: ${l.nome.trim()} precisa de quantidade maior que zero',
     ];
     final erros = [...conferencia, ...invalidas];
     final avisos = avisosCapacidade(atual, widget.tiposPorNome);
@@ -255,8 +275,8 @@ class _TelaVolumesState extends State<TelaVolumes> {
               child: ListView(
                 padding: const EdgeInsets.all(MdSpace.lg),
                 children: [
-                  if (widget.aviso != null) ...[
-                    MdBanner(tipo: MdTipo.atencao, texto: widget.aviso!),
+                  for (final a in widget.avisos) ...[
+                    MdBanner(tipo: MdTipo.atencao, texto: a),
                     const SizedBox(height: MdSpace.md),
                   ],
                   for (final e in erros) ...[
@@ -287,12 +307,18 @@ class _TelaVolumesState extends State<TelaVolumes> {
                               alignment: WrapAlignment.spaceBetween,
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
-                                Text(rotuloVolume(atual, i), style: tt.titleMedium),
-                                if (editavel && _vols[i].caixa)
+                                Text(
+                                    pos[i] == null
+                                        ? 'Avulsos (vazio)'
+                                        : rotuloVolume(atual, pos[i]!),
+                                    style: tt.titleMedium),
+                                if (editavel)
                                   TextButton.icon(
-                                    onPressed: () => _apagarCaixa(i),
+                                    onPressed: () => _apagarVolume(i),
                                     icon: const Icon(Icons.delete_outline),
-                                    label: const Text('Apagar caixa'),
+                                    label: Text(_vols[i].caixa
+                                        ? 'Apagar caixa'
+                                        : 'Apagar'),
                                   ),
                               ],
                             ),
@@ -313,13 +339,22 @@ class _TelaVolumesState extends State<TelaVolumes> {
                       ),
                     ),
                   if (editavel)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: OutlinedButton.icon(
-                        onPressed: _tiposAtivos.isEmpty ? null : _novaCaixa,
-                        icon: const Icon(Icons.add_box_outlined),
-                        label: const Text('Nova caixa'),
-                      ),
+                    Wrap(
+                      spacing: MdSpace.sm,
+                      runSpacing: MdSpace.sm,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _tiposAtivos.isEmpty ? null : _novaCaixa,
+                          icon: const Icon(Icons.add_box_outlined),
+                          label: const Text('Nova caixa'),
+                        ),
+                        if (!_vols.any((v) => !v.caixa))
+                          OutlinedButton.icon(
+                            onPressed: _novoAvulso,
+                            icon: const Icon(Icons.add),
+                            label: const Text('Avulsos'),
+                          ),
+                      ],
                     ),
                 ],
               ),

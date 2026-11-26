@@ -44,8 +44,10 @@
 -- acesso nenhum.
 --
 -- Dados iniciais: os 3 tipos, so se ainda nao existirem, e a ligacao dos
--- produtos pelo nome, so nos produtos que ainda estao sem tipo (uma nova
--- rodada nao desfaz escolha feita a mao):
+-- produtos pelo nome, so nos produtos que ainda estao sem tipo. Atencao: uma
+-- nova rodada religa os produtos cujo tipo esta vazio (inclusive os que
+-- alguem deixou de proposito em "Sem caixa") quando o nome bate com os
+-- padroes abaixo; so escolhas com tipo definido sao preservadas:
 --   nome que comeca com "pote" e contem "160g"  -> Pote
 --   nome que comeca com "copo"                  -> Copo
 --   nome que comeca com "550g"                  -> Medio
