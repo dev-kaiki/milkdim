@@ -14,6 +14,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../etiqueta/estado_etiqueta.dart';
 import '../etiqueta/imprimir_etiqueta.dart';
 import '../models/pedido.dart';
+import '../models/produto.dart';
+import '../services/caixas_service.dart';
 import '../services/supabase_service.dart';
 
 /// Linha crua do Supabase (todas as colunas) e o `Pedido` dela.
@@ -132,6 +134,8 @@ void abrirDetalhesPedido(
   Future<Map<String, String>> Function()? buscarNomes,
   Future<void> Function(int id, String? alteradoEmBruto)? marcarEtiqueta,
   EnviarParaImpressora? enviarParaImpressora,
+  FonteCaixas? fonteCaixas,
+  Future<List<Produto>> Function()? carregarProdutos,
 }) {
   // Uma busca por folha aberta, só quando a aba não mandou os nomes.
   final Future<Map<String, String>> nomes = nomesPorCodigo.isNotEmpty
@@ -192,6 +196,8 @@ void abrirDetalhesPedido(
                 nomesPorCodigo: nomesDaFolha,
                 marcarEtiqueta: marcarEtiqueta,
                 enviarParaImpressora: enviarParaImpressora,
+                fonteCaixas: fonteCaixas,
+                carregarProdutos: carregarProdutos,
                 recarregar: carregar,
               );
             },
@@ -211,6 +217,8 @@ class _FolhaDetalhe extends StatefulWidget {
     required this.nomesPorCodigo,
     required this.marcarEtiqueta,
     required this.enviarParaImpressora,
+    required this.fonteCaixas,
+    required this.carregarProdutos,
     required this.recarregar,
   });
 
@@ -223,6 +231,8 @@ class _FolhaDetalhe extends StatefulWidget {
   final Map<String, String> nomesPorCodigo;
   final Future<void> Function(int id, String? alteradoEmBruto)? marcarEtiqueta;
   final EnviarParaImpressora? enviarParaImpressora;
+  final FonteCaixas? fonteCaixas;
+  final Future<List<Produto>> Function()? carregarProdutos;
 
   /// Busca o detalhe de novo (para mostrar a etiqueta recém-impressa).
   final Future<DetalheDoPedido?> Function() recarregar;
@@ -243,12 +253,14 @@ class _FolhaDetalheState extends State<_FolhaDetalhe> {
     if (_imprimindo) return;
     setState(() => _imprimindo = true);
     try {
-      await imprimirEtiquetaComConfirmacao(
+      await imprimirEtiquetasDoPedido(
         context,
         ped,
         marcar: widget.marcarEtiqueta ??
             (id, bruto) => SupabaseService().marcarEtiqueta(id, alteradoEmBruto: bruto),
         enviar: widget.enviarParaImpressora,
+        fonte: widget.fonteCaixas,
+        carregarProdutos: widget.carregarProdutos,
       );
     } catch (e) {
       if (mounted) {
@@ -441,6 +453,24 @@ class _FolhaDetalheState extends State<_FolhaDetalhe> {
                     ),
                   ),
                 ],
+              ),
+            ],
+            if (ped.status == 'finalizado') ...[
+              const SizedBox(height: MdSpace.md),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Tooltip(
+                  message: ped.codigoQr == null
+                      ? 'Atualize o banco para imprimir etiquetas'
+                      : '',
+                  child: OutlinedButton.icon(
+                    onPressed: (_imprimindo || ped.codigoQr == null)
+                        ? null
+                        : _imprimirEtiqueta,
+                    icon: const Icon(Icons.print_outlined),
+                    label: const Text('Reimprimir etiqueta'),
+                  ),
+                ),
               ),
             ],
             const SizedBox(height: MdSpace.lg),

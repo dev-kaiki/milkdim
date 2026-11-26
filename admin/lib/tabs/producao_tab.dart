@@ -9,6 +9,8 @@ import '../etiqueta/estado_etiqueta.dart';
 import '../etiqueta/imprimir_etiqueta.dart';
 import '../etiqueta/tamanho_etiqueta.dart';
 import '../models/pedido.dart';
+import '../models/produto.dart';
+import '../services/caixas_service.dart';
 import '../models/producao.dart';
 import '../services/supabase_service.dart';
 import '../widgets/detalhe_pedido.dart';
@@ -46,6 +48,10 @@ class ProducaoTab extends StatefulWidget {
   final Future<void> Function(int id, String? alteradoEmBruto)? marcarEtiqueta;
   @visibleForTesting
   final EnviarParaImpressora? enviarParaImpressora;
+  @visibleForTesting
+  final FonteCaixas? fonteCaixas;
+  @visibleForTesting
+  final Future<List<Produto>> Function()? carregarProdutos;
 
   /// Busca do detalhe ao tocar no pedido; nulo usa [buscarDetalhePedido].
   @visibleForTesting
@@ -61,6 +67,8 @@ class ProducaoTab extends StatefulWidget {
     this.cancelar,
     this.marcarEtiqueta,
     this.enviarParaImpressora,
+    this.fonteCaixas,
+    this.carregarProdutos,
     this.buscarDetalhe,
     this.intervalo = const Duration(seconds: 30),
   });
@@ -201,12 +209,14 @@ class _ProducaoTabState extends State<ProducaoTab> {
     if (_ocupados.contains(p.id)) return;
     setState(() => _ocupados.add(p.id));
     try {
-      await imprimirEtiquetaComConfirmacao(
+      await imprimirEtiquetasDoPedido(
         context,
         p,
         marcar: widget.marcarEtiqueta ??
             (id, bruto) => _service.marcarEtiqueta(id, alteradoEmBruto: bruto),
         enviar: widget.enviarParaImpressora,
+        fonte: widget.fonteCaixas,
+        carregarProdutos: widget.carregarProdutos,
       );
     } catch (e) {
       if (mounted) {
@@ -418,7 +428,9 @@ class _ProducaoTabState extends State<ProducaoTab> {
       onTap: () => abrirDetalhesPedido(context, p,
           buscar: widget.buscarDetalhe,
           marcarEtiqueta: widget.marcarEtiqueta,
-          enviarParaImpressora: widget.enviarParaImpressora),
+          enviarParaImpressora: widget.enviarParaImpressora,
+          fonteCaixas: widget.fonteCaixas,
+          carregarProdutos: widget.carregarProdutos),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
