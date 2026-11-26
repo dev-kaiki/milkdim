@@ -3,9 +3,13 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:milkdim_admin/etiqueta/tamanho_etiqueta.dart';
+import 'package:milkdim_admin/etiqueta/volumes.dart';
 import 'package:milkdim_admin/models/pedido.dart';
+import 'package:milkdim_admin/models/produto.dart';
 import 'package:milkdim_admin/tabs/producao_tab.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
+
+import 'fonte_caixas_falsa.dart';
 
 Pedido _pronto({
   int id = 7,
@@ -71,6 +75,7 @@ Future<void> _esperar(WidgetTester tester, bool Function() ok) async {
 }
 
 void main() {
+  _fluxoPorCaixa();
   testWidgets('pronto sem etiqueta mostra "Sem etiqueta" e o botão Imprimir etiqueta',
       (tester) async {
     await _abrir(tester, () => [_pronto()], marcadas: [], envios: []);
@@ -224,5 +229,44 @@ void main() {
     expect(p.etiquetaImpressaEm, DateTime.utc(2026, 11, 24, 14, 5));
     expect(p.etiquetaImpressaPor, 'admin');
     expect(p.etiquetaDesatualizada, isTrue);
+  });
+}
+
+void _fluxoPorCaixa() {
+  testWidgets('com caixas disponíveis o botão abre a tela de volumes e o Sim marca',
+      (tester) async {
+    tester.view.physicalSize = const Size(1000, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final marcadas = <int>[], envios = <int>[];
+    final fonte = FonteCaixasFalsa(tipos: const [
+      TipoCaixa(id: 1, nome: 'Copo', capacidade: 2, misturaSabores: true, ativo: true)
+    ]);
+    await tester.pumpWidget(_app(ProducaoTab(
+      carregar: () async => [_pronto()],
+      fonteCaixas: fonte,
+      carregarProdutos: () async => const [
+        Produto(id: 1, nome: 'Pudim tradicional', preco: 1, ativo: true, tipoCaixaId: 1)
+      ],
+      marcarEtiqueta: (id, bruto) async => marcadas.add(id),
+      enviarParaImpressora: (Uint8List pdf, TamanhoEtiqueta t) async {
+        envios.add(pdf.length);
+        return true;
+      },
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Imprimir etiqueta'));
+    await tester.pumpAndSettle();
+    expect(find.text('Volumes do pedido 7'), findsOneWidget);
+    expect(find.text('Caixa 1/2 · Copo'), findsOneWidget);
+    expect(find.text('Avulsos 2/2'), findsOneWidget);
+    await tester.tap(find.text('Imprimir'));
+    await _esperar(tester, () => envios.isNotEmpty);
+    expect(fonte.gravados.length, 1);
+    expect(find.text('As etiquetas saíram certas?'), findsOneWidget);
+    await tester.tap(find.text('Sim'));
+    await tester.pumpAndSettle();
+    expect(envios.length, 1);
+    expect(marcadas, [7]);
   });
 }
