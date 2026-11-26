@@ -10,6 +10,7 @@ import 'package:pdf/widgets.dart' as pw;
 
 import 'qr_arredondado.dart';
 import 'tamanho_etiqueta.dart';
+import 'volumes.dart';
 
 const _logoAsset = 'packages/milkdim_ui/assets/logo.jpg';
 
@@ -26,6 +27,7 @@ class EtiquetaDados {
     this.endereco = '',
     this.cep = '',
     this.telefone = '',
+    this.volume = '',
   });
 
   final int numero;
@@ -33,6 +35,7 @@ class EtiquetaDados {
   /// Nome fantasia ou, na falta, o nome do cliente.
   final String clienteTitulo;
   final String cidade;
+
   /// Nome do vendedor do pedido (o código, se o pedido não tem o nome).
   final String vendedor;
   final List<({String nome, int quantidade})> itens;
@@ -41,7 +44,34 @@ class EtiquetaDados {
 
   /// Contato para a entrega; vazio quando o cliente não tem.
   final String endereco, cep, telefone;
+
+  /// Rótulo do volume ("Caixa 1/3 · Copo"); vazio quando a etiqueta é única.
+  /// Sai em destaque logo abaixo de "Pedido N", em todas as páginas.
+  final String volume;
 }
+
+/// Uma etiqueta por volume: copia [base] (cliente, endereço, vendedor, QR),
+/// troca os itens pelos do volume e preenche o rótulo.
+List<EtiquetaDados> etiquetasDosVolumes(EtiquetaDados base, VolumesPedido v) =>
+    [
+      for (var i = 0; i < v.volumes.length; i++)
+        EtiquetaDados(
+          numero: base.numero,
+          clienteTitulo: base.clienteTitulo,
+          cidade: base.cidade,
+          vendedor: base.vendedor,
+          itens: [
+            for (final it in v.volumes[i].itens)
+              (nome: it.nome, quantidade: it.quantidade)
+          ],
+          prontoEm: base.prontoEm,
+          codigoQr: base.codigoQr,
+          endereco: base.endereco,
+          cep: base.cep,
+          telefone: base.telefone,
+          volume: rotuloVolume(v, i),
+        ),
+    ];
 
 /// Linhas do bloco "Entregar em", ao lado do QR (só nas etiquetas de 100 mm).
 /// Linha sem dado não aparece; sem endereço, CEP nem telefone, o bloco some.
@@ -63,7 +93,9 @@ List<String> linhasEntrega(EtiquetaDados d) {
 /// CEP sem o prefixo "CEP" que às vezes vem digitado; 8 dígitos saem como
 /// 00000-000, o resto como foi cadastrado.
 String _textoCep(String bruto) {
-  final s = bruto.trim().replaceFirst(RegExp(r'^cep\s*:?\s*', caseSensitive: false), '');
+  final s = bruto
+      .trim()
+      .replaceFirst(RegExp(r'^cep\s*:?\s*', caseSensitive: false), '');
   final digitos = s.replaceAll(RegExp(r'\D'), '');
   if (digitos.length == 8) {
     return '${digitos.substring(0, 5)}-${digitos.substring(5)}';
@@ -137,26 +169,35 @@ const _medidas = {
 double _pt(double mm) => mm * PdfPageFormat.mm;
 
 /// Altura disponível para a lista de itens em cada página.
-double _alturaItens(TamanhoEtiqueta t) {
+///
+/// [comVolume]: o rótulo do volume ocupa uma linha a mais no cabeçalho.
+double _alturaItens(TamanhoEtiqueta t, {bool comVolume = false}) {
   final m = _medidas[t]!;
   final util = _pt(t.alturaMm) - 2 * _pt(m.margemMm);
   final topo = m.fonteCabecalho * _alturaTexto +
       m.fonteCliente * _alturaTexto +
       m.fontePequena * _alturaTexto +
+      (comVolume ? _alturaVolume(m) : 0) +
       2 * _pt(_gapMm);
   final total = m.fontePequena * 1.4;
   final base = m.qrLateral ? 0.0 : _pt(m.qrMm) + _pt(_gapMm);
   return util - topo - total - base;
 }
 
+/// Altura da linha do rótulo do volume (mesma fonte do nome do cliente).
+double _alturaVolume(_Medidas m) => m.fonteCliente * _alturaTexto;
+
 /// Quantos itens cabem numa página na fonte mínima.
-int _capacidade(TamanhoEtiqueta t) =>
-    math.max(1, (_alturaItens(t) / (_fonteItemMin * _alturaLinha)).floor());
+int _capacidade(TamanhoEtiqueta t, {bool comVolume = false}) => math.max(
+    1,
+    (_alturaItens(t, comVolume: comVolume) / (_fonteItemMin * _alturaLinha))
+        .floor());
 
 /// Índices dos itens de cada página da etiqueta. Sempre há ao menos uma
 /// página, mesmo sem itens.
-List<List<int>> paginarItens(int totalItens, TamanhoEtiqueta t) {
-  final cap = _capacidade(t);
+List<List<int>> paginarItens(int totalItens, TamanhoEtiqueta t,
+    {bool comVolume = false}) {
+  final cap = _capacidade(t, comVolume: comVolume);
   if (totalItens <= 0) return [<int>[]];
   return [
     for (var i = 0; i < totalItens; i += cap)
@@ -271,6 +312,15 @@ Future<Uint8List> gerarEtiquetaPdf(
   EtiquetaDados d,
   TamanhoEtiqueta t, {
   Uint8List? logo,
+}) =>
+    gerarEtiquetasPdf([d], t, logo: logo);
+
+/// Um PDF com as páginas de cada etiqueta de [volumes], em ordem. Logo e
+/// fontes são carregados uma vez só.
+Future<Uint8List> gerarEtiquetasPdf(
+  List<EtiquetaDados> volumes,
+  TamanhoEtiqueta t, {
+  Uint8List? logo,
 }) async {
   final m = _medidas[t]!;
   final logoBytes = logo ?? await _carregarLogo();
@@ -281,13 +331,10 @@ Future<Uint8List> gerarEtiquetaPdf(
   final normal =
       await _carregarFonte('NotoSans-Regular.ttf', pw.Font.helvetica());
   final formato = PdfPageFormat(_pt(t.larguraMm), _pt(t.alturaMm));
-  final geom = geometriaQrArredondado(conteudoQrEntrega(d.codigoQr));
-  final paginas = paginarItens(d.itens.length, t);
-  final total = d.itens.fold<int>(0, (s, i) => s + i.quantidade);
-  final prontoEm = d.prontoEm == null ? null : textoProntoEm(d.prontoEm!);
-  final entrega = linhasEntrega(d);
-
-  final doc = pw.Document(title: 'Etiqueta do pedido ${d.numero}');
+  final doc = pw.Document(
+      title: volumes.isEmpty
+          ? 'Etiqueta'
+          : 'Etiqueta do pedido ${volumes.first.numero}');
 
   pw.Widget linha(double fonte, String texto,
       {bool bold = false, double? altura}) {
@@ -342,7 +389,7 @@ Future<Uint8List> gerarEtiquetaPdf(
         child: pw.Container(height: 0.6, color: PdfColors.black),
       );
 
-  pw.Widget qr(double ladoPt) {
+  pw.Widget qr(double ladoPt, GeometriaQr geom) {
     final escala = ladoPt / (geom.modulos + 2 * margemQrModulos);
     final logoLado = geom.areaLogo.lado * escala;
     final pad = 0.5 * escala;
@@ -397,112 +444,123 @@ Future<Uint8List> gerarEtiquetaPdf(
     );
   }
 
-  final alturaItens = _alturaItens(t);
+  for (final d in volumes) {
+    final geom = geometriaQrArredondado(conteudoQrEntrega(d.codigoQr));
+    final comVolume = d.volume.trim().isNotEmpty;
+    final alturaItens = _alturaItens(t, comVolume: comVolume);
+    final paginas = paginarItens(d.itens.length, t, comVolume: comVolume);
+    final total = d.itens.fold<int>(0, (s, i) => s + i.quantidade);
+    final prontoEm = d.prontoEm == null ? null : textoProntoEm(d.prontoEm!);
+    final entrega = linhasEntrega(d);
 
-  for (var p = 0; p < paginas.length; p++) {
-    final idx = paginas[p];
-    final fonteItem = idx.isEmpty
-        ? m.fonteItemMax
-        : math.max(
-            _fonteItemMin,
-            math.min(
-                m.fonteItemMax, alturaItens / (idx.length * _alturaLinha)));
-    final rodapePagina =
-        paginas.length > 1 ? '${p + 1}/${paginas.length}' : null;
+    for (var p = 0; p < paginas.length; p++) {
+      final idx = paginas[p];
+      final fonteItem = idx.isEmpty
+          ? m.fonteItemMax
+          : math.max(
+              _fonteItemMin,
+              math.min(
+                  m.fonteItemMax, alturaItens / (idx.length * _alturaLinha)));
+      final rodapePagina =
+          paginas.length > 1 ? '${p + 1}/${paginas.length}' : null;
 
-    final lista = pw.SizedBox(
-      height: alturaItens,
-      child: pw.Column(
+      final lista = pw.SizedBox(
+        height: alturaItens,
+        child: pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            for (final i in idx)
+              linha(fonteItem, '${d.itens[i].quantidade}×  ${d.itens[i].nome}',
+                  altura: fonteItem * _alturaLinha),
+          ],
+        ),
+      );
+
+      final infoQr = pw.Column(
+        mainAxisAlignment: pw.MainAxisAlignment.end,
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: [
-          for (final i in idx)
-            linha(fonteItem, '${d.itens[i].quantidade}×  ${d.itens[i].nome}',
-                altura: fonteItem * _alturaLinha),
-        ],
-      ),
-    );
-
-    final infoQr = pw.Column(
-      mainAxisAlignment: pw.MainAxisAlignment.end,
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        // Na 60x40 a coluna é só a largura do QR: o endereço não cabe.
-        if (!m.qrLateral && entrega.isNotEmpty) ...[
-          linha(m.fontePequena, entrega.first),
-          for (final l in entrega.skip(1)) linha(m.fontePequena, l, bold: true),
-          pw.SizedBox(height: _pt(1)),
-        ],
-        if (prontoEm != null) ...[
-          pw.Text('Pronto em',
-              style: pw.TextStyle(font: normal, fontSize: m.fontePequena)),
-          pw.Text(prontoEm,
-              style: pw.TextStyle(font: negrito, fontSize: m.fontePequena)),
-        ],
-        if (rodapePagina != null)
-          pw.Text(rodapePagina,
-              style: pw.TextStyle(font: normal, fontSize: m.fontePequena)),
-      ],
-    );
-
-    final cabecalho = <pw.Widget>[
-      duasPontas(m.fonteCabecalho, 'MILKDIM', 'Pedido ${d.numero}', bold: true),
-      linha(m.fonteCliente, d.clienteTitulo, bold: true),
-      duasPontas(m.fontePequena, d.cidade,
-          d.vendedor.isEmpty ? '' : 'Vendedor ${d.vendedor}'),
-      separador(),
-    ];
-
-    final totalLinha = linha(m.fontePequena, 'Total: $total unidades',
-        bold: true, altura: m.fontePequena * 1.4);
-
-    final qrPt = _pt(m.qrMm);
-    final pw.Widget conteudo;
-    if (m.qrLateral) {
-      // Etiqueta pequena: texto à esquerda, QR e "Pronto em" à direita.
-      conteudo = pw.Row(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Expanded(
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [...cabecalho, lista, totalLinha],
-            ),
-          ),
-          pw.SizedBox(width: _pt(_gapMm)),
-          pw.SizedBox(
-            width: qrPt,
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [qr(qrPt), infoQr],
-            ),
-          ),
+          // Na 60x40 a coluna é só a largura do QR: o endereço não cabe.
+          if (!m.qrLateral && entrega.isNotEmpty) ...[
+            linha(m.fontePequena, entrega.first),
+            for (final l in entrega.skip(1))
+              linha(m.fontePequena, l, bold: true),
+            pw.SizedBox(height: _pt(1)),
+          ],
+          if (prontoEm != null) ...[
+            pw.Text('Pronto em',
+                style: pw.TextStyle(font: normal, fontSize: m.fontePequena)),
+            pw.Text(prontoEm,
+                style: pw.TextStyle(font: negrito, fontSize: m.fontePequena)),
+          ],
+          if (rodapePagina != null)
+            pw.Text(rodapePagina,
+                style: pw.TextStyle(font: normal, fontSize: m.fontePequena)),
         ],
       );
-    } else {
-      conteudo = pw.Column(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          ...cabecalho,
-          lista,
-          totalLinha,
-          separador(),
-          pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.end,
-            children: [
-              qr(qrPt),
-              pw.SizedBox(width: _pt(2)),
-              pw.Expanded(child: infoQr),
-            ],
-          ),
-        ],
-      );
+
+      final cabecalho = <pw.Widget>[
+        duasPontas(m.fonteCabecalho, 'MILKDIM', 'Pedido ${d.numero}',
+            bold: true),
+        if (comVolume) linha(m.fonteCliente, d.volume.trim(), bold: true),
+        linha(m.fonteCliente, d.clienteTitulo, bold: true),
+        duasPontas(m.fontePequena, d.cidade,
+            d.vendedor.isEmpty ? '' : 'Vendedor ${d.vendedor}'),
+        separador(),
+      ];
+
+      final totalLinha = linha(m.fontePequena, 'Total: $total unidades',
+          bold: true, altura: m.fontePequena * 1.4);
+
+      final qrPt = _pt(m.qrMm);
+      final pw.Widget conteudo;
+      if (m.qrLateral) {
+        // Etiqueta pequena: texto à esquerda, QR e "Pronto em" à direita.
+        conteudo = pw.Row(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Expanded(
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [...cabecalho, lista, totalLinha],
+              ),
+            ),
+            pw.SizedBox(width: _pt(_gapMm)),
+            pw.SizedBox(
+              width: qrPt,
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [qr(qrPt, geom), infoQr],
+              ),
+            ),
+          ],
+        );
+      } else {
+        conteudo = pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            ...cabecalho,
+            lista,
+            totalLinha,
+            separador(),
+            pw.Row(
+              crossAxisAlignment: pw.CrossAxisAlignment.end,
+              children: [
+                qr(qrPt, geom),
+                pw.SizedBox(width: _pt(2)),
+                pw.Expanded(child: infoQr),
+              ],
+            ),
+          ],
+        );
+      }
+
+      doc.addPage(pw.Page(
+        pageFormat: formato,
+        margin: pw.EdgeInsets.all(_pt(m.margemMm)),
+        build: (_) => conteudo,
+      ));
     }
-
-    doc.addPage(pw.Page(
-      pageFormat: formato,
-      margin: pw.EdgeInsets.all(_pt(m.margemMm)),
-      build: (_) => conteudo,
-    ));
   }
 
   return doc.save();

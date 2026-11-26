@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:intl/intl.dart';
 import 'package:milkdim_admin/etiqueta/etiqueta_pdf.dart';
+import 'package:milkdim_admin/etiqueta/volumes.dart';
 import 'package:milkdim_admin/etiqueta/imprimir_etiqueta.dart';
 import 'package:milkdim_admin/models/pedido.dart';
 import 'package:milkdim_admin/etiqueta/qr_arredondado.dart';
@@ -313,6 +314,79 @@ void main() {
     });
   });
 
+  group('volumes', () {
+    const v3 = VolumesPedido(solto: false, volumes: [
+      Volume(caixa: true, tipoNome: 'Copo', itens: [
+        ItemVolume(nome: 'Produto A', quantidade: 20),
+      ]),
+      Volume(caixa: true, tipoNome: 'Copo', itens: [
+        ItemVolume(nome: 'Produto A', quantidade: 5),
+        ItemVolume(nome: 'Produto B', quantidade: 15),
+      ]),
+      Volume(caixa: false, tipoNome: null, itens: [
+        ItemVolume(nome: 'Produto C', quantidade: 2),
+      ]),
+    ]);
+
+    int paginas(Uint8List b) =>
+        RegExp(r'/Type\s*/Page(?![a-z])').allMatches(String.fromCharCodes(b)).length;
+
+    test('etiquetasDosVolumes copia cliente e QR, troca itens e rotula', () {
+      final base = _dados();
+      final l = etiquetasDosVolumes(base, v3);
+      expect(l.length, 3);
+      expect(l.map((e) => e.volume),
+          ['Caixa 1/3 · Copo', 'Caixa 2/3 · Copo', 'Avulsos 3/3']);
+      for (final e in l) {
+        expect(e.numero, base.numero);
+        expect(e.clienteTitulo, base.clienteTitulo);
+        expect(e.codigoQr, base.codigoQr);
+        expect(e.endereco, base.endereco);
+        expect(e.vendedor, base.vendedor);
+      }
+      expect(l[1].itens, [
+        (nome: 'Produto A', quantidade: 5),
+        (nome: 'Produto B', quantidade: 15),
+      ]);
+    });
+
+    test('3 volumes geram um PDF com uma página por volume', () async {
+      final l = etiquetasDosVolumes(_dados(), v3);
+      for (final t in TamanhoEtiqueta.values) {
+        final b = await gerarEtiquetasPdf(l, t, logo: _logo());
+        expect(String.fromCharCodes(b.take(4)), '%PDF', reason: t.name);
+        expect(paginas(b), 3, reason: t.name);
+      }
+    });
+
+    test('volume com 25 itens em 60x40 continua paginando', () async {
+      final d = EtiquetaDados(
+        numero: 1,
+        clienteTitulo: 'Cliente Teste',
+        cidade: 'Cidade Teste',
+        vendedor: '',
+        itens: [for (var i = 0; i < 25; i++) (nome: 'Produto $i', quantidade: 1)],
+        prontoEm: null,
+        codigoQr: _uuids.first,
+        volume: 'Caixa 1/1 · Copo',
+      );
+      final b = await gerarEtiquetasPdf([d], TamanhoEtiqueta.m60x40);
+      expect(paginas(b), greaterThan(1));
+      expect(paginas(b),
+          paginarItens(25, TamanhoEtiqueta.m60x40, comVolume: true).length);
+    });
+
+    test('sem rótulo, o PDF tem as páginas de antes', () async {
+      for (final t in TamanhoEtiqueta.values) {
+        final d = _dados(itens: 25);
+        final a = await gerarEtiquetaPdf(d, t);
+        final b = await gerarEtiquetasPdf([d], t);
+        expect(paginas(a), paginarItens(25, t).length, reason: t.name);
+        expect(paginas(b), paginas(a), reason: t.name);
+      }
+    });
+  });
+
   group('tamanho da etiqueta', () {
     test('padrão 100x100 e grava a escolha', () async {
       SharedPreferences.setMockInitialValues({});
@@ -345,12 +419,31 @@ void main() {
       File('${dir.path}/etiqueta_60x40_muitos_itens.pdf').writeAsBytesSync(
           await gerarEtiquetaPdf(_dados(itens: 25), TamanhoEtiqueta.m60x40,
               logo: logo));
+      File('${dir.path}/etiqueta_volumes_100x100.pdf').writeAsBytesSync(
+          await gerarEtiquetasPdf(
+              etiquetasDosVolumes(
+                  _dados(),
+                  const VolumesPedido(solto: false, volumes: [
+                    Volume(caixa: true, tipoNome: 'Copo', itens: [
+                      ItemVolume(nome: 'Produto de teste 1', quantidade: 20),
+                    ]),
+                    Volume(caixa: true, tipoNome: 'Copo', itens: [
+                      ItemVolume(nome: 'Produto de teste 1', quantidade: 5),
+                      ItemVolume(nome: 'Produto de teste 2', quantidade: 15),
+                    ]),
+                    Volume(caixa: false, tipoNome: null, itens: [
+                      ItemVolume(nome: 'Produto de teste 3', quantidade: 2),
+                    ]),
+                  ])),
+              TamanhoEtiqueta.m100x100,
+              logo: logo));
       File('${dir.path}/qr.png').writeAsBytesSync(
           img.encodePng(rasterizar(conteudoQrEntrega(_uuids.first))));
       for (final n in [
         'etiqueta_100x100.pdf',
         'etiqueta_100x150.pdf',
         'etiqueta_60x40_muitos_itens.pdf',
+        'etiqueta_volumes_100x100.pdf',
         'qr.png'
       ]) {
         expect(File('${dir.path}/$n').existsSync(), isTrue);
