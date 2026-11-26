@@ -322,6 +322,7 @@ Future<Uint8List> gerarEtiquetasPdf(
   TamanhoEtiqueta t, {
   Uint8List? logo,
 }) async {
+  if (volumes.isEmpty) throw ArgumentError('volumes vazio');
   final m = _medidas[t]!;
   final logoBytes = logo ?? await _carregarLogo();
   final logoPb = logoBytes == null ? null : _logoPretoEBranco(logoBytes);
@@ -331,10 +332,7 @@ Future<Uint8List> gerarEtiquetasPdf(
   final normal =
       await _carregarFonte('NotoSans-Regular.ttf', pw.Font.helvetica());
   final formato = PdfPageFormat(_pt(t.larguraMm), _pt(t.alturaMm));
-  final doc = pw.Document(
-      title: volumes.isEmpty
-          ? 'Etiqueta'
-          : 'Etiqueta do pedido ${volumes.first.numero}');
+  final doc = pw.Document(title: 'Etiqueta do pedido ${volumes.first.numero}');
 
   pw.Widget linha(double fonte, String texto,
       {bool bold = false, double? altura}) {

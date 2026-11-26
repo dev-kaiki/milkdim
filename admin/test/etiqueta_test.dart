@@ -5,11 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:intl/intl.dart';
 import 'package:milkdim_admin/etiqueta/etiqueta_pdf.dart';
-import 'package:milkdim_admin/etiqueta/volumes.dart';
 import 'package:milkdim_admin/etiqueta/imprimir_etiqueta.dart';
 import 'package:milkdim_admin/models/pedido.dart';
 import 'package:milkdim_admin/etiqueta/qr_arredondado.dart';
 import 'package:milkdim_admin/etiqueta/tamanho_etiqueta.dart';
+import 'package:milkdim_admin/etiqueta/volumes.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zxing2/qrcode.dart';
@@ -189,7 +189,8 @@ void main() {
       // Como o Pedido lê o pronto_em do PostgREST.
       final utc = DateTime.parse('2026-11-24T17:05:00+00:00');
       expect(utc.isUtc, isTrue);
-      final local = DateTime.fromMillisecondsSinceEpoch(utc.millisecondsSinceEpoch);
+      final local =
+          DateTime.fromMillisecondsSinceEpoch(utc.millisecondsSinceEpoch);
       expect(textoProntoEm(utc), DateFormat('dd/MM HH:mm').format(local));
       if (local.timeZoneOffset != Duration.zero) {
         expect(textoProntoEm(utc), isNot('24/11 17:05'));
@@ -218,7 +219,8 @@ void main() {
         );
 
     test('a etiqueta leva o nome do vendedor, não o código', () {
-      expect(etiquetaDoPedido(pedido(nome: ' Vendedor Teste ')).vendedor, 'Vendedor Teste');
+      expect(etiquetaDoPedido(pedido(nome: ' Vendedor Teste ')).vendedor,
+          'Vendedor Teste');
     });
 
     test('sem nome no pedido, leva o código', () {
@@ -258,14 +260,18 @@ void main() {
     });
 
     test('sem telefone, usa o WhatsApp', () {
-      expect(etiquetaDoPedido(comContato(telefone: ' ', whatsapp: '(16) 99999-0000')).telefone,
+      expect(
+          etiquetaDoPedido(
+                  comContato(telefone: ' ', whatsapp: '(16) 99999-0000'))
+              .telefone,
           '(16) 99999-0000');
       expect(etiquetaDoPedido(comContato()).telefone, '');
     });
   });
 
   group('bloco "Entregar em"', () {
-    EtiquetaDados com({String endereco = '', String cep = '', String telefone = ''}) =>
+    EtiquetaDados com(
+            {String endereco = '', String cep = '', String telefone = ''}) =>
         EtiquetaDados(
           numero: 1,
           clienteTitulo: 'Cliente Teste',
@@ -281,14 +287,24 @@ void main() {
 
     test('com tudo preenchido', () {
       expect(
-        linhasEntrega(com(endereco: 'Rua Teste, 10', cep: '15990000', telefone: '(16) 3333-0000')),
-        ['Entregar em', 'Rua Teste, 10', 'CEP 15990-000', 'Tel. (16) 3333-0000'],
+        linhasEntrega(com(
+            endereco: 'Rua Teste, 10',
+            cep: '15990000',
+            telefone: '(16) 3333-0000')),
+        [
+          'Entregar em',
+          'Rua Teste, 10',
+          'CEP 15990-000',
+          'Tel. (16) 3333-0000'
+        ],
       );
     });
 
     test('linha vazia não aparece', () {
-      expect(linhasEntrega(com(endereco: 'Rua Teste, 10')), ['Entregar em', 'Rua Teste, 10']);
-      expect(linhasEntrega(com(telefone: '(16) 3333-0000')), ['Entregar em', 'Tel. (16) 3333-0000']);
+      expect(linhasEntrega(com(endereco: 'Rua Teste, 10')),
+          ['Entregar em', 'Rua Teste, 10']);
+      expect(linhasEntrega(com(telefone: '(16) 3333-0000')),
+          ['Entregar em', 'Tel. (16) 3333-0000']);
     });
 
     test('sem endereço, CEP nem telefone, o bloco some', () {
@@ -301,9 +317,11 @@ void main() {
       expect(linhasEntrega(com(cep: '1599')).last, 'CEP 1599');
     });
 
-    test('gera o PDF com o bloco nos três tamanhos, mesmo com endereço longo', () async {
+    test('gera o PDF com o bloco nos três tamanhos, mesmo com endereço longo',
+        () async {
       final d = com(
-        endereco: 'Avenida de Teste com um Nome Bem Comprido, 12345 - Bairro Distante',
+        endereco:
+            'Avenida de Teste com um Nome Bem Comprido, 12345 - Bairro Distante',
         cep: '15990000',
         telefone: '(16) 99999-0000',
       );
@@ -328,8 +346,9 @@ void main() {
       ]),
     ]);
 
-    int paginas(Uint8List b) =>
-        RegExp(r'/Type\s*/Page(?![a-z])').allMatches(String.fromCharCodes(b)).length;
+    int paginas(Uint8List b) => RegExp(r'/Type\s*/Page(?![a-z])')
+        .allMatches(String.fromCharCodes(b))
+        .length;
 
     test('etiquetasDosVolumes copia cliente e QR, troca itens e rotula', () {
       final base = _dados();
@@ -365,7 +384,9 @@ void main() {
         clienteTitulo: 'Cliente Teste',
         cidade: 'Cidade Teste',
         vendedor: '',
-        itens: [for (var i = 0; i < 25; i++) (nome: 'Produto $i', quantidade: 1)],
+        itens: [
+          for (var i = 0; i < 25; i++) (nome: 'Produto $i', quantidade: 1)
+        ],
         prontoEm: null,
         codigoQr: _uuids.first,
         volume: 'Caixa 1/1 · Copo',
@@ -374,6 +395,22 @@ void main() {
       expect(paginas(b), greaterThan(1));
       expect(paginas(b),
           paginarItens(25, TamanhoEtiqueta.m60x40, comVolume: true).length);
+    });
+
+    test('lista de etiquetas vazia é erro', () {
+      expect(() => gerarEtiquetasPdf([], TamanhoEtiqueta.m100x100),
+          throwsArgumentError);
+    });
+
+    test('com rótulo cabem menos itens por página, nunca mais', () {
+      for (final t in TamanhoEtiqueta.values) {
+        final sem = paginarItens(60, t);
+        final com = paginarItens(60, t, comVolume: true);
+        expect(com.first.length, lessThanOrEqualTo(sem.first.length),
+            reason: t.name);
+        expect(com.length, greaterThanOrEqualTo(sem.length), reason: t.name);
+        expect(com.expand((e) => e).length, 60, reason: t.name);
+      }
     });
 
     test('sem rótulo, o PDF tem as páginas de antes', () async {
@@ -419,8 +456,8 @@ void main() {
       File('${dir.path}/etiqueta_60x40_muitos_itens.pdf').writeAsBytesSync(
           await gerarEtiquetaPdf(_dados(itens: 25), TamanhoEtiqueta.m60x40,
               logo: logo));
-      File('${dir.path}/etiqueta_volumes_100x100.pdf').writeAsBytesSync(
-          await gerarEtiquetasPdf(
+      File('${dir.path}/etiqueta_volumes_100x100.pdf')
+          .writeAsBytesSync(await gerarEtiquetasPdf(
               etiquetasDosVolumes(
                   _dados(),
                   const VolumesPedido(solto: false, volumes: [
