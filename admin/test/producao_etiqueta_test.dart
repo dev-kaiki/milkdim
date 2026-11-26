@@ -36,6 +36,10 @@ Pedido _pronto({
       itens: const [PedidoItem(nome: 'Pudim tradicional', preco: 1, quantidade: 3)],
     );
 
+/// Sem caixas: a carga dos produtos falha de propósito e o fluxo cai na
+/// etiqueta única (o caminho de antes da migração das caixas).
+Future<List<Produto>> semCaixas() async => throw Exception('sem caixas');
+
 Widget _app(Widget tab) => MaterialApp(theme: buildMilkdimTheme(), home: Scaffold(body: tab));
 
 Future<void> _abrir(
@@ -52,6 +56,7 @@ Future<void> _abrir(
   addTearDown(tester.view.reset);
   await tester.pumpWidget(_app(ProducaoTab(
     carregar: () async => lista(),
+    carregarProdutos: semCaixas,
     marcarPronto: marcarPronto,
     marcarEtiqueta: (id, bruto) async {
       marcadas.add(id);
@@ -88,6 +93,7 @@ void main() {
     await _abrir(tester, () => [_pronto()], marcadas: marcadas, envios: envios);
     await tester.tap(find.text('Imprimir etiqueta'));
     await _esperar(tester, () => envios.isNotEmpty);
+    expect(find.text('Caixas indisponíveis; imprimindo etiqueta única.'), findsOneWidget);
     expect(find.text('A etiqueta saiu certa?'), findsOneWidget);
     await tester.tap(find.text('Sim'));
     await tester.pumpAndSettle();

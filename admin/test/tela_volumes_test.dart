@@ -253,6 +253,22 @@ void main() {
     expect(_paginas(h.envios[2]), 3);
   });
 
+  testWidgets('cancelar a escolha de "Imprimir de novo" pergunta de novo sem reenviar',
+      (tester) async {
+    final h = await _abrir(tester, _pedido(), _fonte0());
+    await tester.tap(find.text('Imprimir'));
+    await _esperar(tester, () => h.envios.isNotEmpty);
+    await tester.tap(find.text('Imprimir de novo'));
+    await tester.pumpAndSettle();
+    expect(find.text('Todas'), findsOneWidget);
+    await tester.tapAt(const Offset(5, 5)); // fecha o seletor pela cortina
+    await tester.pumpAndSettle();
+    expect(find.text('Todas'), findsNothing);
+    expect(find.text('As etiquetas saíram certas?'), findsOneWidget);
+    expect(h.envios.length, 1);
+    expect(h.marcadas, isEmpty);
+  });
+
   testWidgets('erro em salvarVolumes mostra a mensagem e não envia', (tester) async {
     final fonte = FonteCaixasFalsa(
         tipos: const [_copo],

@@ -1,7 +1,15 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:milkdim_admin/etiqueta/tamanho_etiqueta.dart';
+import 'package:milkdim_admin/etiqueta/volumes.dart';
 import 'package:milkdim_admin/models/pedido.dart';
+import 'package:milkdim_admin/models/produto.dart';
 import 'package:milkdim_admin/widgets/detalhe_pedido.dart';
+
+import 'fonte_caixas_falsa.dart';
 
 Pedido _p({
   String status = 'finalizado',
@@ -101,6 +109,61 @@ void main() {
           nomes: const {'0001': 'Dona Teste'});
       expect(find.textContaining('Etiqueta impressa às'), findsOneWidget);
       expect(find.textContaining('por Dona Teste'), findsOneWidget);
+    });
+
+    testWidgets('Imprimir etiqueta no detalhe abre os volumes e completa o fluxo',
+        (t) async {
+      t.view.physicalSize = const Size(1000, 2400);
+      t.view.devicePixelRatio = 1;
+      addTearDown(t.view.reset);
+      final p = _p(status: 'pronto');
+      final fonte = FonteCaixasFalsa(tipos: const [
+        TipoCaixa(id: 1, nome: 'Caixa teste', capacidade: 1, misturaSabores: true, ativo: true)
+      ]);
+      final marcadas = <int>[], envios = <Uint8List>[];
+      await t.pumpWidget(MaterialApp(
+        home: Builder(
+          builder: (ctx) => Scaffold(
+            body: TextButton(
+              onPressed: () => abrirDetalhesPedido(
+                ctx,
+                p,
+                buscar: (id) async => (raw: <String, dynamic>{'id': id}, parsed: p),
+                buscarNomes: () async => const {},
+                fonteCaixas: fonte,
+                carregarProdutos: () async => const [
+                  Produto(id: 1, nome: 'Pudim', preco: 10, ativo: true, tipoCaixaId: 1)
+                ],
+                marcarEtiqueta: (id, bruto) async => marcadas.add(id),
+                enviarParaImpressora: (Uint8List pdf, TamanhoEtiqueta tam) async {
+                  envios.add(pdf);
+                  return true;
+                },
+              ),
+              child: const Text('abrir'),
+            ),
+          ),
+        ),
+      ));
+      await t.tap(find.text('abrir'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Imprimir etiqueta'));
+      await t.pumpAndSettle();
+      expect(find.text('Volumes do pedido 42'), findsOneWidget);
+      expect(find.text('Caixa 1/1 · Caixa teste'), findsOneWidget);
+      await t.tap(find.text('Imprimir'));
+      for (var i = 0; i < 200 && envios.isEmpty; i++) {
+        await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+        await t.pump(const Duration(milliseconds: 100));
+      }
+      await t.pumpAndSettle();
+      expect(fonte.gravados.length, 1);
+      expect(envios.length, 1);
+      expect(
+          RegExp(r'/Type\s*/Page\b').allMatches(latin1.decode(envios.first)).length, 1);
+      await t.tap(find.text('Sim'));
+      await t.pumpAndSettle();
+      expect(marcadas, [7]);
     });
 
     testWidgets('sem codigo_qr o botao fica desabilitado', (t) async {
