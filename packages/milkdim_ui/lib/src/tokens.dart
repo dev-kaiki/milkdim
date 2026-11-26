@@ -33,6 +33,9 @@ abstract final class MdColors {
   /// Texto secundário.
   static const Color textMuted = Color(0xFF6B645B);
 
+  /// Cinza das barras de saídas nos gráficos (mais claro que o texto).
+  static const Color neutroGrafico = Color(0xFFA8A29A);
+
   /// Sucesso.
   static const Color success = Color(0xFF1E8E4E);
 
