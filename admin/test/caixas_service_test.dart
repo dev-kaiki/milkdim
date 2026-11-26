@@ -19,12 +19,12 @@ void main() {
   });
 
   test('paramsSalvarVolumes monta o formato da RPC', () {
-    final v = const VolumesPedido(solto: false, volumes: [
-      const Volume(
+    const v = VolumesPedido(solto: false, volumes: [
+      Volume(
           caixa: true,
           tipoNome: 'Pote',
           itens: [ItemVolume(nome: 'Pote A', quantidade: 16)]),
-      const Volume(
+      Volume(
           caixa: false,
           tipoNome: null,
           itens: [ItemVolume(nome: 'X', quantidade: 2)]),
