@@ -8,6 +8,8 @@
 //   o login é feita pelo listener de sessão do main.dart.
 // • "Meus pedidos" passa o vendedorCodigo para filtrar.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -17,6 +19,8 @@ import '../utils/db.dart';
 import '../utils/supabase_helper.dart';
 import 'pedido_page.dart';
 import 'pedidos_page.dart';
+import '../utils/clientes_sumidos.dart';
+import 'clientes_sumidos_page.dart';
 import 'configuracoes_page.dart';
 import 'ler_etiqueta_page.dart';
 import '../widgets/ouvir_etiqueta_pendente.dart';
@@ -28,7 +32,16 @@ class HomePage extends StatefulWidget {
   /// pendentes e não roda a rotina de abertura (SQLite, rede e sync).
   final int? pendentesParaCaptura;
 
-  const HomePage({super.key, required this.vendedor, this.pendentesParaCaptura});
+  /// Só para a captura visual e testes: contagem de clientes sumidos. Sem ela,
+  /// o item só aparece depois de calcular no banco (e nunca na captura).
+  final int? sumidosParaCaptura;
+
+  const HomePage({
+    super.key,
+    required this.vendedor,
+    this.pendentesParaCaptura,
+    this.sumidosParaCaptura,
+  });
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -36,6 +49,9 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _pendentes = 0;
+
+  /// Clientes sem comprar há 30 dias ou mais; null enquanto não calculou.
+  int? _sumidos;
   bool _sincronizando = false;
   bool _enviando = false;
 
@@ -51,6 +67,7 @@ class _HomePageState extends State<HomePage> {
     final captura = widget.pendentesParaCaptura;
     if (captura != null) {
       _pendentes = captura;
+      _sumidos = widget.sumidosParaCaptura;
       _syncEmDia = true;
       return;
     }
@@ -75,8 +92,26 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _atualizarSumidos() async {
+    if (_codigo.isEmpty) return;
+    try {
+      final clientes = await listarClientes();
+      final pedidos = await listarPedidosParaSumidos(_codigo);
+      final n = clientesSumidos(
+        clientes: clientes,
+        pedidos: pedidos,
+        vendedorCodigo: _codigo,
+        agora: DateTime.now(),
+      ).length;
+      if (mounted) setState(() => _sumidos = n);
+    } catch (e) {
+      debugPrint('Erro ao contar clientes sumidos: $e');
+    }
+  }
+
   Future<void> _atualizarPendentes() async {
     if (_codigo.isEmpty) return;
+    unawaited(_atualizarSumidos());
     try {
       final n = await contarPedidosPendentesEnvio(_codigo);
       if (mounted) setState(() => _pendentes = n);
@@ -334,6 +369,15 @@ class _HomePageState extends State<HomePage> {
                         subtitulo: 'Ver, editar e compartilhar',
                         onTap: () => _abrir(PedidosPage(vendedorCodigo: _codigo, vendedor: widget.vendedor)),
                       ),
+                      if (_sumidos != null) ...[
+                        const SizedBox(height: MdSpace.md),
+                        MdActionTile(
+                          icone: Icons.person_search_outlined,
+                          titulo: 'Clientes sumidos',
+                          subtitulo: subtituloSumidos(_sumidos!),
+                          onTap: () => _abrir(ClientesSumidosPage(vendedor: widget.vendedor)),
+                        ),
+                      ],
                       if (leituraDeEtiquetaDisponivel) ...[
                         const SizedBox(height: MdSpace.md),
                         MdActionTile(

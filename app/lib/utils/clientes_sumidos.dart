@@ -89,7 +89,8 @@ String _primeiroValido(Map<String, dynamic> c, List<String> campos) {
 Uri? linkWhatsApp(Map<String, dynamic> cliente, String mensagem) {
   final n = _primeiroValido(cliente, ['whatsapp', 'telefone']);
   if (n.isEmpty) return null;
-  return Uri.https('wa.me', '/$n', {'text': mensagem});
+  // encodeComponent: espaço vira %20 (Uri.https usaria "+").
+  return Uri.parse('https://wa.me/$n?text=${Uri.encodeComponent(mensagem)}');
 }
 
 /// `tel:<num>` com o `telefone` do cliente (ou o `whatsapp` se o telefone for

@@ -33,6 +33,9 @@ dependencies:
   # Compartilhamento de arquivos (PDF, JSON)
   share_plus: ^7.2.1
 
+  # Abrir WhatsApp e discador (clientes sumidos)
+  url_launcher: ^6.3.2
+
   # Arquivos e diretórios temporários
   path_provider: ^2.1.2
 

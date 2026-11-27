@@ -38,10 +38,16 @@ class PedidoPage extends StatefulWidget {
   /// pedido continua sendo o próximo.
   final Map<String, dynamic>? partirDe;
 
+  /// "Clientes sumidos": cliente já escolhido ao abrir (id). Aplicado uma vez,
+  /// quando clientes e produtos terminam de carregar. Se [partirDe] também vier,
+  /// [partirDe] vale.
+  final int? clienteInicialId;
+
   const PedidoPage({
     super.key,
     required this.vendedor,
     this.partirDe,
+    this.clienteInicialId,
     this.dadosParaCaptura,
     this.pedirAssinatura,
     this.gravar,
@@ -125,6 +131,7 @@ class _PedidoPageState extends State<PedidoPage> {
   // produtos chegaram.
   bool _clientesProntos = false;
   bool _partiuDe = false;
+  bool _escolheuClienteInicial = false;
 
   double get total =>
       carrinho.entries.fold(0.0, (s, e) => s + e.key.preco * (e.value));
@@ -238,7 +245,11 @@ class _PedidoPageState extends State<PedidoPage> {
   /// e as quantidades de [PedidoPage.partirDe] (sem perguntar: a tela está vazia).
   void _tentarPartirDe() {
     final origem = widget.partirDe;
-    if (origem == null || _partiuDe || !_clientesProntos || carregandoProdutos) return;
+    if (origem == null) {
+      _tentarClienteInicial();
+      return;
+    }
+    if (_partiuDe || !_clientesProntos || carregandoProdutos) return;
     _partiuDe = true;
     final id = (origem['cliente_id'] as num?)?.toInt();
     Map<String, dynamic>? cliente;
@@ -254,6 +265,21 @@ class _PedidoPageState extends State<PedidoPage> {
     }
     _aplicarCliente(cliente);
     _aplicarPreenchimento(preencherDePedido(origem['produtos'], produtos));
+  }
+
+  /// "Clientes sumidos": com clientes e produtos prontos, escolhe o cliente de
+  /// [PedidoPage.clienteInicialId] (uma vez); as quantidades ficam vazias.
+  void _tentarClienteInicial() {
+    final id = widget.clienteInicialId;
+    if (id == null || _escolheuClienteInicial || !_clientesProntos || carregandoProdutos) return;
+    _escolheuClienteInicial = true;
+    for (final c in clientes) {
+      if ((c['id'] as num?)?.toInt() == id) {
+        _aplicarCliente(c);
+        return;
+      }
+    }
+    _showMsg('Este cliente não está mais cadastrado');
   }
 
   Future<void> _recarregarUltimoPedido() async {

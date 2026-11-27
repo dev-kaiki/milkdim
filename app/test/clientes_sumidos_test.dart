@@ -119,6 +119,12 @@ void main() {
       expect(u.toString(), isNot(contains(' ')));
     });
 
+    test('linkWhatsApp codifica espaços como %20, sem "+"', () {
+      final u = linkWhatsApp(_cli(1, tel: '(16) 3333-4444'), mensagemSumido('Ana'));
+      expect(u.toString(), contains('Faz%20um%20tempinho'));
+      expect(u.toString(), isNot(contains('+')));
+    });
+
     test('linkWhatsApp prefere o whatsapp', () {
       final u = linkWhatsApp(
           _cli(1, tel: '(16) 3333-4444', zap: '16 99999-1234'), 'oi');
