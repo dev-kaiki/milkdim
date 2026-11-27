@@ -2,6 +2,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
+import 'package:pdf/pdf.dart';
+import 'package:printing/printing.dart';
 
 import '../financeiro/abas/aba_ano.dart';
 import '../financeiro/abas/aba_resumo.dart';
@@ -11,25 +13,11 @@ import '../financeiro/dialogo_categorias.dart';
 import '../financeiro/dialogo_saida.dart';
 import '../financeiro/modelos_financeiro.dart';
 import '../financeiro/painel_financeiro.dart';
+import '../financeiro/relatorio_mes.dart';
 import '../financeiro/resumo_financeiro.dart';
 import '../models/pedido.dart';
 import '../services/financeiro_service.dart';
 import '../services/supabase_service.dart';
-
-const List<String> _meses = [
-  'Janeiro',
-  'Fevereiro',
-  'Março',
-  'Abril',
-  'Maio',
-  'Junho',
-  'Julho',
-  'Agosto',
-  'Setembro',
-  'Outubro',
-  'Novembro',
-  'Dezembro',
-];
 
 /// Até novembro de 2026 (inclusive) a venda conta pela data do pedido.
 const int _anoHistorico = 2026;
@@ -52,7 +40,17 @@ class FinanceiroTab extends StatefulWidget {
   /// o mês é recarregado. Nulo: só carrega ao montar.
   final ValueListenable<bool>? aberta;
 
-  const FinanceiroTab({super.key, this.fonte, this.agora, this.aberta});
+  /// Entrega o PDF do relatório (bytes e nome do arquivo). Nulo abre o
+  /// diálogo de impressão do sistema.
+  final Future<void> Function(Uint8List pdf, String nome)? imprimirRelatorio;
+
+  const FinanceiroTab({
+    super.key,
+    this.fonte,
+    this.agora,
+    this.aberta,
+    this.imprimirRelatorio,
+  });
 
   @override
   State<FinanceiroTab> createState() => _FinanceiroTabState();
@@ -72,6 +70,8 @@ class _FinanceiroTabState extends State<FinanceiroTab>
   List<MesSerie> _serie = [];
   List<LinhaValor> _clientes = [];
   List<Saida> _saidas = [];
+  List<Pedido> _entregues = [];
+  bool _gerandoRelatorio = false;
   Map<int, String> _nomes = {};
   int _geracao = 0;
 
@@ -176,6 +176,7 @@ class _FinanceiroTabState extends State<FinanceiroTab>
         _mesAtual = atual;
         _nomes = nomes;
         _saidas = saidas;
+        _entregues = entregues;
         _resumo = resumirMes(
           entregues: entregues,
           prontos: prontos,
@@ -221,6 +222,46 @@ class _FinanceiroTabState extends State<FinanceiroTab>
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  Future<void> _imprimirPadrao(Uint8List pdf, String nome) =>
+      Printing.layoutPdf(
+        name: nome,
+        format: PdfPageFormat.a4,
+        onLayout: (_) async => pdf,
+      );
+
+  /// Monta o PDF do mês na tela e o entrega à impressão. A trava impede dois
+  /// cliques seguidos.
+  Future<void> _gerarRelatorio() async {
+    final resumo = _resumo;
+    if (_gerandoRelatorio || _carregando || _erro != null || resumo == null) {
+      return;
+    }
+    setState(() => _gerandoRelatorio = true);
+    try {
+      final r = montarRelatorio(
+        ano: _ano,
+        mes: _mes,
+        geradoEm: _agora(),
+        mesAtual: _mesAtual,
+        resumo: resumo,
+        comparacao: _comparacao,
+        saidas: _saidas,
+        nomesCategorias: _nomes,
+        entregues: _entregues,
+      );
+      final pdf = await pdfDoRelatorio(r);
+      await (widget.imprimirRelatorio ?? _imprimirPadrao)(
+          pdf, nomeArquivoRelatorio(_ano, _mes));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Não foi possível gerar o relatório.')));
+      }
+    } finally {
+      if (mounted) setState(() => _gerandoRelatorio = false);
+    }
+  }
+
   Future<void> _lancarSaida() => _abrirDialogoSaida(null);
 
   Future<void> _abrirDialogoSaida(Saida? editar) async {
@@ -255,7 +296,7 @@ class _FinanceiroTabState extends State<FinanceiroTab>
         ? 'Saída lançada em ${_dataBr(s.data)}.'
         : 'Saída alterada.';
     if (s.data.year != _ano || s.data.month != _mes) {
-      msg += ' Ela aparece em ${_meses[s.data.month - 1]} ${s.data.year}.';
+      msg += ' Ela aparece em ${nomesMeses[s.data.month - 1]} ${s.data.year}.';
     }
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     await _carregar();
@@ -314,7 +355,7 @@ class _FinanceiroTabState extends State<FinanceiroTab>
             Flexible(
               child: FittedBox(
                 fit: BoxFit.scaleDown,
-                child: Text('${_meses[_mes - 1]} $_ano', style: tt.titleLarge),
+                child: Text('${nomesMeses[_mes - 1]} $_ano', style: tt.titleLarge),
               ),
             ),
             IconButton(
@@ -328,6 +369,13 @@ class _FinanceiroTabState extends State<FinanceiroTab>
           crossAxisAlignment: WrapCrossAlignment.center,
           spacing: MdSpace.xs,
           children: [
+            OutlinedButton.icon(
+              onPressed: (_carregando || _erro != null || _gerandoRelatorio)
+                  ? null
+                  : _gerarRelatorio,
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+              label: const Text('Relatório (PDF)'),
+            ),
             IconButton(
               tooltip: 'Atualizar',
               onPressed: _carregando ? null : _carregar,
