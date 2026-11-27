@@ -13,7 +13,7 @@ Color _corVariacao(Variacao v, BuildContext context) => switch (v.sentido) {
       _ => MdColors.textMuted,
     };
 
-String _textoVariacao(Variacao v) {
+String textoVariacao(Variacao v) {
   if (v.texto != null) return v.texto!;
   final pct = v.pct ?? 0;
   if (pct > 0) return '▲ $pct%';
@@ -50,7 +50,7 @@ class AbaResumo extends StatelessWidget {
             Text(extra,
                 style: tt.bodySmall!.copyWith(color: MdColors.textMuted)),
           if (variacao != null)
-            Text(_textoVariacao(variacao),
+            Text(textoVariacao(variacao),
                 style: tt.bodyMedium!
                     .copyWith(color: _corVariacao(variacao, context))),
         ],

@@ -301,9 +301,9 @@ Future<Uint8List?> _carregarLogo() async {
   }
 }
 
-/// NotoSans do pacote de UI (acentos e "×" corretos no PDF). Sem o asset,
-/// cai na Helvetica embutida do PDF.
-Future<pw.Font> _carregarFonte(String arquivo, pw.Font reserva) async {
+/// NotoSans do pacote de UI, compartilhada com o relatório (acentos e "×"
+/// corretos no PDF). Sem o asset, cai na Helvetica embutida do PDF.
+Future<pw.Font> carregarFonte(String arquivo, pw.Font reserva) async {
   try {
     final dados = await rootBundle.load('packages/milkdim_ui/fonts/$arquivo');
     return pw.Font.ttf(dados);
@@ -337,9 +337,9 @@ Future<Uint8List> gerarEtiquetasPdf(
   final logoPb = logoBytes == null ? null : _logoPretoEBranco(logoBytes);
 
   final negrito =
-      await _carregarFonte('NotoSans-Bold.ttf', pw.Font.helveticaBold());
+      await carregarFonte('NotoSans-Bold.ttf', pw.Font.helveticaBold());
   final normal =
-      await _carregarFonte('NotoSans-Regular.ttf', pw.Font.helvetica());
+      await carregarFonte('NotoSans-Regular.ttf', pw.Font.helvetica());
   final formato = PdfPageFormat(_pt(t.larguraMm), _pt(t.alturaMm));
   final doc = pw.Document(title: 'Etiqueta do pedido ${volumes.first.numero}');
 
