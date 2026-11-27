@@ -98,8 +98,8 @@ class _MinhasVendasPageState extends State<MinhasVendasPage> {
     });
   }
 
-  ResumoVendas _resumo(int ano, int mes) =>
-      resumoDoMes(_pedidos, vendedorCodigo: _codigo, ano: ano, mes: mes);
+  ResumoVendas _resumo(int ano, int mes, {DateTime? ate}) =>
+      resumoDoMes(_pedidos, vendedorCodigo: _codigo, ano: ano, mes: mes, ate: ate);
 
   @override
   Widget build(BuildContext context) {
@@ -123,7 +123,13 @@ class _MinhasVendasPageState extends State<MinhasVendasPage> {
 
   Widget _conteudo() {
     final r = _resumo(_ano, _mes);
-    final anterior = _resumo(_mes == 1 ? _ano - 1 : _ano, _mes == 1 ? 12 : _mes - 1);
+    // Mês atual: compara com o mesmo trecho do mês anterior (até o mesmo dia e
+    // hora); mês encerrado: mês inteiro contra mês inteiro.
+    final anterior = _resumo(
+      _mes == 1 ? _ano - 1 : _ano,
+      _mes == 1 ? 12 : _mes - 1,
+      ate: _mesAtual ? limiteMesAnterior(_agora) : null,
+    );
     final tt = Theme.of(context).textTheme;
     final semVenda = r.pedidos == 0;
     return Column(
@@ -159,6 +165,17 @@ class _MinhasVendasPageState extends State<MinhasVendasPage> {
               '${r.aEntregarPedidos == 1 ? '1 pedido' : '${r.aEntregarPedidos} pedidos'}',
               style: tt.bodyLarge,
             ),
+          ),
+        ],
+        if (_mesAtual && r.aguardandoEnvioPedidos > 0) ...[
+          const SizedBox(height: MdSpace.md),
+          MdBanner(
+            tipo: MdTipo.info,
+            icone: Icons.cloud_upload_outlined,
+            texto: 'Entregues sem internet: '
+                '${r.aguardandoEnvioPedidos == 1 ? '1 pedido' : '${r.aguardandoEnvioPedidos} pedidos'}'
+                ' · ${formatarReais(r.aguardandoEnvioValor)}'
+                ' — entram nas vendas quando forem enviados',
           ),
         ],
         if (semVenda) ...[

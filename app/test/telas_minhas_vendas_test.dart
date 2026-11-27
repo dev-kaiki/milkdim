@@ -80,6 +80,45 @@ void main() {
     expect(find.text('Mercado Sul'), findsOneWidget);
   });
 
+  testWidgets('I1: entregues sem internet aparecem só no mês atual', (tester) async {
+    final off = {..._ped('finalizado', DateTime(2026, 11, 14), 40), 'finalizado_em': null};
+    await _abrir(tester, [..._pedidos, off]);
+    expect(
+        find.text('Entregues sem internet: 1 pedido · ${formatarReais(40)}'
+            ' — entram nas vendas quando forem enviados'),
+        findsOneWidget);
+    await tester.tap(_anterior);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Entregues sem internet'), findsNothing);
+  });
+
+  testWidgets('I1: plural e oculto com zero', (tester) async {
+    final a = {..._ped('finalizado', DateTime(2026, 11, 14), 40), 'finalizado_em': null};
+    await _abrir(tester, [a, a]);
+    expect(find.textContaining('2 pedidos · '), findsWidgets);
+    expect(find.textContaining('Entregues sem internet: 2 pedidos'), findsOneWidget);
+  });
+
+  testWidgets('I1: sem pedido offline a linha não aparece', (tester) async {
+    await _abrir(tester, _pedidos);
+    expect(find.textContaining('Entregues sem internet'), findsNothing);
+  });
+
+  testWidgets('I2: mês atual compara só até o mesmo dia e hora do anterior', (tester) async {
+    // Em 15/11 10h: 14/10 conta na base, 20/10 não.
+    await _abrir(tester, [
+      _ped('finalizado', DateTime(2026, 11, 3, 10), 100),
+      _ped('finalizado', DateTime(2026, 10, 14, 10), 50),
+      _ped('finalizado', DateTime(2026, 10, 20, 10), 500),
+    ]);
+    expect(find.text('▲ 100%'), findsWidgets); // 100 x 50 (e não x 550)
+    await tester.tap(_anterior);
+    await tester.pumpAndSettle();
+    // Outubro encerrado: 550 contra setembro zero, sem comparação.
+    expect(find.text('outubro de 2026'), findsOneWidget);
+    expect(find.textContaining('▲'), findsNothing);
+  });
+
   testWidgets('"‹" vai ao mês anterior, onde "A entregar" some', (tester) async {
     await _abrir(tester, _pedidos);
     await tester.tap(_anterior);

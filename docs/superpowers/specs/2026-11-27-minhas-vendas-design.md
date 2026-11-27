@@ -36,3 +36,14 @@ resultado motiva e ajuda a planejar. Funcionalidade 5 de 11, aprovada pelo Kaiki
 | **Tela própria com mês navegável (escolhido)** | Clara, offline, mesma regra do Controle. |
 | Só um número na tela inicial | Barato, mas sem detalhe nem comparação. |
 | Ler do servidor | Pega pedidos de outros aparelhos, mas não funciona sem internet. |
+
+## Diferenças conhecidas
+
+- **Pedido apagado no Controle depois de entregue** continua contado no celular, porque a sync
+  nunca remove linhas do aparelho. Próximo passo: numa sync completa e paginada, marcar como
+  apagado o que o servidor não devolveu (a sync precisa ser paginada antes; o PostgREST limita
+  a resposta a 1000 linhas).
+- **Produtos cujos nomes só diferem em maiúsculas/minúsculas** ficam juntos aqui e separados
+  no Controle.
+- **Pedido com total 0:** o Controle usa a soma dos itens; o app usa 0 (só acontece com dado
+  corrompido).

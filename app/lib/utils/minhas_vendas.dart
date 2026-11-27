@@ -35,6 +35,11 @@ class ResumoVendas {
   final List<VendaProduto> porProduto;
   final List<VendaCliente> melhoresClientes;
 
+  /// Entregues sem internet: `finalizado` sem `finalizado_em` legível (o
+  /// servidor ainda não devolveu a data). Não entram em "Vendido".
+  final int aguardandoEnvioPedidos;
+  final double aguardandoEnvioValor;
+
   const ResumoVendas({
     required this.vendido,
     required this.pedidos,
@@ -43,6 +48,8 @@ class ResumoVendas {
     required this.aEntregarPedidos,
     required this.porProduto,
     required this.melhoresClientes,
+    this.aguardandoEnvioPedidos = 0,
+    this.aguardandoEnvioValor = 0,
   });
 }
 
@@ -73,14 +80,51 @@ class _AcumuladoCliente {
   _AcumuladoCliente(this.nome, this.recente);
 }
 
-/// Resumo de [mes]/[ano] (hora local) para [vendedorCodigo].
-ResumoVendas resumoDoMes(
+bool _soLocal(Map p) {
+  final v = p['so_local'];
+  return v == true || v == 1 || v == '1';
+}
+
+/// Quando a venda foi entregue (hora local), ou `null` se o pedido não é venda
+/// deste vendedor (outro vendedor, apagado, fora de `finalizado`) ou a data é
+/// ilegível. Regra única de "venda", usada pelo resumo e pela tela inicial.
+DateTime? _quandoVendeu(Map p, String vendedorCodigo) {
+  if ('${p['vendedor_codigo'] ?? ''}' != vendedorCodigo) return null;
+  if (apagadoNoControle(p)) return null;
+  if (_status(p) != 'finalizado') return null;
+  return DateTime.tryParse('${p['finalizado_em'] ?? ''}'.trim())?.toLocal();
+}
+
+/// Total vendido em [mes]/[ano] (hora local); a mesma regra do resumo, sem
+/// montar produtos nem clientes (para a tela inicial).
+double vendidoNoMes(
   List<Map<String, dynamic>> pedidos, {
   required String vendedorCodigo,
   required int ano,
   required int mes,
 }) {
+  var soma = 0.0;
+  for (final p in pedidos) {
+    final q = _quandoVendeu(p, vendedorCodigo);
+    if (q == null || q.year != ano || q.month != mes) continue;
+    soma += _dinheiro(p['total']) ?? 0;
+  }
+  return soma;
+}
+
+/// Resumo de [mes]/[ano] (hora local) para [vendedorCodigo]. Com [ate], só
+/// conta venda entregue até esse instante (hora local), para comparar o mês
+/// atual com o mesmo trecho do mês anterior.
+ResumoVendas resumoDoMes(
+  List<Map<String, dynamic>> pedidos, {
+  required String vendedorCodigo,
+  required int ano,
+  required int mes,
+  DateTime? ate,
+}) {
   var vendido = 0.0;
+  var aguardandoPedidos = 0;
+  var aguardandoValor = 0.0;
   var contados = 0;
   var aEntregarValor = 0.0;
   var aEntregarPedidos = 0;
@@ -93,14 +137,24 @@ ResumoVendas resumoDoMes(
     final status = _status(p);
 
     if (status == 'salvo' || status == 'pronto') {
+      // Rascunho só do aparelho não é pedido para entregar.
+      if (_soLocal(p)) continue;
       aEntregarPedidos++;
       aEntregarValor += _dinheiro(p['total']) ?? 0;
       continue;
     }
     if (status != 'finalizado') continue;
 
-    final quando = DateTime.tryParse('${p['finalizado_em'] ?? ''}'.trim())?.toLocal();
-    if (quando == null || quando.year != ano || quando.month != mes) continue;
+    final quando = _quandoVendeu(p, vendedorCodigo);
+    if (quando == null) {
+      if (!_soLocal(p)) {
+        aguardandoPedidos++;
+        aguardandoValor += _dinheiro(p['total']) ?? 0;
+      }
+      continue;
+    }
+    if (quando.year != ano || quando.month != mes) continue;
+    if (ate != null && quando.isAfter(ate)) continue;
 
     final total = _dinheiro(p['total']) ?? 0;
     vendido += total;
@@ -114,7 +168,8 @@ ResumoVendas resumoDoMes(
       a.valor += valor;
     }
 
-    final nome = nomeExibicao(clienteDoPedido(p));
+    final exibido = nomeExibicao(clienteDoPedido(p));
+    final nome = exibido.isEmpty ? 'Cliente sem nome' : exibido;
     final id = p['cliente_id'];
     final chave = id != null && '$id'.trim().isNotEmpty ? 'id:$id' : 'nome:${_chave(nome)}';
     final c = clientes.putIfAbsent(chave, () => _AcumuladoCliente(nome, quando));
@@ -154,6 +209,8 @@ ResumoVendas resumoDoMes(
     aEntregarPedidos: aEntregarPedidos,
     porProduto: porProduto,
     melhoresClientes: melhores.take(5).toList(),
+    aguardandoEnvioPedidos: aguardandoPedidos,
+    aguardandoEnvioValor: aguardandoValor,
   );
 }
 
@@ -165,4 +222,15 @@ String? textoVariacao(double atual, double anterior) {
   if (n > 0) return '▲ $n%';
   if (n < 0) return '▼ ${-n}%';
   return '= 0%';
+}
+
+/// Limite da comparação do mês atual: o mesmo dia e hora de [agora] no mês
+/// anterior; se o mês anterior for mais curto, o fim dele.
+DateTime limiteMesAnterior(DateTime agora) {
+  final ano = agora.month == 1 ? agora.year - 1 : agora.year;
+  final mes = agora.month == 1 ? 12 : agora.month - 1;
+  final fim = DateTime(ano, mes + 1, 1).subtract(const Duration(microseconds: 1));
+  if (agora.day > fim.day) return fim;
+  return DateTime(ano, mes, agora.day, agora.hour, agora.minute, agora.second,
+      agora.millisecond, agora.microsecond);
 }

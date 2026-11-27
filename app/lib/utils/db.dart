@@ -967,9 +967,25 @@ Future<List<Map<String, dynamic>>> listarPedidosParaVendas(String vendedorCodigo
   final db = await getDb();
   final rows = await db.rawQuery(
     'SELECT id, numero, status, vendedor_codigo, finalizado_em, total, produtos, '
-    'erro_envio, cliente_id, cliente_nome, cliente_nome_fantasia, datahora '
+    'erro_envio, cliente_id, cliente_nome, cliente_nome_fantasia, datahora, '
+    'pendente_envio, so_local '
     'FROM pedidos WHERE vendedor_codigo = ?',
     [vendedorCodigo],
+  );
+  return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+}
+
+/// Só o que a tela inicial precisa para somar o mês: pedidos com
+/// `finalizado_em` a partir de [inicioMesUtc] menos 1 dia (folga de fuso). A
+/// conta exata é de `vendidoNoMes`.
+Future<List<Map<String, dynamic>>> listarVendasDoMesParaHome(
+    String vendedorCodigo, DateTime inicioMesUtc) async {
+  final db = await getDb();
+  final desde = inicioMesUtc.toUtc().subtract(const Duration(days: 1)).toIso8601String();
+  final rows = await db.rawQuery(
+    'SELECT total, status, finalizado_em, erro_envio, vendedor_codigo '
+    'FROM pedidos WHERE vendedor_codigo = ? AND finalizado_em >= ?',
+    [vendedorCodigo, desde],
   );
   return rows.map((r) => Map<String, dynamic>.from(r)).toList();
 }

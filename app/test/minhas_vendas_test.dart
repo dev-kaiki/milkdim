@@ -228,6 +228,74 @@ void main() {
     });
   });
 
+  group('resumoDoMes: revisão final', () {
+    test('I1: finalizado sem finalizado_em fica fora do vendido e aparece aguardando', () {
+      final r = _res([
+        _ped(),
+        _ped(total: 40, finalizadoEm: ''),
+        _ped(total: '10,5', finalizadoEm: 'lixo'),
+        _ped(total: 99, finalizadoEm: '', erroEnvio: kErroApagadoNoControle),
+        _ped(total: 99, finalizadoEm: '', vendedor: '0002'),
+      ]);
+      expect(r.vendido, 100);
+      expect(r.pedidos, 1);
+      expect(r.aguardandoEnvioPedidos, 2);
+      expect(r.aguardandoEnvioValor, 50.5);
+    });
+
+    test('I2: ate corta o mês anterior no mesmo dia e hora', () {
+      final doze = _ped(total: 10, quando: DateTime(2026, 10, 14, 12));
+      final tarde = _ped(total: 20, quando: DateTime(2026, 10, 20, 12));
+      final agora = DateTime(2026, 11, 15, 10);
+      final r = resumoDoMes([doze, tarde],
+          vendedorCodigo: '0003', ano: 2026, mes: 10, ate: limiteMesAnterior(agora));
+      expect(r.vendido, 10);
+      expect(r.pedidos, 1);
+      expect(_res([doze, tarde], mes: 10).vendido, 30);
+    });
+
+    test('I2: 31/03 compara com fevereiro inteiro', () {
+      final lim = limiteMesAnterior(DateTime(2026, 3, 31, 10));
+      final p = _ped(total: 10, quando: DateTime(2026, 2, 28, 23, 59));
+      final r = resumoDoMes([p],
+          vendedorCodigo: '0003', ano: 2026, mes: 2, ate: lim);
+      expect(r.vendido, 10);
+    });
+
+    test('I2: janeiro olha dezembro do ano anterior', () {
+      final lim = limiteMesAnterior(DateTime(2027, 1, 5, 8));
+      expect(lim, DateTime(2026, 12, 5, 8));
+    });
+
+    test('M4: vendidoNoMes segue a mesma regra do resumo', () {
+      final ps = [
+        _ped(total: 100),
+        _ped(total: '50,50'),
+        _ped(vendedor: '0002'),
+        _ped(erroEnvio: kErroApagadoNoControle),
+        _ped(status: 'salvo'),
+        _ped(finalizadoEm: ''),
+        _ped(quando: DateTime(2026, 10, 10)),
+      ];
+      expect(vendidoNoMes(ps, vendedorCodigo: '0003', ano: 2026, mes: 11), 150.5);
+      expect(_res(ps).vendido, 150.5);
+    });
+
+    test('M6: rascunho so_local não entra em "A entregar"', () {
+      final r = _res([
+        {..._ped(status: 'salvo', total: 30), 'so_local': 1},
+        {..._ped(status: 'pronto', total: 20), 'so_local': 0},
+      ]);
+      expect(r.aEntregarPedidos, 1);
+      expect(r.aEntregarValor, 20);
+    });
+
+    test('M7: cliente sem nome aparece como "Cliente sem nome"', () {
+      final r = _res([_ped(clienteId: 1, nome: '  ')]);
+      expect(r.melhoresClientes.single.nome, 'Cliente sem nome');
+    });
+  });
+
   group('textoVariacao', () {
     test('sobe', () => expect(textoVariacao(150, 100), '▲ 50%'));
     test('cai', () => expect(textoVariacao(50, 100), '▼ 50%'));
@@ -282,9 +350,33 @@ void main() {
       expect(r.first.keys.toSet(), {
         'id', 'numero', 'status', 'vendedor_codigo', 'finalizado_em', 'total',
         'produtos', 'erro_envio', 'cliente_id', 'cliente_nome',
-        'cliente_nome_fantasia', 'datahora',
+        'cliente_nome_fantasia', 'datahora', 'pendente_envio', 'so_local',
       });
       expect(resumoDoMes(r, vendedorCodigo: '0003', ano: 2026, mes: 11).pedidos, 2);
+    });
+
+    test('M4: listarVendasDoMesParaHome traz só as colunas leves e o período', () async {
+      await limpar();
+      Map<String, dynamic> ped(int id, String quando) => {
+            'id': id,
+            'numero': '$id',
+            'status': 'finalizado',
+            'vendedor_codigo': '0003',
+            'datahora': quando,
+            'finalizado_em': quando,
+            'total': 10.0,
+            'cliente_id': 7,
+            'cliente_nome': 'Cliente',
+            'id_aparelho': 'ap-$id',
+            'assinatura': '0xABCDEF',
+            'produtos': const [],
+          };
+      await salvarPedidoLocal(ped(1, '2026-09-10T10:00:00Z'));
+      await salvarPedidoLocal(ped(2, '2026-11-10T10:00:00Z'));
+      final r = await listarVendasDoMesParaHome('0003', DateTime.utc(2026, 11, 1));
+      expect(r.length, 1);
+      expect(r.single.keys.toSet(),
+          {'total', 'status', 'finalizado_em', 'erro_envio', 'vendedor_codigo'});
     });
   });
 }

@@ -68,8 +68,9 @@ class _HomePageState extends State<HomePage> {
   /// Pedidos prontos para entregar; null enquanto não calculou.
   int? _prontos;
 
-  /// Vendido no mês atual; null enquanto não calculou.
-  double? _vendido;
+  /// Vendido e o mês a que o valor se refere; null enquanto não calculou.
+  /// Guarda o mês junto para nunca misturar o total de um mês com o nome de outro.
+  ({double valor, int ano, int mes})? _vendas;
   bool _sincronizando = false;
   bool _enviando = false;
 
@@ -87,7 +88,11 @@ class _HomePageState extends State<HomePage> {
       _pendentes = captura;
       _sumidos = widget.sumidosParaCaptura;
       _prontos = widget.prontosParaCaptura;
-      _vendido = widget.vendasParaCaptura;
+      final v = widget.vendasParaCaptura;
+      if (v != null) {
+        final agora = DateTime.now();
+        _vendas = (valor: v, ano: agora.year, mes: agora.month);
+      }
       _syncEmDia = true;
       return;
     }
@@ -141,14 +146,23 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Só mostra o valor se for do mês atual; senão volta ao texto neutro.
+  String _subtituloVendas() {
+    final agora = DateTime.now();
+    final v = _vendas;
+    final atual = v != null && v.ano == agora.year && v.mes == agora.month;
+    return subtituloVendas(atual ? v.valor : null, agora.month);
+  }
+
   Future<void> _atualizarVendas() async {
     if (_codigo.isEmpty) return;
     try {
-      final pedidos = await listarPedidosParaVendas(_codigo);
       final agora = DateTime.now();
-      final r = resumoDoMes(pedidos,
+      final pedidos = await listarVendasDoMesParaHome(
+          _codigo, DateTime(agora.year, agora.month, 1).toUtc());
+      final v = vendidoNoMes(pedidos,
           vendedorCodigo: _codigo, ano: agora.year, mes: agora.month);
-      if (mounted) setState(() => _vendido = r.vendido);
+      if (mounted) setState(() => _vendas = (valor: v, ano: agora.year, mes: agora.month));
     } catch (e) {
       debugPrint('Erro ao somar as vendas do mês: $e');
     }
@@ -434,7 +448,7 @@ class _HomePageState extends State<HomePage> {
                       MdActionTile(
                         icone: Icons.bar_chart_outlined,
                         titulo: 'Minhas vendas',
-                        subtitulo: subtituloVendas(_vendido, DateTime.now().month),
+                        subtitulo: _subtituloVendas(),
                         onTap: () => _abrir(MinhasVendasPage(vendedor: widget.vendedor)),
                       ),
                       if (leituraDeEtiquetaDisponivel) ...[
