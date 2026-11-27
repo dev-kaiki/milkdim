@@ -15,6 +15,7 @@ import '../utils/pdf_utils.dart' show imagemDaAssinatura;
 import '../utils/pedido_da_tela.dart';
 import '../utils/regras_pedido.dart';
 import '../utils/supabase_helper.dart';
+import '../utils/comprovante.dart';
 import '../utils/convert.dart'; // assinaturaToBytes / signatureToImageBytes / imageTypeFromBytes
 import '../widgets/pedido_ui.dart';
 import 'assinatura_page.dart';
@@ -42,6 +43,12 @@ class PedidoPageEdit extends StatefulWidget {
   /// a situação prevista.
   final Future<String?> Function(Map<String, dynamic> pedido)? lerSituacaoGravada;
 
+  /// Para teste: no lugar de `compartilharComprovante` (PDF + WhatsApp).
+  final Future<void> Function(Map<String, dynamic> pedido)? enviarComprovante;
+
+  /// Para teste: no lugar de `buscarPedidoLocalPorId` (a linha já gravada).
+  final Future<Map<String, dynamic>?> Function(int id)? lerPedidoGravado;
+
   const PedidoPageEdit({
     super.key,
     required this.pedido,
@@ -50,6 +57,8 @@ class PedidoPageEdit extends StatefulWidget {
     this.gravar,
     this.gravarArquivoAssinatura,
     this.lerSituacaoGravada,
+    this.enviarComprovante,
+    this.lerPedidoGravado,
   });
 
   @override
@@ -587,13 +596,62 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
         assinaturaEntrega: bytes,
         assinaturaEntregaPath: caminhoAss,
       );
-    });
+    }, antesDeFechar: _oferecerComprovante);
+  }
+
+  /// Depois de registrar a entrega: pergunta se manda o comprovante ao
+  /// cliente. Usa a linha já gravada (com id e assinaturas); se não der para
+  /// reler, o mapa que acabou de ser gravado. Falhar aqui nunca impede de
+  /// fechar a tela: a entrega já está registrada.
+  Future<void> _oferecerComprovante(Map<String, dynamic> gravado) async {
+    if (!mounted) return;
+    final quer = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Entrega registrada. Enviar comprovante ao cliente?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Agora não'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Enviar comprovante'),
+          ),
+        ],
+      ),
+    );
+    if (quer != true || !mounted) return;
+    try {
+      var pedido = gravado;
+      final id = int.tryParse('${gravado['id'] ?? widget.pedido['id'] ?? ''}');
+      if (id != null) {
+        try {
+          final lido = await (widget.lerPedidoGravado ?? buscarPedidoLocalPorId)(id);
+          if (lido != null) pedido = lido;
+        } catch (e) {
+          // ignore: avoid_print
+          print('[EDIT] não releu o pedido gravado: $e');
+        }
+      }
+      final enviar = widget.enviarComprovante ??
+          (p) => compartilharComprovante(p, texto: textoComprovante(p['numero']));
+      await enviar(pedido);
+    } catch (e) {
+      // ignore: avoid_print
+      print('[EDIT] erro ao enviar o comprovante: $e');
+      if (mounted) _showSnack('Não foi possível gerar o comprovante.');
+    }
   }
 
   /// Grava no aparelho na hora (nunca espera a rede) e tenta enviar. Um envio
   /// de pendentes que esteja no ar não sobrescreve esta edição: o eco antigo
   /// é descartado em aplicarEcoDoServidor. Gravou: fecha a página.
-  Future<void> _gravar(Future<Map<String, dynamic>> Function() montar) async {
+  Future<void> _gravar(
+    Future<Map<String, dynamic>> Function() montar, {
+    Future<void> Function(Map<String, dynamic> gravado)? antesDeFechar,
+  }) async {
     setState(() => processando = true);
     try {
       final pedidoAtualizado = await montar();
@@ -626,6 +684,12 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
       }
       // ignore: avoid_print
       print('[EDIT] concluído ($r) -> pop("$situacao")');
+      if (antesDeFechar != null) {
+        // Já gravou: o círculo de espera sai antes da pergunta.
+        setState(() => processando = false);
+        await antesDeFechar(pedidoAtualizado);
+      }
+      if (!mounted) return;
       Navigator.pop(context, situacao);
     } on NumeroEmUso catch (e) {
       // Nada foi gravado: o formulário fica aberto para trocar o número.

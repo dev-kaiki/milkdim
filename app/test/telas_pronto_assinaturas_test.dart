@@ -936,6 +936,9 @@ void main() {
       expect(g['assinatura'], _png);
       expect(g['assinatura_path'], '/sig/entrega_70.png');
       expect(g['so_local'], 0);
+      // depois de registrar a entrega vem a pergunta do comprovante
+      await tester.tap(find.text('Agora não'));
+      await tester.pumpAndSettle();
       expect(find.text('Editar Pedido'), findsNothing, reason: 'gravou e fechou');
     });
   });
