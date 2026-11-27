@@ -40,23 +40,57 @@ Map<String, dynamic> _remoto(String status) => {
       },
     };
 
-/// Deixa as operações reais do SQLite (ffi) terminarem e redesenha.
-Future<void> _esperar(WidgetTester tester) async {
-  for (var i = 0; i < 6; i++) {
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
-    await tester.pump();
+/// O "servidor" do teste: conta as respostas (com ou sem erro) para o teste
+/// esperar por elas, e não por um tempo fixo. O SQLite (ffi) roda em tempo
+/// real, fora do relógio falso do teste; com a máquina carregada, um prazo
+/// fixo curto não basta.
+class _Servidor {
+  _Servidor(this._responder);
+
+  final Future<void> Function(String codigo) _responder;
+  int respostas = 0;
+
+  Future<void> baixar(String codigo) async {
+    try {
+      await _responder(codigo);
+    } finally {
+      respostas++;
+    }
+  }
+
+  /// Espera a [n]-ésima resposta e a releitura do aparelho que a tela faz
+  /// depois dela (e o aviso, se houver).
+  Future<void> esperarResposta(WidgetTester tester, int n) async {
+    final relogio = Stopwatch()..start();
+    while (true) {
+      await tester.pump();
+      if (respostas >= n) break;
+      if (relogio.elapsed > const Duration(seconds: 20)) {
+        fail('a tela não chamou o servidor (respostas: $respostas, esperadas: $n)');
+      }
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+    }
+    // A releitura já foi pedida ao SQLite. Ele atende em ordem: quando esta
+    // consulta volta, a da tela já voltou.
+    await tester.runAsync(() async => (await getDb()).rawQuery('SELECT 1'));
+    for (var i = 0; i < 3; i++) {
+      await tester.pump();
+    }
   }
 }
 
-Future<void> _abrir(WidgetTester tester, Future<void> Function(String) baixar) async {
+Future<_Servidor> _abrir(
+    WidgetTester tester, Future<void> Function(String) responder) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(412, 1400);
   addTearDown(tester.view.reset);
+  final servidor = _Servidor(responder);
   await tester.pumpWidget(MaterialApp(
     theme: buildMilkdimTheme(),
-    home: PedidosPage(vendedorCodigo: '0003', baixarPedidos: baixar),
+    home: PedidosPage(vendedorCodigo: '0003', baixarPedidos: servidor.baixar),
   ));
-  await _esperar(tester);
+  await servidor.esperarResposta(tester, 1);
+  return servidor;
 }
 
 void main() {
@@ -93,14 +127,14 @@ void main() {
   testWidgets('Recarregar busca no servidor de novo (Produção concluída vira Pronto)',
       (tester) async {
     var vezes = 0;
-    await _abrir(tester, (_) async {
+    final servidor = await _abrir(tester, (_) async {
       vezes++;
       if (vezes == 2) await aplicarPedidosRemotos([_remoto('pronto')]);
     });
     expect(find.text('Pronto'), findsNothing);
 
     await tester.tap(find.byIcon(Icons.refresh));
-    await _esperar(tester);
+    await servidor.esperarResposta(tester, 2);
 
     expect(vezes, 2);
     expect(find.text('Em aberto (1)'), findsOneWidget);
@@ -109,12 +143,12 @@ void main() {
 
   testWidgets('sem internet: ao abrir fica quieto; no Recarregar avisa e mostra o do aparelho',
       (tester) async {
-    await _abrir(tester, (_) async => throw Exception('sem rede'));
+    final servidor = await _abrir(tester, (_) async => throw Exception('sem rede'));
     expect(find.text(kMsgSemServidorMeusPedidos), findsNothing);
     expect(find.text('Em aberto (1)'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.refresh));
-    await _esperar(tester);
+    await servidor.esperarResposta(tester, 2);
 
     expect(find.text(kMsgSemServidorMeusPedidos), findsOneWidget);
     expect(find.text('Em aberto (1)'), findsOneWidget);
