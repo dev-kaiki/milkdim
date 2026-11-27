@@ -123,7 +123,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _atualizarProntos() async {
     if (_codigo.isEmpty) return;
     try {
-      final pedidos = await listarPedidosLocaisPorVendedor(_codigo);
+      final pedidos = await listarPedidosProntos(_codigo);
       final n = contarProntos(pedidos, vendedorCodigo: _codigo);
       if (mounted) setState(() => _prontos = n);
     } catch (e) {

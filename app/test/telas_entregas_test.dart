@@ -12,7 +12,7 @@ import 'package:milkdim_app/pages/home_page.dart';
 const _vendedor = <String, dynamic>{'codigo': '0002', 'nome': 'Carlos'};
 
 Map<String, dynamic> _ped(int id, String numero, String nome, String cidade,
-        {String? endereco, String? whats, String? prontoEm, String produtos = '[]'}) =>
+        {String? endereco, String? cep, String? whats, String? prontoEm, String produtos = '[]'}) =>
     {
       'id': id,
       'numero': numero,
@@ -21,6 +21,7 @@ Map<String, dynamic> _ped(int id, String numero, String nome, String cidade,
       'cliente_nome': nome,
       'cliente_cidade': cidade,
       'cliente_endereco': endereco,
+      'cliente_cep': cep,
       'cliente_whatsapp': whats,
       'pronto_em': prontoEm,
       'produtos': produtos,
@@ -30,6 +31,7 @@ Map<String, dynamic> _ped(int id, String numero, String nome, String cidade,
 final _prontos = <Map<String, dynamic>>[
   _ped(1, '101', 'Padaria Central', 'Franca',
       endereco: 'Rua Açaí, 10',
+      cep: '14400-000',
       whats: '(16) 99999-1234',
       prontoEm: DateTime(2026, 11, 26, 14, 30).toUtc().toIso8601String(),
       produtos: '[{"nome":"Pote 160g","quantidade":40,"preco":3.0}]'),
@@ -70,6 +72,13 @@ Finder _botao(String texto, [int i = 0]) => find
     .ancestor(of: find.text(texto), matching: find.byWidgetPredicate((w) => w is ButtonStyleButton))
     .at(i);
 
+/// Puxa a tela para baixo o bastante para o RefreshIndicator disparar (a
+/// tela de teste é alta, e o gatilho é proporcional à altura).
+Future<void> _puxar(WidgetTester tester) async {
+  await tester.drag(find.byType(Scrollable).first, const Offset(0, 2500));
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('mostra grupos por cidade e cartões com os textos exatos', (tester) async {
     await _abrir(tester);
@@ -77,6 +86,7 @@ void main() {
     expect(find.text('Sem cidade'), findsOneWidget);
     expect(find.text('Pedido nº 101'), findsOneWidget);
     expect(find.text('Padaria Central'), findsOneWidget);
+    expect(find.text('Rua Açaí, 10 · CEP 14400-000'), findsOneWidget);
     expect(find.text('Pronto desde 26/11 14:30'), findsOneWidget);
     expect(find.textContaining('Pote 160g ×40'), findsOneWidget);
     // Só o pedido com pronto_em mostra a linha.
@@ -179,6 +189,62 @@ void main() {
     expect(find.text('Pedido nº 101'), findsOneWidget);
   });
 
+  testWidgets('puxar para atualizar baixa de novo', (tester) async {
+    var baixou = 0;
+    await _abrir(tester, baixarPedidos: (_) async => baixou++);
+    expect(baixou, 1);
+    await _puxar(tester);
+    await tester.pumpAndSettle();
+    expect(baixou, 2);
+  });
+
+  testWidgets('puxar para atualizar funciona também com a lista vazia', (tester) async {
+    var baixou = 0;
+    await _abrir(tester,
+        carregarPedidos: (_) async => [], baixarPedidos: (_) async => baixou++);
+    await _puxar(tester);
+    await tester.pumpAndSettle();
+    expect(baixou, 2);
+  });
+
+  testWidgets('erro ao recarregar não apaga a lista na tela', (tester) async {
+    var chamadas = 0;
+    await _abrir(
+      tester,
+      carregarPedidos: (_) async {
+        chamadas++;
+        if (chamadas > 1) throw Exception('banco ocupado');
+        return _prontos;
+      },
+    );
+    // A segunda leitura (depois do download) falhou: a primeira segue na tela.
+    expect(chamadas, 2);
+    expect(find.text('Pedido nº 101'), findsOneWidget);
+    expect(find.text('Não foi possível carregar as entregas.'), findsNothing);
+  });
+
+  testWidgets('erro na primeira leitura mostra a mensagem', (tester) async {
+    await _abrir(tester, carregarPedidos: (_) async => throw Exception('x'));
+    expect(find.text('Não foi possível carregar as entregas.'), findsOneWidget);
+  });
+
+  testWidgets('toque duplo em Registrar entrega abre uma tela só', (tester) async {
+    var abertas = 0;
+    await _abrir(
+      tester,
+      paginaEntrega: (p) {
+        abertas++;
+        return const Scaffold(body: Text('editor'));
+      },
+    );
+    final botao = _botao('Registrar entrega');
+    tester.widget<ButtonStyleButton>(botao).onPressed!();
+    tester.widget<ButtonStyleButton>(botao).onPressed!();
+    await tester.pumpAndSettle();
+    expect(abertas, 1);
+    expect(find.text('editor'), findsOneWidget);
+  });
+
   testWidgets('tela inicial: item Entregas do dia mostra a contagem', (tester) async {
     await tester.pumpWidget(MaterialApp(
       theme: buildMilkdimTheme(),
@@ -202,6 +268,7 @@ void main() {
   test('subtituloEntregas', () {
     expect(subtituloEntregas(null), 'Pedidos prontos para entregar');
     expect(subtituloEntregas(0), '0 prontos para entregar');
+    expect(subtituloEntregas(1), '1 pronto para entregar');
     expect(subtituloEntregas(3), '3 prontos para entregar');
   });
 }

@@ -243,5 +243,52 @@ void main() {
       expect(r.map((p) => p['cliente_id']).toList()..sort(), [7, 8]);
       expect(r.every((p) => p['vendedor_codigo'] == '0003'), isTrue);
     });
+
+    test('listarPedidosProntos: só pronto do vendedor, tolera espaço e caixa', () async {
+      Map<String, dynamic> ped(int id, String vend, String status) => {
+            'id': id,
+            'numero': '$id',
+            'status': status,
+            'vendedor_codigo': vend,
+            'datahora': '2026-11-${10 + id}T10:00:00Z',
+            'total': 10.0,
+            'cliente_nome': 'Cliente $id',
+            'cliente_cidade': 'Franca',
+            'id_aparelho': 'ap-$id',
+            'assinatura': '0xABCDEF',
+            'produtos': [
+              {'nome': 'Copo', 'preco': 10.0, 'quantidade': 1, 'subtotal': 10.0},
+            ],
+          };
+      await salvarPedidoLocal(ped(1, '0003', 'pronto'));
+      await salvarPedidoLocal(ped(2, '0003', ' Pronto '));
+      await salvarPedidoLocal(ped(3, '0003', 'salvo'));
+      await salvarPedidoLocal(ped(4, '0002', 'pronto'));
+      await salvarPedidoLocal(ped(5, '0003', 'entregue'));
+
+      final r = await listarPedidosProntos('0003');
+      expect(r.map((p) => p['cliente_nome']).toList()..sort(),
+          ['Cliente 1', 'Cliente 2']);
+      expect(r.every((p) => p['vendedor_codigo'] == '0003'), isTrue);
+      // Sem as colunas pesadas.
+      expect(r.first.containsKey('assinatura'), isFalse);
+      expect(r.first['cliente_cidade'], 'Franca');
+    });
+
+    test('buscarPedidoLocalPorId traz a linha completa; null se não existe', () async {
+      final id = await salvarPedidoLocal({
+        'numero': '9',
+        'status': 'pronto',
+        'vendedor_codigo': '0003',
+        'assinatura': '0xABCDEF',
+        'id_aparelho': 'ap-9',
+        'produtos': [],
+      });
+      final p = await buscarPedidoLocalPorId(id);
+      expect(p, isNotNull);
+      expect(p!['numero'], '9');
+      expect(p.containsKey('assinatura'), isTrue);
+      expect(await buscarPedidoLocalPorId(999999), isNull);
+    });
   });
 }

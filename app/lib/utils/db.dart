@@ -961,6 +961,30 @@ Future<List<Map<String, dynamic>>> listarPedidosParaSumidos(String vendedorCodig
   return rows.map((r) => Map<String, dynamic>.from(r)).toList();
 }
 
+/// Pedidos prontos do vendedor, só com as colunas que a tela de entregas e a
+/// contagem da tela inicial usam (sem assinaturas). Tolera espaço e caixa no
+/// status, como `estaPronto`.
+Future<List<Map<String, dynamic>>> listarPedidosProntos(String vendedorCodigo) async {
+  final db = await getDb();
+  final rows = await db.rawQuery(
+    'SELECT id, numero, status, datahora, total, produtos, vendedor_codigo, '
+    'erro_envio, pronto_em, cliente_id, cliente_nome, cliente_nome_fantasia, '
+    'cliente_endereco, cliente_cidade, cliente_cep, cliente_telefone, '
+    'cliente_whatsapp '
+    "FROM pedidos WHERE vendedor_codigo = ? AND LOWER(TRIM(status)) = 'pronto'",
+    [vendedorCodigo],
+  );
+  return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+}
+
+/// A linha completa do pedido (todas as colunas); null se não existir mais.
+Future<Map<String, dynamic>?> buscarPedidoLocalPorId(int id) async {
+  final db = await getDb();
+  final rows = await db.query('pedidos', where: 'id = ?', whereArgs: [id], limit: 1);
+  if (rows.isEmpty) return null;
+  return Map<String, dynamic>.from(rows.first);
+}
+
 Future<Map<int, DateTime?>> getUltimoPedidoPorCliente() async {
   final db = await getDb();
   final rows = await db.rawQuery('''

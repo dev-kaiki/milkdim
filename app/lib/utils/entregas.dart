@@ -12,6 +12,20 @@ class GrupoEntrega {
 
 String _texto(Object? v) => '${v ?? ''}'.trim();
 
+const _comAcento = 'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ';
+const _semAcento = 'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC';
+
+/// Para comparar e ordenar: tira acentos e caixa, apara as pontas.
+String _dobrar(String s) {
+  final b = StringBuffer();
+  for (final r in s.trim().runes) {
+    final c = String.fromCharCode(r);
+    final i = _comAcento.indexOf(c);
+    b.write(i < 0 ? c : _semAcento[i]);
+  }
+  return b.toString().toLowerCase();
+}
+
 bool _entra(Map<String, dynamic> p, String vendedorCodigo) =>
     estaPronto(p) &&
     !apagadoNoControle(p) &&
@@ -45,7 +59,7 @@ List<GrupoEntrega> entregasProntas(
   for (final p in pedidos) {
     if (!_entra(p, vendedorCodigo)) continue;
     final cidade = _texto(p['cliente_cidade']);
-    final chave = cidade.toLowerCase();
+    final chave = _dobrar(cidade);
     titulo.putIfAbsent(chave, () => cidade.isEmpty ? _semCidade : cidade);
     porChave.putIfAbsent(chave, () => []).add(p);
   }
@@ -60,9 +74,8 @@ List<GrupoEntrega> entregasProntas(
         cidade: titulo[k]!,
         pedidos: porChave[k]!
           ..sort((a, b) {
-            final c = nomeExibicao(clienteDoPedido(a))
-                .toLowerCase()
-                .compareTo(nomeExibicao(clienteDoPedido(b)).toLowerCase());
+            final c = _dobrar(nomeExibicao(clienteDoPedido(a)))
+                .compareTo(_dobrar(nomeExibicao(clienteDoPedido(b))));
             return c != 0 ? c : _porNumero(a['numero'], b['numero']);
           }),
       ),

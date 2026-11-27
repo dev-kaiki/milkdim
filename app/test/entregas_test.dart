@@ -38,12 +38,12 @@ void main() {
 
     test('agrupa sem diferença de caixa ou espaço; título do primeiro', () {
       final g = entregasProntas([
-        _p(1, cidade: 'franca'),
-        _p(2, cidade: 'Franca '),
+        _p(1, cidade: ' Franca'),
+        _p(2, cidade: 'franca '),
         _p(3, cidade: ' FRANCA'),
       ], vendedorCodigo: 'V1');
       expect(g.length, 1);
-      expect(g.first.cidade, 'franca');
+      expect(g.first.cidade, 'Franca');
       expect(g.first.pedidos.length, 3);
     });
 
@@ -69,6 +69,37 @@ void main() {
       ], vendedorCodigo: 'V1');
       final nums = g.single.pedidos.map((p) => p['numero']).toList();
       expect(nums, [2, 9, 11, 8, 10]);
+    });
+
+    test('acentos não separam grupos: título do primeiro', () {
+      final g = entregasProntas([
+        _p(1, cidade: 'Ribeirão Preto'),
+        _p(2, cidade: 'Ribeirao Preto'),
+        _p(3, cidade: 'RIBEIRÃO PRETO '),
+      ], vendedorCodigo: 'V1');
+      expect(g.length, 1);
+      expect(g.single.cidade, 'Ribeirão Preto');
+      expect(g.single.pedidos.length, 3);
+    });
+
+    test('cidade com acento ordena pela letra sem acento', () {
+      final g = entregasProntas([
+        _p(1, cidade: 'Batatais'),
+        _p(2, cidade: 'Água Branca'),
+        _p(3, cidade: 'Çaruva'),
+        _p(4, cidade: 'Cravinhos'),
+      ], vendedorCodigo: 'V1');
+      expect(g.map((x) => x.cidade).toList(),
+          ['Água Branca', 'Batatais', 'Çaruva', 'Cravinhos']);
+    });
+
+    test('nome com acento ordena pela letra sem acento', () {
+      final g = entregasProntas([
+        _p(1, nome: 'Bruno'),
+        _p(2, nome: 'Ângela'),
+        _p(3, nome: 'Carlos'),
+      ], vendedorCodigo: 'V1');
+      expect(g.single.pedidos.map((p) => p['numero']).toList(), [2, 1, 3]);
     });
 
     test('lista vazia', () {
