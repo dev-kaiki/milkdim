@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -127,5 +128,37 @@ void main() {
     expect(find.text('Não foi possível gerar o relatório.'), findsOneWidget);
     expect(find.text('Novembro 2026'), findsOneWidget);
     expect(t.widget<OutlinedButton>(_botao).onPressed, isNotNull);
+  });
+
+  testWidgets('nome do arquivo é do mês em que o botão foi tocado',
+      (t) async {
+    String? nome;
+    await _abrir(t, _Fonte(), imprimir: (b, n) async => nome = n);
+    await t.tap(_botao);
+    await t.pump();
+    await t.tap(find.byTooltip('Próximo mês'));
+    await t.runAsync(() => Future.delayed(const Duration(seconds: 2)));
+    await t.pumpAndSettle();
+    expect(nome, 'Relatorio_MilkDim_2026-11.pdf');
+  });
+
+  testWidgets('segundo toque durante a geração não imprime duas vezes',
+      (t) async {
+    final libera = Completer<void>();
+    var chamadas = 0;
+    await _abrir(t, _Fonte(), imprimir: (b, n) async {
+      chamadas++;
+      await libera.future;
+    });
+    await t.tap(_botao);
+    await t.runAsync(() => Future.delayed(const Duration(seconds: 2)));
+    await t.pump();
+    expect(t.widget<OutlinedButton>(_botao).onPressed, isNull);
+    await t.tap(_botao, warnIfMissed: false);
+    await t.pump();
+    libera.complete();
+    await t.runAsync(() => Future.delayed(const Duration(milliseconds: 200)));
+    await t.pumpAndSettle();
+    expect(chamadas, 1);
   });
 }

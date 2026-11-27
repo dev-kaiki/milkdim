@@ -33,7 +33,13 @@ const List<String> nomesMeses = [
 
 const String _semDado = '—';
 const String _listaVazia = 'Nenhum lançamento.';
-const String _textoAviso = 'Até 23/11/2026, a data é a do pedido.';
+
+/// Nota do período antigo, igual na tela e no PDF.
+const String textoAvisoHistorico = 'Até 23/11/2026, a data é a do pedido.';
+
+/// Até novembro de 2026 (inclusive) a venda conta pela data do pedido.
+bool avisoHistoricoAte(int ano, int mes) =>
+    ano < 2026 || (ano == 2026 && mes <= 11);
 
 /// Uma linha do resumo: rótulo, valor e, quando há, a variação do mês.
 typedef LinhaResumo = ({String rotulo, String valor, String? variacao});
@@ -100,7 +106,15 @@ String _cliente(Pedido p) {
   return _semDado;
 }
 
-String? _variacao(Variacao? v) => v == null ? null : textoVariacao(v);
+/// Texto da tela, mas sem as setas (▲/▼): a NotoSans não as tem e elas sairiam
+/// como caixas no PDF.
+String? _variacao(Variacao? v) {
+  if (v == null) return null;
+  final t = textoVariacao(v);
+  if (t.startsWith('▲ ')) return '+${t.substring(2)}';
+  if (t.startsWith('▼ ')) return '-${t.substring(2)}';
+  return t;
+}
 
 RelatorioMes montarRelatorio({
   required int ano,
@@ -172,7 +186,9 @@ RelatorioMes montarRelatorio({
     entregues: [
       for (final p in entreguesOrd)
         [
-          p.finalizadoEm == null ? _semDado : _data(p.finalizadoEm!),
+          p.finalizadoEm == null
+              ? _semDado
+              : _data(p.finalizadoEm!.toLocal()),
           (p.numero ?? '').trim().isEmpty ? '${p.id}' : p.numero!.trim(),
           _cliente(p),
           fmtCentavos(centavos(p.total)),
@@ -182,7 +198,7 @@ RelatorioMes montarRelatorio({
         ? '${_plural(resumo.aReceberPedidos, 'pedido', 'pedidos')} · '
             '${fmtCentavos(resumo.aReceberCentavos)}'
         : null,
-    aviso: (ano < 2026 || (ano == 2026 && mes <= 11)) ? _textoAviso : null,
+    aviso: avisoHistoricoAte(ano, mes) ? textoAvisoHistorico : null,
   );
 }
 
@@ -207,8 +223,9 @@ Future<Uint8List> pdfDoRelatorio(RelatorioMes r) async {
       );
 
   // As últimas [colunasDireita] colunas (valores) ficam alinhadas à direita.
+  // [larguras] por coluna: fixa (pt) ou nula para ocupar o resto (texto).
   pw.Widget grade(List<String> cab, List<List<String>> linhas,
-      {int colunasDireita = 1}) {
+      {int colunasDireita = 1, required List<double?> larguras}) {
     final n = cab.length;
     final direita = {
       for (var i = n - colunasDireita; i < n; i++) i: pw.Alignment.centerRight,
@@ -226,14 +243,21 @@ Future<Uint8List> pdfDoRelatorio(RelatorioMes r) async {
       cellPadding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 3),
       cellAlignments: direita,
       headerAlignments: direita,
+      columnWidths: {
+        for (var i = 0; i < n; i++)
+          i: larguras[i] == null
+              ? const pw.FlexColumnWidth()
+              : pw.FixedColumnWidth(larguras[i]!),
+      },
     );
   }
 
   pw.Widget tabela(List<String> cab, List<List<String>> linhas,
-          {int colunasDireita = 1}) =>
+          {int colunasDireita = 1, required List<double?> larguras}) =>
       linhas.isEmpty
           ? pw.Text(_listaVazia, style: estilo.copyWith(color: cinza))
-          : grade(cab, linhas, colunasDireita: colunasDireita);
+          : grade(cab, linhas,
+              colunasDireita: colunasDireita, larguras: larguras);
 
   doc.addPage(pw.MultiPage(
     pageFormat: PdfPageFormat.a4,
@@ -258,20 +282,23 @@ Future<Uint8List> pdfDoRelatorio(RelatorioMes r) async {
           for (final l in r.resumo) [l.rotulo, l.valor, l.variacao ?? ''],
         ],
         colunasDireita: 2,
+        larguras: const [null, 110, 110],
       ),
       secao('Vendas por vendedor'),
       tabela(const ['Vendedor', 'Pedidos', 'Valor'], r.porVendedor,
-          colunasDireita: 2),
+          colunasDireita: 2, larguras: const [null, 60, 90]),
       secao('Vendas por produto'),
       tabela(const ['Produto', 'Quantidade', 'Valor'], r.porProduto,
-          colunasDireita: 2),
+          colunasDireita: 2, larguras: const [null, 80, 90]),
       secao('Saídas por categoria'),
       tabela(const ['Categoria', 'Lançamentos', 'Valor'], r.porCategoria,
-          colunasDireita: 2),
+          colunasDireita: 2, larguras: const [null, 80, 90]),
       secao('Saídas do mês'),
-      tabela(const ['Data', 'Categoria', 'Descrição', 'Valor'], r.saidas),
+      tabela(const ['Data', 'Categoria', 'Descrição', 'Valor'], r.saidas,
+          larguras: const [62, 100, null, 80]),
       secao('Pedidos entregues'),
-      tabela(const ['Data', 'Pedido', 'Cliente', 'Valor'], r.entregues),
+      tabela(const ['Data', 'Pedido', 'Cliente', 'Valor'], r.entregues,
+          larguras: const [62, 50, null, 80]),
       if (r.aReceber != null) ...[
         secao('A receber'),
         pw.Text(r.aReceber!, style: estilo),

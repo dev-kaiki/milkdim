@@ -19,11 +19,6 @@ import '../models/pedido.dart';
 import '../services/financeiro_service.dart';
 import '../services/supabase_service.dart';
 
-/// Até novembro de 2026 (inclusive) a venda conta pela data do pedido.
-const int _anoHistorico = 2026;
-const int _mesHistorico = 11;
-const String _avisoHistorico = 'Até 23/11/2026, a data é a do pedido.';
-
 String _dataBr(DateTime d) =>
     '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
 
@@ -137,8 +132,7 @@ class _FinanceiroTabState extends State<FinanceiroTab>
     _carregar();
   }
 
-  bool get _mostraAviso =>
-      _ano < _anoHistorico || (_ano == _anoHistorico && _mes <= _mesHistorico);
+  bool get _mostraAviso => avisoHistoricoAte(_ano, _mes);
 
   Future<void> _carregar() async {
     final minha = ++_geracao;
@@ -236,11 +230,13 @@ class _FinanceiroTabState extends State<FinanceiroTab>
     if (_gerandoRelatorio || _carregando || _erro != null || resumo == null) {
       return;
     }
+    // O mês pode mudar enquanto o PDF é gerado: tudo vem do que estava na tela.
+    final ano = _ano, mes = _mes;
     setState(() => _gerandoRelatorio = true);
     try {
       final r = montarRelatorio(
-        ano: _ano,
-        mes: _mes,
+        ano: ano,
+        mes: mes,
         geradoEm: _agora(),
         mesAtual: _mesAtual,
         resumo: resumo,
@@ -251,7 +247,7 @@ class _FinanceiroTabState extends State<FinanceiroTab>
       );
       final pdf = await pdfDoRelatorio(r);
       await (widget.imprimirRelatorio ?? _imprimirPadrao)(
-          pdf, nomeArquivoRelatorio(_ano, _mes));
+          pdf, nomeArquivoRelatorio(ano, mes));
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -355,7 +351,8 @@ class _FinanceiroTabState extends State<FinanceiroTab>
             Flexible(
               child: FittedBox(
                 fit: BoxFit.scaleDown,
-                child: Text('${nomesMeses[_mes - 1]} $_ano', style: tt.titleLarge),
+                child: Text('${nomesMeses[_mes - 1]} $_ano',
+                    style: tt.titleLarge),
               ),
             ),
             IconButton(
@@ -428,7 +425,7 @@ class _FinanceiroTabState extends State<FinanceiroTab>
           if (_mostraAviso)
             Padding(
               padding: const EdgeInsets.only(top: MdSpace.xs),
-              child: Text(_avisoHistorico,
+              child: Text(textoAvisoHistorico,
                   style: tt.bodySmall!.copyWith(color: MdColors.textMuted)),
             ),
           const SizedBox(height: MdSpace.xs),

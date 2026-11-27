@@ -301,8 +301,8 @@ Future<Uint8List?> _carregarLogo() async {
   }
 }
 
-/// NotoSans do pacote de UI, compartilhada com o relatório (acentos e "×" corretos no PDF). Sem o asset,
-/// cai na Helvetica embutida do PDF.
+/// NotoSans do pacote de UI, compartilhada com o relatório (acentos e "×"
+/// corretos no PDF). Sem o asset, cai na Helvetica embutida do PDF.
 Future<pw.Font> carregarFonte(String arquivo, pw.Font reserva) async {
   try {
     final dados = await rootBundle.load('packages/milkdim_ui/fonts/$arquivo');

@@ -85,11 +85,11 @@ void main() {
     expect(r.resumo.map((l) => l.rotulo).toList(),
         ['Vendas', 'Pedidos entregues', 'Saídas', 'Resultado', 'Margem']);
     expect(r.resumo[0].valor, 'R\$ 150,00');
-    expect(r.resumo[0].variacao, '▲ 12%');
+    expect(r.resumo[0].variacao, '+12%');
     expect(r.resumo[1].valor, '2');
     expect(r.resumo[1].variacao, isNull);
     expect(r.resumo[2].valor, 'R\$ 30,00');
-    expect(r.resumo[2].variacao, '▼ 5%');
+    expect(r.resumo[2].variacao, '-5%');
     expect(r.resumo[3].valor, 'R\$ 120,00');
     expect(r.resumo[3].variacao, 'virou positivo');
     expect(r.resumo[4].valor, '80%');
@@ -166,5 +166,56 @@ void main() {
     final bytes = await pdfDoRelatorio(r);
     expect(latin1.decode(bytes.sublist(0, 4)), '%PDF');
     expect(_paginas(bytes), greaterThan(1));
+  });
+
+  test('variação no PDF não usa setas (a fonte não as tem)', () {
+    final r = _monta(
+      comparacao: const ComparacaoMes(
+        vendas: Variacao(pct: 0, sentido: 0),
+        saidas: Variacao(pct: 7, sentido: -1),
+      ),
+    );
+    expect(r.resumo[0].variacao, '= 0%');
+    expect(r.resumo[2].variacao, '+7%');
+    for (final l in r.resumo) {
+      expect(l.variacao ?? '', isNot(contains('▲')));
+      expect(l.variacao ?? '', isNot(contains('▼')));
+    }
+  });
+
+  test('data do pedido sai no horário local, não em UTC', () {
+    final utc = DateTime.utc(2026, 12, 1, 1, 0);
+    final l = utc.toLocal();
+    final esperado = '${l.day.toString().padLeft(2, '0')}/'
+        '${l.month.toString().padLeft(2, '0')}/${l.year}';
+    final r = _monta(entregues: [_pedido(1, fim: utc)]);
+    expect(r.entregues.single[0], esperado);
+  });
+
+  test('mês só com saídas: resultado negativo e margem em traço', () {
+    final r = _monta(saidas: [_saida(DateTime(2026, 11, 3), 1, 3000)]);
+    expect(r.resumo[3].valor, '-R\$ 30,00');
+    expect(r.resumo[4].valor, '—');
+  });
+
+  test('textos longos continuam gerando um PDF válido', () async {
+    final r = _monta(
+      saidas: [
+        _saida(DateTime(2026, 11, 3), 1, 3000, desc: 'D' * 120),
+      ],
+      entregues: [
+        _pedido(1,
+            cliente: 'C' * 80, fim: DateTime(2026, 11, 4), total: 10),
+      ],
+    );
+    final bytes = await pdfDoRelatorio(r);
+    expect(utf8.decode(bytes.sublist(0, 4), allowMalformed: true), '%PDF');
+  });
+
+  test('aviso histórico: um predicado e um texto', () {
+    expect(avisoHistoricoAte(2026, 11), isTrue);
+    expect(avisoHistoricoAte(2025, 12), isTrue);
+    expect(avisoHistoricoAte(2026, 12), isFalse);
+    expect(textoAvisoHistorico, 'Até 23/11/2026, a data é a do pedido.');
   });
 }
