@@ -2,15 +2,22 @@
 //
 // "Repetir pedido": o quadro "Partir de um pedido anterior" na tela de novo
 // pedido. Dados falsos, sem SQLite nem rede.
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 
 import 'package:milkdim_app/pages/pedido_page.dart';
 import 'package:milkdim_app/pages/pedidos_page.dart';
-import 'package:milkdim_app/utils/db.dart' show kErroApagadoNoControle;
+import 'package:milkdim_app/utils/db.dart' show kErroApagadoNoControle, kLimparAssinaturaPedido;
 import 'package:milkdim_app/utils/moeda.dart';
+import 'package:milkdim_app/utils/pedido_da_tela.dart';
 import 'package:milkdim_app/utils/produto.dart';
+import 'package:milkdim_app/utils/regras_pedido.dart';
+import 'package:milkdim_app/utils/supabase_helper.dart';
 import 'package:milkdim_app/widgets/pedido_ui.dart';
 import 'package:milkdim_app/widgets/pedidos_anteriores.dart';
 
@@ -27,7 +34,7 @@ const _clientes = <Map<String, dynamic>>[
   {'id': 8, 'nome': 'Mercado Sul'},
 ];
 
-Map<String, dynamic> _pedido(int id, String itens, {String data = '2026-11-20T15:00:00+00:00'}) => {
+Map<String, dynamic> _pedido(int id, String itens, {String data = '2026-11-20T12:00:00+00:00'}) => {
       'id': id,
       'numero': '$id',
       'status': 'enviado',
@@ -42,8 +49,10 @@ const _itensA = '[{"nome":"Pote 160g","quantidade":40,"preco":3.5,"subtotal":140
 /// Abre a tela de novo pedido com os pedidos que o falso devolve por cliente.
 Future<void> _abrir(
   WidgetTester tester,
-  Map<int, List<Map<String, dynamic>>> porCliente,
-) async {
+  Map<int, List<Map<String, dynamic>>> porCliente, {
+  Future<Uint8List?> Function(TipoAssinatura, {String? aviso})? pedirAssinatura,
+  Future<ResultadoGravacao> Function(Map<String, dynamic>, {required bool novo})? gravar,
+}) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(800, 3000);
   addTearDown(tester.view.reset);
@@ -60,6 +69,8 @@ Future<void> _abrir(
                   vendedor: _vendedor,
                   dadosParaCaptura: (clientes: _clientes, produtos: _catalogo),
                   carregarPedidosDoCliente: (id) async => porCliente[id] ?? const [],
+                  pedirAssinatura: pedirAssinatura,
+                  gravar: gravar,
                 ),
               ),
             ),
@@ -96,12 +107,29 @@ Future<void> _usar(WidgetTester tester, {int linha = 0}) async {
   await tester.pumpAndSettle();
 }
 
+final Uint8List _png = base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
+
+/// Abre o resumo e toca [botao] (as abas do resumo ficam fora da tela).
+Future<void> _tocarResumo(WidgetTester tester, String botao, {bool assentar = true}) async {
+  await tester.tap(find.descendant(of: find.byType(BarraResumo), matching: find.byType(FilledButton)));
+  await tester.pumpAndSettle();
+  await tester.ensureVisible(find.text(botao));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(botao));
+  if (assentar) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+}
+
 const _pergunta = 'Trocar as quantidades da tela pelas deste pedido?';
 
 void main() {
   testWidgets('quadro aparece depois de escolher o cliente', (tester) async {
     await _abrir(tester, {
-      7: [_pedido(1, _itensA), _pedido(2, _itensA, data: '2026-11-10T15:00:00+00:00')],
+      7: [_pedido(1, _itensA), _pedido(2, _itensA, data: '2026-11-10T12:00:00+00:00')],
     });
     expect(find.text('Partir de um pedido anterior'), findsNothing);
 
@@ -183,6 +211,112 @@ void main() {
     expect(find.text('Usar'), findsOneWidget);
     expect(find.text('Pudim ×9'), findsOneWidget);
     expect(find.text('Pote 160g ×40, Copo ×20'), findsNothing);
+  });
+
+  testWidgets('Usar fica desligado enquanto o pedido está sendo gravado', (tester) async {
+    final liberar = Completer<ResultadoGravacao>();
+    await _abrir(
+      tester,
+      {7: [_pedido(1, _itensA)]},
+      pedirAssinatura: (tipo, {aviso}) async => _png,
+      gravar: (pedido, {required novo}) => liberar.future,
+    );
+    await _escolherCliente(tester, 'Padaria Central');
+    await tester.enterText(_campoQtd('Pudim'), '5');
+    await tester.pumpAndSettle();
+    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Usar')).onPressed,
+        isNotNull);
+
+    await _tocarResumo(tester, 'Enviar pedido', assentar: false);
+
+    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Usar')).onPressed,
+        isNull,
+        reason: 'gravando: "Usar" não pode mexer na tela');
+    liberar.complete(ResultadoGravacao.enviado);
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('assinou, usou outro pedido (Trocar) e Salvar rascunho: sem assinatura velha',
+      (tester) async {
+    final pedidos = <(TipoAssinatura, String?)>[];
+    final gravados = <Map<String, dynamic>>[];
+    Uint8List? resposta = _png;
+    await _abrir(
+      tester,
+      {7: [_pedido(1, _itensA)]},
+      pedirAssinatura: (tipo, {aviso}) async {
+        pedidos.add((tipo, aviso));
+        return resposta;
+      },
+      gravar: (pedido, {required novo}) async {
+        gravados.add(Map<String, dynamic>.from(pedido));
+        return ResultadoGravacao.enviado;
+      },
+    );
+    await _escolherCliente(tester, 'Padaria Central');
+    await tester.enterText(_campoQtd('Pudim'), '5');
+    await tester.pumpAndSettle();
+
+    // O cliente assina o que está na tela (Pudim ×5) e fecha o resumo.
+    await tester.tap(find.descendant(of: find.byType(BarraResumo), matching: find.byType(FilledButton)));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Assinar'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Assinar'));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(400, 10));
+    await tester.pumpAndSettle();
+    expect(pedidos, [(TipoAssinatura.pedido, null)]);
+
+    // O vendedor troca os itens pelos de um pedido anterior.
+    await _usar(tester);
+    await tester.tap(find.text('Trocar'));
+    await tester.pumpAndSettle();
+    expect(_qtd(tester, 'Pote 160g'), '40');
+
+    // Rascunho: a assinatura antiga não cobre os itens novos, não vai junto.
+    await _tocarResumo(tester, 'Salvar rascunho');
+    expect(gravados.single.containsKey('assinatura_pedido'), isFalse);
+    expect(gravados.single[kLimparAssinaturaPedido], isTrue);
+  });
+
+  testWidgets('assinou, usou outro pedido e Enviar pede a assinatura de novo', (tester) async {
+    final pedidos = <(TipoAssinatura, String?)>[];
+    final gravados = <Map<String, dynamic>>[];
+    Uint8List? resposta = _png;
+    await _abrir(
+      tester,
+      {7: [_pedido(1, _itensA)]},
+      pedirAssinatura: (tipo, {aviso}) async {
+        pedidos.add((tipo, aviso));
+        return resposta;
+      },
+      gravar: (pedido, {required novo}) async {
+        gravados.add(Map<String, dynamic>.from(pedido));
+        return ResultadoGravacao.enviado;
+      },
+    );
+    await _escolherCliente(tester, 'Padaria Central');
+    await tester.enterText(_campoQtd('Pudim'), '5');
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: find.byType(BarraResumo), matching: find.byType(FilledButton)));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Assinar'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Assinar'));
+    await tester.pumpAndSettle();
+    await tester.tapAt(const Offset(400, 10));
+    await tester.pumpAndSettle();
+
+    await _usar(tester);
+    await tester.tap(find.text('Trocar'));
+    await tester.pumpAndSettle();
+
+    resposta = null; // o cliente não assina de novo
+    await _tocarResumo(tester, 'Enviar pedido');
+
+    expect(pedidos.last, (TipoAssinatura.pedido, kAvisoAssinarPedidoDeNovo));
+    expect(gravados, isEmpty, reason: 'a assinatura antiga não cobre os itens novos');
   });
 
   testWidgets('QuadroPedidosAnteriores vazio não ocupa espaço', (tester) async {

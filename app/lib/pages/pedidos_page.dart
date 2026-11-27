@@ -68,6 +68,7 @@ class PedidosPage extends StatefulWidget {
 class _PedidosPageState extends State<PedidosPage>
     with SingleTickerProviderStateMixin {
   bool _carregando = true;
+  bool _repetindo = false; // evita abrir dois pedidos com toque duplo em Repetir
   List<Map<String, dynamic>> _pedidos = [];
 
   // Busca livre
@@ -399,20 +400,32 @@ class _PedidosPageState extends State<PedidosPage>
 
   /// "Repetir": abre um novo pedido já com o cliente e os produtos de [pedido].
   Future<void> _repetir(Map<String, dynamic> pedido) async {
-    final id = (pedido['cliente_id'] as num?)?.toInt();
-    final clientes = await widget.listarClientesDoAparelho();
-    if (!mounted) return;
-    if (!clientes.any((c) => (c['id'] as num?)?.toInt() == id)) {
-      _snack('Este cliente não está mais cadastrado');
-      return;
+    if (_repetindo) return;
+    _repetindo = true;
+    try {
+      final id = (pedido['cliente_id'] as num?)?.toInt();
+      final List<Map<String, dynamic>> clientes;
+      try {
+        clientes = await widget.listarClientesDoAparelho();
+      } catch (e) {
+        if (mounted) _snack('Erro ao abrir o pedido: $e');
+        return;
+      }
+      if (!mounted) return;
+      if (!clientes.any((c) => (c['id'] as num?)?.toInt() == id)) {
+        _snack('Este cliente não está mais cadastrado');
+        return;
+      }
+      final vendedor = widget.vendedor ??
+          {'codigo': pedido['vendedor_codigo'], 'nome': pedido['vendedor_nome']};
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => PedidoPage(vendedor: vendedor, partirDe: pedido)),
+      );
+      if (mounted) await _carregar();
+    } finally {
+      _repetindo = false;
     }
-    final vendedor = widget.vendedor ??
-        {'codigo': pedido['vendedor_codigo'], 'nome': pedido['vendedor_nome']};
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => PedidoPage(vendedor: vendedor, partirDe: pedido)),
-    );
-    if (mounted) await _carregar();
   }
 
   // Pré-visualização (opcional)

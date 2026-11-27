@@ -361,12 +361,14 @@ class _PedidoPageState extends State<PedidoPage> {
     });
     if (p.foraDoPedido.isNotEmpty) {
       _showMsg('Ficaram de fora (não estão mais à venda): ${p.foraDoPedido.join(', ')}',
-          isError: false);
+          tipo: MdTipo.atencao);
     }
   }
 
   /// "Usar" um pedido anterior: só pergunta se já há quantidades na tela.
   Future<void> _usarPedidoAnterior(Map<String, dynamic> pedido) async {
+    // Gravando: a tela não pode mudar por baixo do pedido que já foi montado.
+    if (carregando) return;
     if (carrinho.values.any((q) => q > 0)) {
       final trocar = await showDialog<bool>(
         context: context,
@@ -378,7 +380,7 @@ class _PedidoPageState extends State<PedidoPage> {
           ],
         ),
       );
-      if (trocar != true || !mounted) return;
+      if (trocar != true || !mounted || carregando) return;
     }
     _aplicarPreenchimento(preencherDePedido(pedido['produtos'], produtos));
   }
@@ -660,9 +662,9 @@ class _PedidoPageState extends State<PedidoPage> {
     );
   }
 
-  void _showMsg(String msg, {bool isError = true}) {
+  void _showMsg(String msg, {bool isError = true, MdTipo? tipo}) {
     if (!mounted) return;
-    showMdSnack(context, msg, tipo: isError ? MdTipo.erro : MdTipo.sucesso);
+    showMdSnack(context, msg, tipo: tipo ?? (isError ? MdTipo.erro : MdTipo.sucesso));
   }
 
   // ---------- Helpers de layout responsivo ----------
@@ -806,7 +808,11 @@ class _PedidoPageState extends State<PedidoPage> {
                         ],
                       ),
                     ),
-                    QuadroPedidosAnteriores(pedidos: _anteriores, onUsar: _usarPedidoAnterior),
+                    QuadroPedidosAnteriores(
+                      pedidos: _anteriores,
+                      onUsar: _usarPedidoAnterior,
+                      habilitado: !carregando,
+                    ),
                     const SizedBox(height: MdSpace.xl),
                     const MdSectionHeader(titulo: 'Produtos'),
 

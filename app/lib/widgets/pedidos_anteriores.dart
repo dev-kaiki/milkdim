@@ -12,7 +12,15 @@ class QuadroPedidosAnteriores extends StatelessWidget {
   final List<Map<String, dynamic>> pedidos;
   final void Function(Map<String, dynamic> pedido) onUsar;
 
-  const QuadroPedidosAnteriores({super.key, required this.pedidos, required this.onUsar});
+  /// Falso enquanto a tela está gravando o pedido: "Usar" fica desligado.
+  final bool habilitado;
+
+  const QuadroPedidosAnteriores({
+    super.key,
+    required this.pedidos,
+    required this.onUsar,
+    this.habilitado = true,
+  });
 
   /// `dd/MM` na hora local, ou "—" se a data não puder ser lida.
   static String _data(Object? datahora) {
@@ -55,7 +63,9 @@ class QuadroPedidosAnteriores extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: MdSpace.md),
-                      OutlinedButton(onPressed: () => onUsar(p), child: const Text('Usar')),
+                      OutlinedButton(
+                          onPressed: habilitado ? () => onUsar(p) : null,
+                          child: const Text('Usar')),
                     ],
                   ),
                 ),

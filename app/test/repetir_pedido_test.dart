@@ -14,8 +14,18 @@ const _pote = Produto(id: 1, nome: 'Pote 160g', preco: 5);
 const _copo = Produto(id: 2, nome: 'Copo', preco: 3);
 const _catalogo = [_pote, _copo];
 
-Map<String, dynamic> _p(String numero, String status, String datahora) =>
-    {'numero': numero, 'status': status, 'datahora': datahora};
+Map<String, dynamic> _p(String numero, String status, String datahora,
+        {Object? produtos = const [
+          {'nome': 'Copo', 'quantidade': 1},
+        ],
+        String? erroEnvio}) =>
+    {
+      'numero': numero,
+      'status': status,
+      'datahora': datahora,
+      'produtos': produtos,
+      if (erroEnvio != null) 'erro_envio': erroEnvio,
+    };
 
 void main() {
   group('preencherDePedido', () {
@@ -115,6 +125,26 @@ void main() {
       _p('b', 'salvo', '2026-11-01T10:00:00Z'),
     ]);
     expect(curta.map((p) => p['numero']).toList(), ['b', 'a']);
+  });
+
+  test('pedidosParaRepetir pula pedidos sem itens legíveis', () {
+    final r = pedidosParaRepetir([
+      _p('1', 'salvo', '2026-11-01T10:00:00Z', produtos: const []),
+      _p('2', 'salvo', '2026-11-02T10:00:00Z', produtos: 'não é json'),
+      _p('3', 'salvo', '2026-11-03T10:00:00Z', produtos: '[{"nome":"Copo","quantidade":0}]'),
+      _p('4', 'salvo', '2026-11-04T10:00:00Z', produtos: null),
+      _p('5', 'salvo', '2026-11-05T10:00:00Z'),
+    ]);
+    expect(r.map((p) => p['numero']).toList(), ['5']);
+  });
+
+  test('pedidosParaRepetir pula pedidos apagados no Controle', () {
+    final r = pedidosParaRepetir([
+      _p('1', 'enviado', '2026-11-01T10:00:00Z', erroEnvio: kErroApagadoNoControle),
+      _p('2', 'enviado', '2026-11-02T10:00:00Z', erroEnvio: 'outro erro'),
+      _p('3', 'enviado', '2026-11-03T10:00:00Z'),
+    ]);
+    expect(r.map((p) => p['numero']).toList(), ['3', '2']);
   });
 
   group('listarPedidosDoCliente', () {

@@ -6,6 +6,7 @@
 import 'dart:convert';
 
 import 'produto.dart';
+import 'regras_pedido.dart' show apagadoNoControle;
 
 /// Resultado de preencher um pedido novo a partir de um antigo.
 class Preenchimento {
@@ -89,12 +90,14 @@ String resumoItens(Object? produtosDoPedido, {int max = 3}) {
   return itens.length > max ? '$texto …' : texto;
 }
 
-/// Pedidos que vale oferecer para repetir: sem cancelados, do mais novo para o
-/// mais velho (datas ilegíveis no fim) e no máximo 5.
+/// Pedidos que vale oferecer para repetir: sem cancelados, sem os apagados no
+/// Controle, sem os que não têm itens legíveis, do mais novo para o mais velho (datas ilegíveis no fim) e no máximo 5.
 List<Map<String, dynamic>> pedidosParaRepetir(List<Map<String, dynamic>> pedidos) {
   final candidatos = <MapEntry<int, Map<String, dynamic>>>[];
   for (final p in pedidos) {
     if ((p['status'] ?? '').toString() == 'cancelado') continue;
+    if (apagadoNoControle(p)) continue;
+    if (_lerItens(p['produtos']).isEmpty) continue;
     candidatos.add(MapEntry(candidatos.length, p));
   }
 

@@ -942,7 +942,8 @@ Future<DateTime?> getUltimoPedidoCliente(int clienteId) async {
 Future<List<Map<String, dynamic>>> listarPedidosDoCliente(int clienteId) async {
   final db = await getDb();
   final rows = await db.rawQuery(
-    'SELECT * FROM pedidos WHERE cliente_id = ?',
+    'SELECT id, numero, status, datahora, total, produtos, cliente_id, erro_envio '
+    'FROM pedidos WHERE cliente_id = ?',
     [clienteId],
   );
   return pedidosParaRepetir(rows.map((r) => Map<String, dynamic>.from(r)).toList());
