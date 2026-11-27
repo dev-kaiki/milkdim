@@ -102,6 +102,7 @@ class _HomePageState extends State<HomePage> {
         pedidos: pedidos,
         vendedorCodigo: _codigo,
         agora: DateTime.now(),
+        prazoDias: kPrazosSumido.first,
       ).length;
       if (mounted) setState(() => _sumidos = n);
     } catch (e) {

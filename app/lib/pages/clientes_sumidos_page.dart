@@ -13,7 +13,8 @@ import '../utils/db.dart';
 import 'pedido_page.dart';
 
 /// Subtítulo do item da tela inicial.
-String subtituloSumidos(int n) => '$n sem comprar há 30 dias ou mais';
+String subtituloSumidos(int n) =>
+    '$n sem comprar há ${kPrazosSumido.first} dias ou mais';
 
 class ClientesSumidosPage extends StatefulWidget {
   final Map<String, dynamic> vendedor;
@@ -64,6 +65,7 @@ class _ClientesSumidosPageState extends State<ClientesSumidosPage> {
         _clientes = clientes;
         _pedidos = pedidos;
         _carregando = false;
+        _erro = false;
       });
     } catch (e) {
       debugPrint('Erro ao carregar clientes sumidos: $e');
@@ -89,8 +91,8 @@ class _ClientesSumidosPageState extends State<ClientesSumidosPage> {
   static Future<bool> _abrirExterno(Uri uri) =>
       launchUrl(uri, mode: LaunchMode.externalApplication);
 
-  void _novoPedido(int clienteId) {
-    Navigator.push(
+  Future<void> _novoPedido(int clienteId) async {
+    await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => widget.paginaPedido != null
@@ -98,6 +100,8 @@ class _ClientesSumidosPageState extends State<ClientesSumidosPage> {
             : PedidoPage(vendedor: widget.vendedor, clienteInicialId: clienteId),
       ),
     );
+    // Quem acabou de comprar sai da lista (recarrega sem trocar pelo spinner).
+    if (mounted) await _carregar();
   }
 
   @override

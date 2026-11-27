@@ -42,6 +42,7 @@ Future<List<Uri>> _abrir(
   WidgetTester tester, {
   Widget Function(Map<String, dynamic>, int)? paginaPedido,
   Future<bool> Function(Uri)? abrirLink,
+  Future<List<Map<String, dynamic>>> Function(String)? carregarPedidos,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(800, 3000);
@@ -53,7 +54,7 @@ Future<List<Uri>> _abrir(
       vendedor: _vendedor,
       relogio: () => _agora,
       carregarClientes: () async => _clientes,
-      carregarPedidos: (_) async => _pedidos,
+      carregarPedidos: carregarPedidos ?? (_) async => _pedidos,
       abrirLink: abrirLink ??
           (u) async {
             abertos.add(u);
@@ -148,6 +149,61 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('pagina do pedido'), findsOneWidget);
     expect(recebido, 1);
+  });
+
+  testWidgets('voltar do novo pedido recarrega a lista', (tester) async {
+    var chamadas = 0;
+    await _abrir(
+      tester,
+      carregarPedidos: (_) async {
+        chamadas++;
+        // Depois do pedido novo, a Padaria comprou hoje e sai da lista.
+        return chamadas == 1 ? _pedidos : [..._pedidos, _ped(9, 1, '2026-11-27T10:00:00')];
+      },
+      paginaPedido: (v, id) => Scaffold(
+        body: Builder(
+          builder: (ctx) => TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('voltar')),
+        ),
+      ),
+    );
+    expect(chamadas, 1);
+    expect(find.text('Padaria Central'), findsOneWidget);
+
+    await tester.tap(_botao('Novo pedido'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('voltar'));
+    await tester.pumpAndSettle();
+
+    expect(chamadas, 2);
+    expect(find.text('Padaria Central'), findsNothing);
+    expect(find.text('Mercado Sul'), findsOneWidget);
+  });
+
+  testWidgets('PedidoPage: partirDe vence clienteInicialId', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(800, 3000);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      theme: buildMilkdimTheme(),
+      home: PedidoPage(
+        vendedor: _vendedor,
+        clienteInicialId: 2,
+        partirDe: const {'cliente_id': 1, 'produtos': '[]'},
+        dadosParaCaptura: (
+          clientes: const [
+            {'id': 1, 'nome': 'Padaria Central'},
+            {'id': 2, 'nome': 'Mercado Sul'},
+          ],
+          produtos: const [Produto(id: 1, nome: 'Pote 160g', preco: 3.5)],
+        ),
+        carregarPedidosDoCliente: (_) async => const [],
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byType(TextField), matching: find.text('Padaria Central')),
+        findsOneWidget);
+    expect(find.descendant(of: find.byType(TextField), matching: find.text('Mercado Sul')),
+        findsNothing);
   });
 
   testWidgets('PedidoPage com clienteInicialId preenche o Nome', (tester) async {
