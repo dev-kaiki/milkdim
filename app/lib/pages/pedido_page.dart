@@ -10,9 +10,11 @@ import '../utils/db.dart';
 import '../utils/pedido_da_tela.dart';
 import '../utils/produto_service.dart';
 import '../utils/regras_pedido.dart';
+import '../utils/repetir_pedido.dart';
 import '../utils/supabase_helper.dart';
 import '../utils/convert.dart'; // <- signatureToImageBytes / assinaturaToBytes
 import '../widgets/pedido_ui.dart';
+import '../widgets/pedidos_anteriores.dart';
 import 'assinatura_page.dart' as assinatura; // alias para evitar ambiguidade
 
 class PedidoPage extends StatefulWidget {
@@ -28,12 +30,16 @@ class PedidoPage extends StatefulWidget {
   /// Para teste: no lugar de `gravarPedidoEEnviar`.
   final GravarPedido? gravar;
 
+  /// Para teste: no lugar de `listarPedidosDoCliente`.
+  final Future<List<Map<String, dynamic>>> Function(int clienteId)? carregarPedidosDoCliente;
+
   const PedidoPage({
     super.key,
     required this.vendedor,
     this.dadosParaCaptura,
     this.pedirAssinatura,
     this.gravar,
+    this.carregarPedidosDoCliente,
   });
 
   @override
@@ -85,6 +91,9 @@ class _PedidoPageState extends State<PedidoPage> {
   // CLIENTE
   int? _clienteId;
   DateTime? _ultimoPedido;
+
+  /// Pedidos anteriores do cliente escolhido (quadro "Partir de um pedido anterior").
+  List<Map<String, dynamic>> _anteriores = [];
 
   // CAMPOS CLIENTE
   final nomeCtrl = TextEditingController();
@@ -224,7 +233,8 @@ class _PedidoPageState extends State<PedidoPage> {
   }
 
   Future<void> _autoPreencherClientePorNome() async {
-    await _carregarClientes();
+    // Na captura/teste os clientes já vieram prontos: não consulta o SQLite.
+    if (widget.dadosParaCaptura == null) await _carregarClientes();
     if (!mounted) return;
     // ignore: avoid_print
     print('[PEDIDO] buscar cliente por nome');
@@ -263,24 +273,77 @@ class _PedidoPageState extends State<PedidoPage> {
       },
     ).then((clienteSelecionado) async {
       if (clienteSelecionado is Map<String, dynamic>) {
-        _clienteId = (clienteSelecionado['id'] as num?)?.toInt();
-        nomeCtrl.text = clienteSelecionado['nome'] ?? '';
-        nomeFantasiaCtrl.text = clienteSelecionado['nome_fantasia'] ?? '';
-        telefoneCtrl.text = clienteSelecionado['telefone'] ?? '';
-        whatsappCtrl.text = clienteSelecionado['whatsapp'] ?? '';
-        emailCtrl.text = clienteSelecionado['email'] ?? '';
-        enderecoCtrl.text = clienteSelecionado['endereco'] ?? '';
-        cidadeCtrl.text = clienteSelecionado['cidade'] ?? '';
-        cpfCnpjCtrl.text = clienteSelecionado['cpf_cnpj'] ?? '';
-        inscEstadualCtrl.text = clienteSelecionado['insc_estadual'] ?? '';
-        cepCtrl.text = clienteSelecionado['cep'] ?? '';
-        anotacaoCtrl.text = clienteSelecionado['anotacao'] ?? '';
-        await _recarregarUltimoPedido();
-        if (mounted) setState(() {});
-        // ignore: avoid_print
-        print('[PEDIDO] cliente selecionado => $_clienteId');
+        await _aplicarCliente(clienteSelecionado);
       }
     });
+  }
+
+  /// Preenche os campos com o cliente escolhido e carrega o último pedido e os
+  /// pedidos anteriores dele.
+  Future<void> _aplicarCliente(Map<String, dynamic> cli) async {
+    _clienteId = (cli['id'] as num?)?.toInt();
+    nomeCtrl.text = cli['nome'] ?? '';
+    nomeFantasiaCtrl.text = cli['nome_fantasia'] ?? '';
+    telefoneCtrl.text = cli['telefone'] ?? '';
+    whatsappCtrl.text = cli['whatsapp'] ?? '';
+    emailCtrl.text = cli['email'] ?? '';
+    enderecoCtrl.text = cli['endereco'] ?? '';
+    cidadeCtrl.text = cli['cidade'] ?? '';
+    cpfCnpjCtrl.text = cli['cpf_cnpj'] ?? '';
+    inscEstadualCtrl.text = cli['insc_estadual'] ?? '';
+    cepCtrl.text = cli['cep'] ?? '';
+    anotacaoCtrl.text = cli['anotacao'] ?? '';
+    final id = _clienteId;
+    // Esvazia já: não deixa o quadro do cliente anterior na tela enquanto carrega.
+    if (mounted) setState(() => _anteriores = []);
+    if (widget.dadosParaCaptura == null) await _recarregarUltimoPedido();
+    var anteriores = <Map<String, dynamic>>[];
+    if (id != null) {
+      try {
+        anteriores = await (widget.carregarPedidosDoCliente ?? listarPedidosDoCliente)(id);
+      } catch (e) {
+        // ignore: avoid_print
+        print('[PEDIDO] erro ao carregar pedidos anteriores: $e');
+      }
+    }
+    if (!mounted || _clienteId != id) return; // trocou de cliente no meio
+    setState(() => _anteriores = anteriores);
+    // ignore: avoid_print
+    print('[PEDIDO] cliente selecionado => $_clienteId');
+  }
+
+  /// Põe em cada produto da tela a quantidade de [p] (ou 0) e avisa dos que
+  /// ficaram de fora.
+  void _aplicarPreenchimento(Preenchimento p) {
+    setState(() {
+      for (final prod in carrinho.keys.toList()) {
+        final q = p.quantidades[prod] ?? 0;
+        carrinho[prod] = q;
+        _qtdControllers[prod]?.text = q > 0 ? q.toString() : '';
+      }
+    });
+    if (p.foraDoPedido.isNotEmpty) {
+      _showMsg('Ficaram de fora (não estão mais à venda): ${p.foraDoPedido.join(', ')}',
+          isError: false);
+    }
+  }
+
+  /// "Usar" um pedido anterior: só pergunta se já há quantidades na tela.
+  Future<void> _usarPedidoAnterior(Map<String, dynamic> pedido) async {
+    if (carrinho.values.any((q) => q > 0)) {
+      final trocar = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          content: const Text('Trocar as quantidades da tela pelas deste pedido?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Trocar')),
+          ],
+        ),
+      );
+      if (trocar != true || !mounted) return;
+    }
+    _aplicarPreenchimento(preencherDePedido(pedido['produtos'], produtos));
   }
 
   /// Abre a tela de assinatura do pedido (com o [aviso], se houver) e devolve
@@ -706,6 +769,7 @@ class _PedidoPageState extends State<PedidoPage> {
                         ],
                       ),
                     ),
+                    QuadroPedidosAnteriores(pedidos: _anteriores, onUsar: _usarPedidoAnterior),
                     const SizedBox(height: MdSpace.xl),
                     const MdSectionHeader(titulo: 'Produtos'),
 
