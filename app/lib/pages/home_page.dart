@@ -332,7 +332,7 @@ class _HomePageState extends State<HomePage> {
                         icone: Icons.receipt_long_outlined,
                         titulo: 'Meus pedidos',
                         subtitulo: 'Ver, editar e compartilhar',
-                        onTap: () => _abrir(PedidosPage(vendedorCodigo: _codigo)),
+                        onTap: () => _abrir(PedidosPage(vendedorCodigo: _codigo, vendedor: widget.vendedor)),
                       ),
                       if (leituraDeEtiquetaDisponivel) ...[
                         const SizedBox(height: MdSpace.md),

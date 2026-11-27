@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 
 import 'package:milkdim_app/pages/pedido_page.dart';
+import 'package:milkdim_app/pages/pedidos_page.dart';
+import 'package:milkdim_app/utils/db.dart' show kErroApagadoNoControle;
 import 'package:milkdim_app/utils/moeda.dart';
 import 'package:milkdim_app/utils/produto.dart';
 import 'package:milkdim_app/widgets/pedido_ui.dart';
@@ -189,5 +191,97 @@ void main() {
       home: Scaffold(body: QuadroPedidosAnteriores(pedidos: const [], onUsar: (_) {})),
     ));
     expect(find.text('Partir de um pedido anterior'), findsNothing);
+  });
+
+  mainLista();
+}
+
+/// Pedido para a lista (Meus pedidos).
+Map<String, dynamic> _naLista(int id, String status,
+        {int? clienteId = 7, String? erroEnvio}) =>
+    {
+      'id': id,
+      'numero': '$id',
+      'status': status,
+      'vendedor_codigo': '0003',
+      'vendedor_nome': 'Vendedor Teste',
+      'datahora': '2026-11-20T15:00:00+00:00',
+      'total': 180.0,
+      'cliente_id': clienteId,
+      'cliente_nome': 'Padaria Central',
+      'produtos': _itensA,
+      if (erroEnvio != null) 'erro_envio': erroEnvio,
+    };
+
+Future<void> _abrirLista(
+  WidgetTester tester,
+  List<Map<String, dynamic>> pedidos, {
+  List<Map<String, dynamic>> clientesDoAparelho = _clientes,
+  int aba = 0,
+}) async {
+  tester.view.devicePixelRatio = 1;
+  tester.view.physicalSize = const Size(412, 1800);
+  addTearDown(tester.view.reset);
+  await tester.pumpWidget(MaterialApp(
+    theme: buildMilkdimTheme(),
+    home: PedidosPage(
+      vendedorCodigo: '0003',
+      vendedor: _vendedor,
+      pedidosParaCaptura: pedidos,
+      abaInicialParaCaptura: aba,
+      listarClientesDoAparelho: () async => clientesDoAparelho,
+    ),
+  ));
+  await tester.pumpAndSettle();
+}
+
+void mainLista() {
+  testWidgets('Repetir aparece em pedido com cliente', (tester) async {
+    await _abrirLista(tester, [
+      _naLista(1, 'salvo'),
+      _naLista(2, 'salvo', clienteId: null),
+      _naLista(3, 'salvo', erroEnvio: kErroApagadoNoControle),
+      _naLista(4, 'finalizado'),
+    ]);
+    // Em aberto: só o pedido 1 tem cliente e não está apagado.
+    expect(find.text('Repetir'), findsOneWidget);
+
+    await tester.tap(find.textContaining('Entregues'));
+    await tester.pumpAndSettle();
+    expect(find.text('Repetir'), findsOneWidget);
+  });
+
+  testWidgets('Repetir com cliente apagado avisa e não abre', (tester) async {
+    await _abrirLista(tester, [_naLista(1, 'salvo')], clientesDoAparelho: const []);
+    await tester.tap(find.text('Repetir'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Este cliente não está mais cadastrado'), findsOneWidget);
+    expect(find.byType(PedidoPage), findsNothing);
+    expect(find.byType(PedidosPage), findsOneWidget);
+  });
+
+  testWidgets('PedidoPage com partirDe abre preenchida', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(800, 3000);
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      theme: buildMilkdimTheme(),
+      home: PedidoPage(
+        vendedor: _vendedor,
+        dadosParaCaptura: (clientes: _clientes, produtos: _catalogo),
+        carregarPedidosDoCliente: (id) async => const [],
+        partirDe: _naLista(9, 'finalizado'),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text(_pergunta), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(tester.widget<TextField>(find.widgetWithText(TextField, 'Padaria Central')).controller!.text,
+        'Padaria Central');
+    expect(_qtd(tester, 'Pote 160g'), '40');
+    expect(_qtd(tester, 'Copo'), '20');
+    expect(_qtd(tester, 'Pudim'), '');
   });
 }

@@ -33,9 +33,15 @@ class PedidoPage extends StatefulWidget {
   /// Para teste: no lugar de `listarPedidosDoCliente`.
   final Future<List<Map<String, dynamic>>> Function(int clienteId)? carregarPedidosDoCliente;
 
+  /// "Repetir": pedido de onde partir. Quando clientes e produtos terminam de
+  /// carregar, a tela abre com o cliente e as quantidades dele. O número do
+  /// pedido continua sendo o próximo.
+  final Map<String, dynamic>? partirDe;
+
   const PedidoPage({
     super.key,
     required this.vendedor,
+    this.partirDe,
     this.dadosParaCaptura,
     this.pedirAssinatura,
     this.gravar,
@@ -115,6 +121,11 @@ class _PedidoPageState extends State<PedidoPage> {
   List<Produto> produtos = [];
   int ultimoNumeroPedido = 1;
 
+  // "Repetir": só parte do pedido de origem uma vez, depois que clientes e
+  // produtos chegaram.
+  bool _clientesProntos = false;
+  bool _partiuDe = false;
+
   double get total =>
       carrinho.entries.fold(0.0, (s, e) => s + e.key.preco * (e.value));
 
@@ -124,6 +135,7 @@ class _PedidoPageState extends State<PedidoPage> {
     final captura = widget.dadosParaCaptura;
     if (captura != null) {
       clientes = captura.clientes;
+      _clientesProntos = true;
       numeroPedidoCtrl.text = ultimoNumeroPedido.toString();
       WidgetsBinding.instance.addPostFrameCallback((_) => _aplicarProdutos(captura.produtos));
       return;
@@ -175,8 +187,10 @@ class _PedidoPageState extends State<PedidoPage> {
     final cli = await listarClientes();
     if (!mounted) return;
     setState(() => clientes = cli);
+    _clientesProntos = true;
     // ignore: avoid_print
     print('[PEDIDO] clientes carregados: ${clientes.length}');
+    _tentarPartirDe();
   }
 
   Future<void> _carregarProdutos() async {
@@ -217,6 +231,29 @@ class _PedidoPageState extends State<PedidoPage> {
     });
     // ignore: avoid_print
     print('[PEDIDO] produtos carregados: ${produtos.length}');
+    _tentarPartirDe();
+  }
+
+  /// "Repetir": com clientes e produtos prontos, preenche a tela com o cliente
+  /// e as quantidades de [PedidoPage.partirDe] (sem perguntar: a tela está vazia).
+  void _tentarPartirDe() {
+    final origem = widget.partirDe;
+    if (origem == null || _partiuDe || !_clientesProntos || carregandoProdutos) return;
+    _partiuDe = true;
+    final id = (origem['cliente_id'] as num?)?.toInt();
+    Map<String, dynamic>? cliente;
+    for (final c in clientes) {
+      if ((c['id'] as num?)?.toInt() == id) {
+        cliente = c;
+        break;
+      }
+    }
+    if (cliente == null) {
+      _showMsg('Este cliente não está mais cadastrado');
+      return;
+    }
+    _aplicarCliente(cliente);
+    _aplicarPreenchimento(preencherDePedido(origem['produtos'], produtos));
   }
 
   Future<void> _recarregarUltimoPedido() async {

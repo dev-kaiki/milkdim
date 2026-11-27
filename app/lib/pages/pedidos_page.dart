@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:milkdim_app/pages/pedido_edit_page.dart';
+import 'package:milkdim_app/pages/pedido_page.dart';
 import 'package:milkdim_app/pages/ler_etiqueta_page.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:path_provider/path_provider.dart';
@@ -43,9 +44,18 @@ class PedidosPage extends StatefulWidget {
   /// troca a chamada ao Supabase.
   final Future<void> Function(String vendedorCodigo) baixarPedidos;
 
+  /// Vendedor logado, para o "Repetir". Se nulo, usa o do próprio pedido.
+  final Map<String, dynamic>? vendedor;
+
+  /// Para teste: no lugar de `listarClientes` (o "Repetir" confere se o
+  /// cliente ainda está cadastrado).
+  final Future<List<Map<String, dynamic>>> Function() listarClientesDoAparelho;
+
   const PedidosPage({
     super.key,
     this.vendedorCodigo,
+    this.vendedor,
+    this.listarClientesDoAparelho = listarClientes,
     this.pedidosParaCaptura,
     this.abaInicialParaCaptura = 0,
     this.baixarPedidos = _baixarDoSupabase,
@@ -385,6 +395,24 @@ class _PedidosPageState extends State<PedidosPage>
       MaterialPageRoute(builder: (_) => PedidoPageEdit(pedido: pedido)),
     );
     if (atualizado != null) await _carregar();
+  }
+
+  /// "Repetir": abre um novo pedido já com o cliente e os produtos de [pedido].
+  Future<void> _repetir(Map<String, dynamic> pedido) async {
+    final id = (pedido['cliente_id'] as num?)?.toInt();
+    final clientes = await widget.listarClientesDoAparelho();
+    if (!mounted) return;
+    if (!clientes.any((c) => (c['id'] as num?)?.toInt() == id)) {
+      _snack('Este cliente não está mais cadastrado');
+      return;
+    }
+    final vendedor = widget.vendedor ??
+        {'codigo': pedido['vendedor_codigo'], 'nome': pedido['vendedor_nome']};
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => PedidoPage(vendedor: vendedor, partirDe: pedido)),
+    );
+    if (mounted) await _carregar();
   }
 
   // Pré-visualização (opcional)
@@ -905,6 +933,13 @@ class _PedidosPageState extends State<PedidosPage>
             principal: true,
           )
         : null;
+    final repetir = p['cliente_id'] != null
+        ? _acao(
+            label: 'Repetir',
+            icon: Icons.replay,
+            onPressed: () => _repetir(p),
+          )
+        : null;
     final List<Widget> botoes = apagado
         ? [
             _acao(
@@ -931,6 +966,7 @@ class _PedidosPageState extends State<PedidosPage>
               icon: Icons.data_object,
               onPressed: () => _compartilharJson(p),
             ),
+            if (repetir != null) repetir,
           ]
         : [
             _acao(
@@ -946,6 +982,7 @@ class _PedidosPageState extends State<PedidosPage>
                 onPressed: () => _remover(p),
                 perigo: true,
               ),
+            if (repetir != null) repetir,
           ];
 
     final actions = Row(
