@@ -1,9 +1,4 @@
-// test/telas_comprovante_test.dart
-//
-// Fase A.2 nas telas do vendedor: enviar o pedido com a assinatura do pedido,
-// salvar alterações (nova assinatura só quando mudam itens ou cliente),
-// registrar a entrega com a assinatura da entrega, o selo "Pronto" em Meus
-// pedidos e o PDF com as duas assinaturas. Dados falsos.
+// test/telas_comprovante_test.dart: a pergunta do comprovante depois de registrar a entrega.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -214,6 +209,59 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Registrar entrega'), findsNothing, reason: 'resumo nao abriu');
     expect(e.gravados.length, antes);
+    preso.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Editar Pedido'), findsNothing);
+  });
+
+  for (final r in [ResultadoGravacao.canceladoNoControle, ResultadoGravacao.fechadoNoControle]) {
+    testWidgets('aviso do Controle ($r): sem pergunta e fecha como antes', (tester) async {
+      final e = _Espiao()
+        ..resposta = _png
+        ..resultado = r;
+      final enviados = <Map<String, dynamic>>[];
+      await _abrir(tester, tela(e, enviados));
+      await _abrirResumoETocar(tester, 'Registrar entrega');
+      await tester.pumpAndSettle();
+      expect(find.text(pergunta), findsNothing);
+      expect(enviados, isEmpty);
+      expect(find.text('Editar Pedido'), findsNothing);
+    });
+  }
+
+  testWidgets('voltar do Android na pergunta: fecha sem enviar', (tester) async {
+    final e = _Espiao()..resposta = _png;
+    final enviados = <Map<String, dynamic>>[];
+    await _abrir(tester, tela(e, enviados));
+    await _abrirResumoETocar(tester, 'Registrar entrega');
+    expect(find.text(pergunta), findsOneWidget);
+    Navigator.of(tester.element(find.text(pergunta))).pop(); // voltar do Android
+    await tester.pumpAndSettle();
+    expect(enviados, isEmpty);
+    expect(find.text('Editar Pedido'), findsNothing);
+  });
+
+  testWidgets('duplo toque em Agora nao fecha so a pagina da entrega', (tester) async {
+    final e = _Espiao()..resposta = _png;
+    await _abrir(tester, tela(e, []));
+    await _abrirResumoETocar(tester, 'Registrar entrega');
+    final b = find.text('Agora não');
+    await tester.tap(b);
+    await tester.tap(b, warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(find.text('abrir'), findsOneWidget, reason: 'voltou a tela inicial, so uma vez');
+  });
+
+  testWidgets('voltar fica bloqueado enquanto o comprovante e gerado', (tester) async {
+    final e = _Espiao()..resposta = _png;
+    final preso = Completer<void>();
+    await _abrir(tester, tela(e, [], envio: (p) => preso.future));
+    await _abrirResumoETocar(tester, 'Registrar entrega');
+    await tester.tap(find.text('Enviar comprovante'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pageBack();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Editar Pedido'), findsOneWidget, reason: 'nao fechou');
     preso.complete();
     await tester.pumpAndSettle();
     expect(find.text('Editar Pedido'), findsNothing);

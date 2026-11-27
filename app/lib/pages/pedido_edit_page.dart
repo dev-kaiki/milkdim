@@ -123,6 +123,9 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
   final anotacaoCtrl = TextEditingController();
 
   bool processando = false;
+
+  /// Só enquanto o comprovante é relido/gerado/compartilhado: bloqueia o voltar.
+  bool _gerandoComprovante = false;
   bool carregandoProdutos = true;
   List<Map<String, dynamic>> clientes = [];
 
@@ -634,7 +637,10 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
       ),
     );
     if (quer != true || !mounted) return;
-    setState(() => processando = true);
+    setState(() {
+      processando = true;
+      _gerandoComprovante = true;
+    });
     try {
       var pedido = gravado;
       final id = int.tryParse('${gravado['id'] ?? widget.pedido['id'] ?? ''}');
@@ -653,7 +659,12 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     } catch (e) {
       // ignore: avoid_print
       print('[EDIT] erro ao enviar o comprovante: $e');
-      if (mounted) _showSnack('Não foi possível gerar o comprovante.');
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        _showSnack('Não foi possível gerar o comprovante.');
+      }
+    } finally {
+      if (mounted) setState(() => _gerandoComprovante = false);
     }
   }
 
@@ -696,8 +707,16 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
       }
       // ignore: avoid_print
       print('[EDIT] concluído ($r) -> pop("$situacao")');
-      if (antesDeFechar != null) {
-        await antesDeFechar(pedidoAtualizado);
+      // Só entrega que de fato valeu (enviada ou guardada no aparelho) oferece
+      // o comprovante; avisos do Controle (cancelado, apagado, fechado, número
+      // em uso) fecham como sempre.
+      if (antesDeFechar != null &&
+          (r == ResultadoGravacao.enviado || r == ResultadoGravacao.pendente)) {
+        try {
+          await antesDeFechar(pedidoAtualizado);
+        } catch (e) {
+          debugPrint('[EDIT] erro depois de gravar (comprovante): $e');
+        }
       }
       if (!mounted) return;
       Navigator.pop(context, situacao);
@@ -951,7 +970,9 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
     final gridCols = _gridColumns(width);
     final mostrarForm = !carregandoProdutos && produtos.isNotEmpty;
 
-    return Scaffold(
+    return PopScope(
+      canPop: !_gerandoComprovante,
+      child: Scaffold(
       appBar: AppBar(
         title: const Text('Editar Pedido'),
         actions: [
@@ -1101,6 +1122,6 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
                     ),
                   ),
                 ),
-    );
+    ));
   }
 }
