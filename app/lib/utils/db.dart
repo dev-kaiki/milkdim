@@ -949,6 +949,18 @@ Future<List<Map<String, dynamic>>> listarPedidosDoCliente(int clienteId) async {
   return pedidosParaRepetir(rows.map((r) => Map<String, dynamic>.from(r)).toList());
 }
 
+/// Pedidos do vendedor com cliente, só as colunas que a lista de clientes
+/// sumidos usa (somente leitura).
+Future<List<Map<String, dynamic>>> listarPedidosParaSumidos(String vendedorCodigo) async {
+  final db = await getDb();
+  final rows = await db.rawQuery(
+    'SELECT cliente_id, datahora, status, erro_envio, vendedor_codigo '
+    'FROM pedidos WHERE cliente_id IS NOT NULL AND vendedor_codigo = ?',
+    [vendedorCodigo],
+  );
+  return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+}
+
 Future<Map<int, DateTime?>> getUltimoPedidoPorCliente() async {
   final db = await getDb();
   final rows = await db.rawQuery('''
