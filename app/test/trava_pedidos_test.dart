@@ -18,6 +18,23 @@ Future<void> _limpar() async {
       .deleteDatabase(join(await databaseFactory.getDatabasesPath(), 'milkdim.db'));
 }
 
+/// Espera [condicao] ficar verdadeira, sem prazo fixo curto: com a suíte
+/// inteira (ou outro processo) ocupando a CPU, abrir o banco e gravar no
+/// SQLite (ffi) passa fácil de 100 ms. Quem chama segura a trava o tempo todo,
+/// então uma gravação que esperasse a trava nunca apareceria e o teste
+/// falharia no [limite].
+Future<void> _esperarAte(
+  Future<bool> Function() condicao, {
+  required String motivo,
+  Duration limite = const Duration(seconds: 20),
+}) async {
+  final relogio = Stopwatch()..start();
+  while (!await condicao()) {
+    if (relogio.elapsed > limite) fail('$motivo (esperou ${relogio.elapsed})');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
 void main() {
   setUpAll(() async {
     sqfliteFfiInit();
@@ -124,12 +141,18 @@ void main() {
       pedido(),
       novo: true,
       enviar: (p) => comTravaDePedidos(() async {}),
+      // A espera abaixo pode passar do prazo da tela numa máquina carregada;
+      // aqui o envio deve terminar como enviado, não virar pendente por prazo.
+      prazoEnvio: const Duration(minutes: 2),
     );
 
-    await Future<void>.delayed(const Duration(milliseconds: 100));
     final db = await getDb();
-    final rows = await db.query('pedidos', where: "numero = '1'");
-    expect(rows, hasLength(1), reason: 'a gravação local não pode esperar a trava');
+    Future<List<Map<String, Object?>>> linhas() =>
+        db.query('pedidos', where: "numero = '1'");
+    await _esperarAte(() async => (await linhas()).isNotEmpty,
+        motivo: 'a gravação local não pode esperar a trava');
+    final rows = await linhas();
+    expect(rows, hasLength(1));
     expect(rows.single['pendente_envio'], 1);
 
     liberaTrava.complete();
@@ -227,8 +250,8 @@ void main() {
       novo: false,
       enviar: (p) => comTravaDePedidos(() async => throw Exception('sem internet')),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-    expect((await porId(idLocal))!['total'], 25.0, reason: 'gravou com a subida no ar');
+    await _esperarAte(() async => (await porId(idLocal))?['total'] == 25.0,
+        motivo: 'a edição grava com a subida no ar (que segura a trava)');
 
     liberaEnvio.complete();
     await subida;
