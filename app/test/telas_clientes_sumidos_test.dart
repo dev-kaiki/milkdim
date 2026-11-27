@@ -17,7 +17,7 @@ final _agora = DateTime(2026, 11, 27, 12);
 
 const _clientes = <Map<String, dynamic>>[
   {'id': 1, 'nome': 'Padaria Central', 'whatsapp': '(16) 99999-1234', 'telefone': '(16) 3333-4444'},
-  {'id': 2, 'nome': 'Mercado Sul', 'telefone': '(16) 3333-5555'},
+  {'id': 2, 'nome': 'Mercado Sul', 'nome_fantasia': 'Super Sul', 'cidade': 'Franca', 'telefone': '(16) 3333-5555'},
   {'id': 3, 'nome': 'Bar Sem Fone'},
 ];
 
@@ -79,16 +79,27 @@ void main() {
     expect(find.text('Última compra 20/10 · há 38 dias'), findsOneWidget);
     expect(find.text('2 pedidos'), findsOneWidget);
     expect(find.text('Última compra 13/10 · há 45 dias'), findsOneWidget);
+    // Nome fantasia como título (no lugar do nome) e cidade quando houver.
+    expect(find.text('Super Sul'), findsOneWidget);
+    expect(find.text('Mercado Sul'), findsNothing);
+    expect(find.text('Franca'), findsOneWidget);
     expect(find.text('1 pedido'), findsNWidgets(2)); // Mercado e Bar
     expect(find.text('Última compra 01/09 · há 87 dias'), findsOneWidget);
   });
 
+  testWidgets('última compra de outro ano mostra dd/MM/yy', (tester) async {
+    await _abrir(tester, carregarPedidos: (_) async => [
+          _ped(1, 1, '2025-12-20T15:00:00'),
+        ]);
+    expect(find.text('Última compra 20/12/25 · há 342 dias'), findsOneWidget);
+  });
+
   testWidgets('trocar para 60 dias esconde quem tem 45', (tester) async {
     await _abrir(tester);
-    expect(find.text('Mercado Sul'), findsOneWidget);
+    expect(find.text('Super Sul'), findsOneWidget);
     await tester.tap(find.text('60 dias'));
     await tester.pumpAndSettle();
-    expect(find.text('Mercado Sul'), findsNothing);
+    expect(find.text('Super Sul'), findsNothing);
     expect(find.text('Padaria Central'), findsNothing);
     expect(find.text('Bar Sem Fone'), findsOneWidget);
   });
@@ -114,7 +125,7 @@ void main() {
     final abertos = await _abrir(tester);
     await tester.tap(_botao('Ligar'));
     await tester.pumpAndSettle();
-    expect(abertos.single.toString(), 'tel:551633334444');
+    expect(abertos.single.toString(), 'tel:+551633334444');
   });
 
   testWidgets('sem telefone válido, WhatsApp e Ligar ficam desligados', (tester) async {
@@ -176,7 +187,7 @@ void main() {
 
     expect(chamadas, 2);
     expect(find.text('Padaria Central'), findsNothing);
-    expect(find.text('Mercado Sul'), findsOneWidget);
+    expect(find.text('Super Sul'), findsOneWidget);
   });
 
   testWidgets('PedidoPage: partirDe vence clienteInicialId', (tester) async {
@@ -240,6 +251,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Clientes sumidos'), findsOneWidget);
     expect(find.text('3 sem comprar há 30 dias ou mais'), findsOneWidget);
+  });
+
+  testWidgets('tela inicial: sem contagem o item aparece com subtítulo neutro', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: buildMilkdimTheme(),
+      home: const HomePage(vendedor: _vendedor, pendentesParaCaptura: 0),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Clientes sumidos'), findsOneWidget);
+    expect(find.text('Ver quem não compra há 30 dias'), findsOneWidget);
   });
 
   test('subtituloSumidos', () {

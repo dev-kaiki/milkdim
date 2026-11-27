@@ -25,8 +25,14 @@ Map<String, dynamic> _ped(int cliente, int dias,
           DateTime(2026, 11, 27 - dias, 12).toUtc().toIso8601String(),
     };
 
-Map<String, dynamic> _cli(int id, {String? tel, String? zap}) =>
-    {'id': id, 'nome': 'Cliente $id', 'telefone': tel, 'whatsapp': zap};
+Map<String, dynamic> _cli(int id, {String? tel, String? zap, Object? ativo}) =>
+    {
+      'id': id,
+      'nome': 'Cliente $id',
+      'telefone': tel,
+      'whatsapp': zap,
+      if (ativo != null) 'ativo': ativo,
+    };
 
 List<ClienteSumido> _lista(List<Map<String, dynamic>> clientes,
         List<Map<String, dynamic>> pedidos,
@@ -95,6 +101,27 @@ void main() {
       expect(r.map((s) => s.cliente['id']).toList(), [2]);
     });
 
+    test('cliente desativado não conta nem aparece; sem o campo é ativo', () {
+      final r = _lista([
+        _cli(1, ativo: 0),
+        _cli(2, ativo: false),
+        _cli(3, ativo: '0'),
+        _cli(4, ativo: 'false'),
+        _cli(5, ativo: 1),
+        _cli(6),
+      ], [for (var i = 1; i <= 6; i++) _ped(i, 40)]);
+      expect(r.map((s) => s.cliente['id']).toList()..sort(), [5, 6]);
+    });
+
+    test('mesmos dias: desempata pelo nome de exibição, sem diferenciar maiúsculas', () {
+      final r = _lista([
+        {'id': 1, 'nome': 'Zeca'},
+        {'id': 2, 'nome': 'Mercado X', 'nome_fantasia': 'abc Frios'},
+        {'id': 3, 'nome': 'Bruno', 'nome_fantasia': '  '},
+      ], [_ped(1, 40), _ped(2, 40), _ped(3, 40)]);
+      expect(r.map((s) => s.cliente['id']).toList(), [2, 3, 1]);
+    });
+
     test('cliente fora da lista de clientes não aparece', () {
       expect(_lista([_cli(1)], [_ped(9, 50)]), isEmpty);
     });
@@ -107,6 +134,31 @@ void main() {
       expect(normalizarTelefone('1234'), isNull);
       expect(normalizarTelefone(''), isNull);
       expect(normalizarTelefone(null), isNull);
+    });
+
+    test('normalizarTelefone com zero na frente e números inválidos', () {
+      expect(normalizarTelefone('(016) 3333-4444'), '551633334444');
+      expect(normalizarTelefone('016 99999-1234'), '5516999991234');
+      expect(normalizarTelefone('0 15 16 99999-1234'), '5516999991234');
+      expect(normalizarTelefone('0800 123 4567'), isNull);
+      expect(normalizarTelefone('(00) 3333-4444'), isNull);
+      expect(normalizarTelefone('55 00 3333-4444'), isNull);
+      // 11 dígitos precisam ser celular (3º dígito 9); fixo de 10 segue valendo.
+      expect(normalizarTelefone('(16) 33333-4444'), isNull);
+      expect(normalizarTelefone('(16) 3333-4444'), '551633334444');
+    });
+
+    test('nomeExibicao: fantasia quando houver, senão o nome', () {
+      expect(nomeExibicao({'nome': 'A', 'nome_fantasia': 'B'}), 'B');
+      expect(nomeExibicao({'nome': 'A', 'nome_fantasia': ' '}), 'A');
+      expect(nomeExibicao({'nome': 'A'}), 'A');
+    });
+
+    test('podeAplicarClienteInicial só se o vendedor não escolheu ninguém', () {
+      expect(podeAplicarClienteInicial(clienteId: null, nomeDigitado: ''), isTrue);
+      expect(podeAplicarClienteInicial(clienteId: null, nomeDigitado: '  '), isTrue);
+      expect(podeAplicarClienteInicial(clienteId: 3, nomeDigitado: ''), isFalse);
+      expect(podeAplicarClienteInicial(clienteId: null, nomeDigitado: 'Ana'), isFalse);
     });
 
     test('linkWhatsApp sem whatsapp usa o telefone', () {
@@ -132,10 +184,17 @@ void main() {
     });
 
     test('linkLigar sem telefone usa o whatsapp; tudo inválido dá null', () {
-      expect(linkLigar(_cli(1, zap: '16 99999-1234')).toString(), 'tel:5516999991234');
-      expect(linkLigar(_cli(1, tel: '(16) 3333-4444')).toString(), 'tel:551633334444');
+      expect(linkLigar(_cli(1, zap: '16 99999-1234')).toString(), 'tel:+5516999991234');
+      expect(linkLigar(_cli(1, tel: '(16) 3333-4444')).toString(), 'tel:+551633334444');
       expect(linkLigar(_cli(1, tel: '12', zap: 'x')), isNull);
       expect(linkWhatsApp(_cli(1, tel: '12'), 'oi'), isNull);
+    });
+
+    test('mensagemSumido sem nome do vendedor', () {
+      const esperado =
+          'Olá! Aqui é da MilkDim. Faz um tempinho que a gente não se fala, posso passar aí essa semana?';
+      expect(mensagemSumido(''), esperado);
+      expect(mensagemSumido('   '), esperado);
     });
 
     test('mensagemSumido', () {

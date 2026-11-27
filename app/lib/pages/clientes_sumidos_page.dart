@@ -13,8 +13,9 @@ import '../utils/db.dart';
 import 'pedido_page.dart';
 
 /// Subtítulo do item da tela inicial.
-String subtituloSumidos(int n) =>
-    '$n sem comprar há ${kPrazosSumido.first} dias ou mais';
+String subtituloSumidos(int? n) => n == null
+    ? 'Ver quem não compra há ${kPrazosSumido.first} dias'
+    : '$n sem comprar há ${kPrazosSumido.first} dias ou mais';
 
 class ClientesSumidosPage extends StatefulWidget {
   final Map<String, dynamic> vendedor;
@@ -169,12 +170,17 @@ class _ClientesSumidosPageState extends State<ClientesSumidosPage> {
     final whats = linkWhatsApp(s.cliente, mensagemSumido(_nome));
     final ligar = linkLigar(s.cliente);
     final id = (s.cliente['id'] as num?)?.toInt();
-    final data = DateFormat('dd/MM').format(s.ultimaCompra);
+    final agora = (widget.relogio ?? DateTime.now)();
+    final data = DateFormat(s.ultimaCompra.year == agora.year ? 'dd/MM' : 'dd/MM/yy')
+        .format(s.ultimaCompra);
+    final cidade = '${s.cliente['cidade'] ?? ''}'.trim();
     return MdCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${s.cliente['nome'] ?? ''}', style: tt.titleMedium),
+          Text(nomeExibicao(s.cliente), style: tt.titleMedium),
+          if (cidade.isNotEmpty)
+            Text(cidade, style: tt.bodyMedium!.copyWith(color: MdColors.textMuted)),
           const SizedBox(height: MdSpace.xs),
           Text('Última compra $data · há ${s.dias} dias',
               style: tt.bodyMedium!.copyWith(color: MdColors.textMuted)),

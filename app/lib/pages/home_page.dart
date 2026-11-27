@@ -370,15 +370,13 @@ class _HomePageState extends State<HomePage> {
                         subtitulo: 'Ver, editar e compartilhar',
                         onTap: () => _abrir(PedidosPage(vendedorCodigo: _codigo, vendedor: widget.vendedor)),
                       ),
-                      if (_sumidos != null) ...[
-                        const SizedBox(height: MdSpace.md),
-                        MdActionTile(
-                          icone: Icons.person_search_outlined,
-                          titulo: 'Clientes sumidos',
-                          subtitulo: subtituloSumidos(_sumidos!),
-                          onTap: () => _abrir(ClientesSumidosPage(vendedor: widget.vendedor)),
-                        ),
-                      ],
+                      const SizedBox(height: MdSpace.md),
+                      MdActionTile(
+                        icone: Icons.person_search_outlined,
+                        titulo: 'Clientes sumidos',
+                        subtitulo: subtituloSumidos(_sumidos),
+                        onTap: () => _abrir(ClientesSumidosPage(vendedor: widget.vendedor)),
+                      ),
                       if (leituraDeEtiquetaDisponivel) ...[
                         const SizedBox(height: MdSpace.md),
                         MdActionTile(

@@ -7,6 +7,7 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 
 import '../utils/produto.dart';
 import '../utils/db.dart';
+import '../utils/clientes_sumidos.dart' show podeAplicarClienteInicial;
 import '../utils/pedido_da_tela.dart';
 import '../utils/produto_service.dart';
 import '../utils/regras_pedido.dart';
@@ -273,6 +274,8 @@ class _PedidoPageState extends State<PedidoPage> {
     final id = widget.clienteInicialId;
     if (id == null || _escolheuClienteInicial || !_clientesProntos || carregandoProdutos) return;
     _escolheuClienteInicial = true;
+    // Se o vendedor já escolheu ou digitou um cliente, não troca por baixo dele.
+    if (!podeAplicarClienteInicial(clienteId: _clienteId, nomeDigitado: nomeCtrl.text)) return;
     for (final c in clientes) {
       if ((c['id'] as num?)?.toInt() == id) {
         _aplicarCliente(c);
