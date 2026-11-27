@@ -7,12 +7,15 @@ import 'package:milkdim_ui/milkdim_ui.dart';
 
 import '../utils/produto.dart';
 import '../utils/db.dart';
+import '../utils/clientes_sumidos.dart' show podeAplicarClienteInicial;
 import '../utils/pedido_da_tela.dart';
 import '../utils/produto_service.dart';
 import '../utils/regras_pedido.dart';
+import '../utils/repetir_pedido.dart';
 import '../utils/supabase_helper.dart';
 import '../utils/convert.dart'; // <- signatureToImageBytes / assinaturaToBytes
 import '../widgets/pedido_ui.dart';
+import '../widgets/pedidos_anteriores.dart';
 import 'assinatura_page.dart' as assinatura; // alias para evitar ambiguidade
 
 class PedidoPage extends StatefulWidget {
@@ -28,12 +31,28 @@ class PedidoPage extends StatefulWidget {
   /// Para teste: no lugar de `gravarPedidoEEnviar`.
   final GravarPedido? gravar;
 
+  /// Para teste: no lugar de `listarPedidosDoCliente`.
+  final Future<List<Map<String, dynamic>>> Function(int clienteId)? carregarPedidosDoCliente;
+
+  /// "Repetir": pedido de onde partir. Quando clientes e produtos terminam de
+  /// carregar, a tela abre com o cliente e as quantidades dele. O número do
+  /// pedido continua sendo o próximo.
+  final Map<String, dynamic>? partirDe;
+
+  /// "Clientes sumidos": cliente já escolhido ao abrir (id). Aplicado uma vez,
+  /// quando clientes e produtos terminam de carregar. Se [partirDe] também vier,
+  /// [partirDe] vale.
+  final int? clienteInicialId;
+
   const PedidoPage({
     super.key,
     required this.vendedor,
+    this.partirDe,
+    this.clienteInicialId,
     this.dadosParaCaptura,
     this.pedirAssinatura,
     this.gravar,
+    this.carregarPedidosDoCliente,
   });
 
   @override
@@ -86,6 +105,9 @@ class _PedidoPageState extends State<PedidoPage> {
   int? _clienteId;
   DateTime? _ultimoPedido;
 
+  /// Pedidos anteriores do cliente escolhido (quadro "Partir de um pedido anterior").
+  List<Map<String, dynamic>> _anteriores = [];
+
   // CAMPOS CLIENTE
   final nomeCtrl = TextEditingController();
   final nomeFantasiaCtrl = TextEditingController();
@@ -106,6 +128,12 @@ class _PedidoPageState extends State<PedidoPage> {
   List<Produto> produtos = [];
   int ultimoNumeroPedido = 1;
 
+  // "Repetir": só parte do pedido de origem uma vez, depois que clientes e
+  // produtos chegaram.
+  bool _clientesProntos = false;
+  bool _partiuDe = false;
+  bool _escolheuClienteInicial = false;
+
   double get total =>
       carrinho.entries.fold(0.0, (s, e) => s + e.key.preco * (e.value));
 
@@ -115,6 +143,7 @@ class _PedidoPageState extends State<PedidoPage> {
     final captura = widget.dadosParaCaptura;
     if (captura != null) {
       clientes = captura.clientes;
+      _clientesProntos = true;
       numeroPedidoCtrl.text = ultimoNumeroPedido.toString();
       WidgetsBinding.instance.addPostFrameCallback((_) => _aplicarProdutos(captura.produtos));
       return;
@@ -166,8 +195,10 @@ class _PedidoPageState extends State<PedidoPage> {
     final cli = await listarClientes();
     if (!mounted) return;
     setState(() => clientes = cli);
+    _clientesProntos = true;
     // ignore: avoid_print
     print('[PEDIDO] clientes carregados: ${clientes.length}');
+    _tentarPartirDe();
   }
 
   Future<void> _carregarProdutos() async {
@@ -208,6 +239,50 @@ class _PedidoPageState extends State<PedidoPage> {
     });
     // ignore: avoid_print
     print('[PEDIDO] produtos carregados: ${produtos.length}');
+    _tentarPartirDe();
+  }
+
+  /// "Repetir": com clientes e produtos prontos, preenche a tela com o cliente
+  /// e as quantidades de [PedidoPage.partirDe] (sem perguntar: a tela está vazia).
+  void _tentarPartirDe() {
+    final origem = widget.partirDe;
+    if (origem == null) {
+      _tentarClienteInicial();
+      return;
+    }
+    if (_partiuDe || !_clientesProntos || carregandoProdutos) return;
+    _partiuDe = true;
+    final id = (origem['cliente_id'] as num?)?.toInt();
+    Map<String, dynamic>? cliente;
+    for (final c in clientes) {
+      if ((c['id'] as num?)?.toInt() == id) {
+        cliente = c;
+        break;
+      }
+    }
+    if (cliente == null) {
+      _showMsg('Este cliente não está mais cadastrado');
+      return;
+    }
+    _aplicarCliente(cliente);
+    _aplicarPreenchimento(preencherDePedido(origem['produtos'], produtos));
+  }
+
+  /// "Clientes sumidos": com clientes e produtos prontos, escolhe o cliente de
+  /// [PedidoPage.clienteInicialId] (uma vez); as quantidades ficam vazias.
+  void _tentarClienteInicial() {
+    final id = widget.clienteInicialId;
+    if (id == null || _escolheuClienteInicial || !_clientesProntos || carregandoProdutos) return;
+    _escolheuClienteInicial = true;
+    // Se o vendedor já escolheu ou digitou um cliente, não troca por baixo dele.
+    if (!podeAplicarClienteInicial(clienteId: _clienteId, nomeDigitado: nomeCtrl.text)) return;
+    for (final c in clientes) {
+      if ((c['id'] as num?)?.toInt() == id) {
+        _aplicarCliente(c);
+        return;
+      }
+    }
+    _showMsg('Este cliente não está mais cadastrado');
   }
 
   Future<void> _recarregarUltimoPedido() async {
@@ -224,7 +299,8 @@ class _PedidoPageState extends State<PedidoPage> {
   }
 
   Future<void> _autoPreencherClientePorNome() async {
-    await _carregarClientes();
+    // Na captura/teste os clientes já vieram prontos: não consulta o SQLite.
+    if (widget.dadosParaCaptura == null) await _carregarClientes();
     if (!mounted) return;
     // ignore: avoid_print
     print('[PEDIDO] buscar cliente por nome');
@@ -263,24 +339,79 @@ class _PedidoPageState extends State<PedidoPage> {
       },
     ).then((clienteSelecionado) async {
       if (clienteSelecionado is Map<String, dynamic>) {
-        _clienteId = (clienteSelecionado['id'] as num?)?.toInt();
-        nomeCtrl.text = clienteSelecionado['nome'] ?? '';
-        nomeFantasiaCtrl.text = clienteSelecionado['nome_fantasia'] ?? '';
-        telefoneCtrl.text = clienteSelecionado['telefone'] ?? '';
-        whatsappCtrl.text = clienteSelecionado['whatsapp'] ?? '';
-        emailCtrl.text = clienteSelecionado['email'] ?? '';
-        enderecoCtrl.text = clienteSelecionado['endereco'] ?? '';
-        cidadeCtrl.text = clienteSelecionado['cidade'] ?? '';
-        cpfCnpjCtrl.text = clienteSelecionado['cpf_cnpj'] ?? '';
-        inscEstadualCtrl.text = clienteSelecionado['insc_estadual'] ?? '';
-        cepCtrl.text = clienteSelecionado['cep'] ?? '';
-        anotacaoCtrl.text = clienteSelecionado['anotacao'] ?? '';
-        await _recarregarUltimoPedido();
-        if (mounted) setState(() {});
-        // ignore: avoid_print
-        print('[PEDIDO] cliente selecionado => $_clienteId');
+        await _aplicarCliente(clienteSelecionado);
       }
     });
+  }
+
+  /// Preenche os campos com o cliente escolhido e carrega o último pedido e os
+  /// pedidos anteriores dele.
+  Future<void> _aplicarCliente(Map<String, dynamic> cli) async {
+    _clienteId = (cli['id'] as num?)?.toInt();
+    nomeCtrl.text = cli['nome'] ?? '';
+    nomeFantasiaCtrl.text = cli['nome_fantasia'] ?? '';
+    telefoneCtrl.text = cli['telefone'] ?? '';
+    whatsappCtrl.text = cli['whatsapp'] ?? '';
+    emailCtrl.text = cli['email'] ?? '';
+    enderecoCtrl.text = cli['endereco'] ?? '';
+    cidadeCtrl.text = cli['cidade'] ?? '';
+    cpfCnpjCtrl.text = cli['cpf_cnpj'] ?? '';
+    inscEstadualCtrl.text = cli['insc_estadual'] ?? '';
+    cepCtrl.text = cli['cep'] ?? '';
+    anotacaoCtrl.text = cli['anotacao'] ?? '';
+    final id = _clienteId;
+    // Esvazia já: não deixa o quadro do cliente anterior na tela enquanto carrega.
+    if (mounted) setState(() => _anteriores = []);
+    if (widget.dadosParaCaptura == null) await _recarregarUltimoPedido();
+    var anteriores = <Map<String, dynamic>>[];
+    if (id != null) {
+      try {
+        anteriores = await (widget.carregarPedidosDoCliente ?? listarPedidosDoCliente)(id);
+      } catch (e) {
+        // ignore: avoid_print
+        print('[PEDIDO] erro ao carregar pedidos anteriores: $e');
+      }
+    }
+    if (!mounted || _clienteId != id) return; // trocou de cliente no meio
+    setState(() => _anteriores = anteriores);
+    // ignore: avoid_print
+    print('[PEDIDO] cliente selecionado => $_clienteId');
+  }
+
+  /// Põe em cada produto da tela a quantidade de [p] (ou 0) e avisa dos que
+  /// ficaram de fora.
+  void _aplicarPreenchimento(Preenchimento p) {
+    setState(() {
+      for (final prod in carrinho.keys.toList()) {
+        final q = p.quantidades[prod] ?? 0;
+        carrinho[prod] = q;
+        _qtdControllers[prod]?.text = q > 0 ? q.toString() : '';
+      }
+    });
+    if (p.foraDoPedido.isNotEmpty) {
+      _showMsg('Ficaram de fora (não estão mais à venda): ${p.foraDoPedido.join(', ')}',
+          tipo: MdTipo.atencao);
+    }
+  }
+
+  /// "Usar" um pedido anterior: só pergunta se já há quantidades na tela.
+  Future<void> _usarPedidoAnterior(Map<String, dynamic> pedido) async {
+    // Gravando: a tela não pode mudar por baixo do pedido que já foi montado.
+    if (carregando) return;
+    if (carrinho.values.any((q) => q > 0)) {
+      final trocar = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          content: const Text('Trocar as quantidades da tela pelas deste pedido?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Trocar')),
+          ],
+        ),
+      );
+      if (trocar != true || !mounted || carregando) return;
+    }
+    _aplicarPreenchimento(preencherDePedido(pedido['produtos'], produtos));
   }
 
   /// Abre a tela de assinatura do pedido (com o [aviso], se houver) e devolve
@@ -560,9 +691,9 @@ class _PedidoPageState extends State<PedidoPage> {
     );
   }
 
-  void _showMsg(String msg, {bool isError = true}) {
+  void _showMsg(String msg, {bool isError = true, MdTipo? tipo}) {
     if (!mounted) return;
-    showMdSnack(context, msg, tipo: isError ? MdTipo.erro : MdTipo.sucesso);
+    showMdSnack(context, msg, tipo: tipo ?? (isError ? MdTipo.erro : MdTipo.sucesso));
   }
 
   // ---------- Helpers de layout responsivo ----------
@@ -705,6 +836,11 @@ class _PedidoPageState extends State<PedidoPage> {
                               maxLines: 2),
                         ],
                       ),
+                    ),
+                    QuadroPedidosAnteriores(
+                      pedidos: _anteriores,
+                      onUsar: _usarPedidoAnterior,
+                      habilitado: !carregando,
                     ),
                     const SizedBox(height: MdSpace.xl),
                     const MdSectionHeader(titulo: 'Produtos'),

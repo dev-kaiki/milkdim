@@ -1,10 +1,10 @@
 // lib/pages/pedidos_page.dart
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:milkdim_app/pages/pedido_edit_page.dart';
+import 'package:milkdim_app/pages/pedido_page.dart';
 import 'package:milkdim_app/pages/ler_etiqueta_page.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:path_provider/path_provider.dart';
@@ -12,13 +12,12 @@ import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:sqflite/sqflite.dart' as sq;
 
+import '../utils/comprovante.dart';
 import '../utils/db.dart';
 import '../utils/moeda.dart';
 import '../utils/json_utils.dart';
-import '../utils/pdf_utils.dart';
 import '../utils/regras_pedido.dart';
 import '../utils/supabase_helper.dart';
-import '../utils/convert.dart'; // assinaturaToBytes / signatureToImageBytes
 
 /// Recarregar sem servidor: a lista continua com o que está no aparelho.
 const String kMsgSemServidorMeusPedidos =
@@ -43,9 +42,18 @@ class PedidosPage extends StatefulWidget {
   /// troca a chamada ao Supabase.
   final Future<void> Function(String vendedorCodigo) baixarPedidos;
 
+  /// Vendedor logado, para o "Repetir". Se nulo, usa o do próprio pedido.
+  final Map<String, dynamic>? vendedor;
+
+  /// Para teste: no lugar de `listarClientes` (o "Repetir" confere se o
+  /// cliente ainda está cadastrado).
+  final Future<List<Map<String, dynamic>>> Function() listarClientesDoAparelho;
+
   const PedidosPage({
     super.key,
     this.vendedorCodigo,
+    this.vendedor,
+    this.listarClientesDoAparelho = listarClientes,
     this.pedidosParaCaptura,
     this.abaInicialParaCaptura = 0,
     this.baixarPedidos = _baixarDoSupabase,
@@ -58,6 +66,7 @@ class PedidosPage extends StatefulWidget {
 class _PedidosPageState extends State<PedidosPage>
     with SingleTickerProviderStateMixin {
   bool _carregando = true;
+  bool _repetindo = false; // evita abrir dois pedidos com toque duplo em Repetir
   List<Map<String, dynamic>> _pedidos = [];
 
   // Busca livre
@@ -123,43 +132,6 @@ class _PedidosPageState extends State<PedidosPage>
   }
 
   // ---------------- Utils assinatura ----------------
-  /// Converte assinatura do pedido em bytes de IMAGEM (PNG/JPEG) para PDF/checagens.
-  /// 1) Tenta arquivo local (`assinatura_path`)
-  /// 2) Fallback para formatos antigos (base64/hex/data URI/Uint8List) nas chaves conhecidas
-  Uint8List? _assinaturaAsBytes(Map<String, dynamic> pedido) {
-    // 1) Caminho local (preferível)
-    final dynamic pth = pedido['assinatura_path'];
-    if (pth is String && pth.isNotEmpty) {
-      try {
-        // ✅ normaliza "file://...": evita falha ao abrir
-        final path = pth.startsWith('file://') ? Uri.parse(pth).toFilePath() : pth;
-        final f = File(path);
-        if (f.existsSync()) {
-          final bytes = f.readAsBytesSync();
-          final img = signatureToImageBytes(bytes);
-          if (img != null && img.isNotEmpty) return img;
-        }
-      } catch (_) {
-        // ignora e tenta os formatos antigos
-      }
-    }
-
-    // 2) Formatos antigos (bytes/base64/hex/data-uri)
-    final dynamic any = pedido['assinatura'] ??
-        pedido['assinatura_base64'] ??
-        pedido['assinaturaBytes'] ??
-        pedido['signature'] ??
-        pedido['signature_base64'];
-
-    final img = signatureToImageBytes(any);
-    return (img != null && img.isNotEmpty) ? img : null;
-  }
-
-  /// Assinatura do pedido para o PDF: o arquivo do aparelho, senão os bytes
-  /// (a sincronização limpa o caminho e traz os bytes do servidor).
-  Uint8List? _assinaturaPedidoAsBytes(Map<String, dynamic> pedido) => imagemDaAssinatura(pedido,
-      chaveBytes: 'assinatura_pedido', chaveCaminho: 'assinatura_pedido_path');
-
   // ---------------- Data ----------------
 
   Future<void> _carregar({bool mostrarCarregando = true}) async {
@@ -387,39 +359,50 @@ class _PedidosPageState extends State<PedidosPage>
     if (atualizado != null) await _carregar();
   }
 
+  /// "Repetir": abre um novo pedido já com o cliente e os produtos de [pedido].
+  Future<void> _repetir(Map<String, dynamic> pedido) async {
+    if (_repetindo) return;
+    _repetindo = true;
+    try {
+      final id = (pedido['cliente_id'] as num?)?.toInt();
+      final List<Map<String, dynamic>> clientes;
+      try {
+        clientes = await widget.listarClientesDoAparelho();
+      } catch (e) {
+        if (mounted) _snack('Erro ao abrir o pedido: $e');
+        return;
+      }
+      if (!mounted) return;
+      if (!clientes.any((c) => (c['id'] as num?)?.toInt() == id)) {
+        _snack('Este cliente não está mais cadastrado');
+        return;
+      }
+      final vendedor = widget.vendedor ??
+          {'codigo': pedido['vendedor_codigo'], 'nome': pedido['vendedor_nome']};
+      await Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => PedidoPage(vendedor: vendedor, partirDe: pedido)),
+      );
+      if (mounted) await _carregar();
+    } finally {
+      _repetindo = false;
+    }
+  }
+
   // Pré-visualização (opcional)
   Future<void> _imprimirPdf(Map<String, dynamic> pedido) async {
     try {
-      final assinatura = _assinaturaAsBytes(pedido); // bytes (ou null)
-      final bytes = await gerarPdfPedido(
-        pedido: pedido,
-        assinaturaBytes: assinatura,
-        assinaturaPedidoBytes: _assinaturaPedidoAsBytes(pedido),
-      );
+      final bytes = await pdfDoComprovante(pedido);
       await Printing.layoutPdf(onLayout: (format) async => bytes);
     } catch (e) {
       _snack('Falha ao abrir PDF: $e');
     }
   }
 
-  Future<void> _compartilharPdf(Map<String, dynamic> pedido) async {
+  /// Entregue: comprovante com o texto novo. Cancelado: PDF como sempre.
+  Future<void> _compartilharPdf(Map<String, dynamic> pedido, {String? texto}) async {
     try {
-      final dir = await getTemporaryDirectory();
-      final numero = (pedido['numero'] ?? 's_n').toString();
-      final id = (pedido['id'] ?? '0').toString();
-      final assinatura = _assinaturaAsBytes(pedido); // bytes (ou null)
-      final pdfBytes = await gerarPdfPedido(
-        pedido: pedido,
-        assinaturaBytes: assinatura,
-        assinaturaPedidoBytes: _assinaturaPedidoAsBytes(pedido),
-      );
-      final pdfFile = File('${dir.path}/pedido_${numero}_$id.pdf');
-      await pdfFile.writeAsBytes(pdfBytes, flush: true);
-      await Share.shareXFiles(
-        [XFile(pdfFile.path)],
-        text: 'Pedido #$numero (PDF)',
-        subject: 'Pedido #$numero (PDF)',
-      );
+      await compartilharComprovante(pedido, texto: texto);
     } catch (e) {
       _snack('Falha ao compartilhar PDF: $e');
     }
@@ -432,7 +415,7 @@ class _PedidosPageState extends State<PedidosPage>
       final id = (pedido['id'] ?? '0').toString();
 
       // Garante assinatura embutida no JSON em base64 sob a CHAVE ESPERADA: 'assinatura'
-      final assinBytes = _assinaturaAsBytes(pedido);
+      final assinBytes = assinaturaAsBytes(pedido);
       final pedidoParaExport = Map<String, dynamic>.from(pedido);
       if (assinBytes != null && assinBytes.isNotEmpty) {
         pedidoParaExport['assinatura'] = base64Encode(assinBytes);
@@ -521,7 +504,7 @@ class _PedidosPageState extends State<PedidosPage>
   bool _passaFiltrosFixos(Map<String, dynamic> p) {
     // assinatura
     if (_somenteAssinados) {
-      final asnBytes = _assinaturaAsBytes(p);
+      final asnBytes = assinaturaAsBytes(p);
       if (asnBytes == null || asnBytes.isEmpty) return false;
     }
     // cidade
@@ -586,7 +569,7 @@ class _PedidosPageState extends State<PedidosPage>
 
   // ---------- DEDUPE P/ FINALIZADOS (preferir com assinatura) ----------
   bool _temAssinatura(Map<String, dynamic> p) =>
-      (_assinaturaAsBytes(p)?.isNotEmpty == true);
+      (assinaturaAsBytes(p)?.isNotEmpty == true);
 
   String _chaveFinalizado(Map<String, dynamic> p) {
     final n = (p['numero'] ?? '').toString().trim();
@@ -905,6 +888,15 @@ class _PedidosPageState extends State<PedidosPage>
             principal: true,
           )
         : null;
+    final repetir = p['cliente_id'] != null
+        ? _acao(
+            label: 'Repetir',
+            icon: Icons.replay,
+            onPressed: () => _repetir(p),
+          )
+        : null;
+    // Entregue = finalizado; o cancelado segue com "PDF".
+    final entregue = (p['status'] ?? '').toString() == 'finalizado';
     final List<Widget> botoes = apagado
         ? [
             _acao(
@@ -922,9 +914,11 @@ class _PedidosPageState extends State<PedidosPage>
               onPressed: () => _imprimirPdf(p),
             ),
             _acao(
-              label: 'PDF',
+              label: entregue ? 'Comprovante' : 'PDF',
               icon: Icons.picture_as_pdf_outlined,
-              onPressed: () => _compartilharPdf(p),
+              onPressed: () => entregue
+                  ? _compartilharPdf(p)
+                  : _compartilharPdf(p, texto: 'Pedido #${p['numero'] ?? 's_n'} (PDF)'),
             ),
             _acao(
               label: 'JSON',
@@ -948,7 +942,7 @@ class _PedidosPageState extends State<PedidosPage>
               ),
           ];
 
-    final actions = Row(
+    final linhaBotoes = Row(
       children: [
         for (var i = 0; i < botoes.length; i++) ...[
           if (i > 0) const SizedBox(width: MdSpace.sm),
@@ -956,6 +950,16 @@ class _PedidosPageState extends State<PedidosPage>
         ],
       ],
     );
+    // "Repetir" fica em linha própria, na largura toda: cabe em qualquer celular.
+    final actions = repetir == null || apagado
+        ? linhaBotoes
+        : Column(
+            children: [
+              linhaBotoes,
+              const SizedBox(height: MdSpace.sm),
+              SizedBox(width: double.infinity, child: repetir),
+            ],
+          );
 
     return MdCard(
       onTap: apagado

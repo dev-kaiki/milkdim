@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:convert/convert.dart' as hex_conv;
 
 import 'id_aparelho.dart';
+import 'repetir_pedido.dart';
 
 sq.Database? _db;
 
@@ -934,6 +935,83 @@ Future<DateTime?> getUltimoPedidoCliente(int clienteId) async {
   } catch (_) {
     return null;
   }
+}
+
+/// Pedidos locais do cliente que valem ser oferecidos para repetir
+/// (sem cancelados, mais novos primeiro, no máximo 5).
+Future<List<Map<String, dynamic>>> listarPedidosDoCliente(int clienteId) async {
+  final db = await getDb();
+  final rows = await db.rawQuery(
+    'SELECT id, numero, status, datahora, total, produtos, cliente_id, erro_envio '
+    'FROM pedidos WHERE cliente_id = ?',
+    [clienteId],
+  );
+  return pedidosParaRepetir(rows.map((r) => Map<String, dynamic>.from(r)).toList());
+}
+
+/// Pedidos do vendedor com cliente, só as colunas que a lista de clientes
+/// sumidos usa (somente leitura).
+Future<List<Map<String, dynamic>>> listarPedidosParaSumidos(String vendedorCodigo) async {
+  final db = await getDb();
+  final rows = await db.rawQuery(
+    'SELECT cliente_id, datahora, status, erro_envio, vendedor_codigo '
+    'FROM pedidos WHERE cliente_id IS NOT NULL AND vendedor_codigo = ?',
+    [vendedorCodigo],
+  );
+  return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+}
+
+/// Pedidos do vendedor, só com as colunas que "Minhas vendas" usa (somente
+/// leitura, sem assinaturas).
+Future<List<Map<String, dynamic>>> listarPedidosParaVendas(String vendedorCodigo) async {
+  final db = await getDb();
+  final rows = await db.rawQuery(
+    'SELECT id, numero, status, vendedor_codigo, finalizado_em, total, produtos, '
+    'erro_envio, cliente_id, cliente_nome, cliente_nome_fantasia, datahora, '
+    'pendente_envio, so_local '
+    'FROM pedidos WHERE vendedor_codigo = ?',
+    [vendedorCodigo],
+  );
+  return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+}
+
+/// Só o que a tela inicial precisa para somar o mês: pedidos com
+/// `finalizado_em` a partir de [inicioMesUtc] menos 1 dia (folga de fuso). A
+/// conta exata é de `vendidoNoMes`.
+Future<List<Map<String, dynamic>>> listarVendasDoMesParaHome(
+    String vendedorCodigo, DateTime inicioMesUtc) async {
+  final db = await getDb();
+  final desde = inicioMesUtc.toUtc().subtract(const Duration(days: 1)).toIso8601String();
+  final rows = await db.rawQuery(
+    'SELECT total, status, finalizado_em, erro_envio, vendedor_codigo '
+    'FROM pedidos WHERE vendedor_codigo = ? AND finalizado_em >= ?',
+    [vendedorCodigo, desde],
+  );
+  return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+}
+
+/// Pedidos prontos do vendedor, só com as colunas que a tela de entregas e a
+/// contagem da tela inicial usam (sem assinaturas). Tolera espaço e caixa no
+/// status, como `estaPronto`.
+Future<List<Map<String, dynamic>>> listarPedidosProntos(String vendedorCodigo) async {
+  final db = await getDb();
+  final rows = await db.rawQuery(
+    'SELECT id, numero, status, datahora, total, produtos, vendedor_codigo, '
+    'erro_envio, pronto_em, cliente_id, cliente_nome, cliente_nome_fantasia, '
+    'cliente_endereco, cliente_cidade, cliente_cep, cliente_telefone, '
+    'cliente_whatsapp '
+    "FROM pedidos WHERE vendedor_codigo = ? AND LOWER(TRIM(status)) = 'pronto'",
+    [vendedorCodigo],
+  );
+  return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+}
+
+/// A linha completa do pedido (todas as colunas); null se não existir mais.
+Future<Map<String, dynamic>?> buscarPedidoLocalPorId(int id) async {
+  final db = await getDb();
+  final rows = await db.query('pedidos', where: 'id = ?', whereArgs: [id], limit: 1);
+  if (rows.isEmpty) return null;
+  return Map<String, dynamic>.from(rows.first);
 }
 
 Future<Map<int, DateTime?>> getUltimoPedidoPorCliente() async {

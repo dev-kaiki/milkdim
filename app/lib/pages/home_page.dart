@@ -8,6 +8,8 @@
 //   o login é feita pelo listener de sessão do main.dart.
 // • "Meus pedidos" passa o vendedorCodigo para filtrar.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:milkdim_ui/milkdim_ui.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -17,6 +19,12 @@ import '../utils/db.dart';
 import '../utils/supabase_helper.dart';
 import 'pedido_page.dart';
 import 'pedidos_page.dart';
+import '../utils/clientes_sumidos.dart';
+import 'clientes_sumidos_page.dart';
+import 'entregas_page.dart';
+import '../utils/minhas_vendas.dart';
+import 'minhas_vendas_page.dart';
+import '../utils/entregas.dart';
 import 'configuracoes_page.dart';
 import 'ler_etiqueta_page.dart';
 import '../widgets/ouvir_etiqueta_pendente.dart';
@@ -28,7 +36,24 @@ class HomePage extends StatefulWidget {
   /// pendentes e não roda a rotina de abertura (SQLite, rede e sync).
   final int? pendentesParaCaptura;
 
-  const HomePage({super.key, required this.vendedor, this.pendentesParaCaptura});
+  /// Só para a captura visual e testes: contagem de clientes sumidos. Sem ela,
+  /// o item só aparece depois de calcular no banco (e nunca na captura).
+  final int? sumidosParaCaptura;
+
+  /// Só para a captura visual e testes: contagem de pedidos prontos para entregar.
+  final int? prontosParaCaptura;
+
+  /// Só para a captura visual e testes: vendido no mês atual (R$).
+  final double? vendasParaCaptura;
+
+  const HomePage({
+    super.key,
+    required this.vendedor,
+    this.pendentesParaCaptura,
+    this.sumidosParaCaptura,
+    this.prontosParaCaptura,
+    this.vendasParaCaptura,
+  });
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -36,6 +61,16 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _pendentes = 0;
+
+  /// Clientes sem comprar há 30 dias ou mais; null enquanto não calculou.
+  int? _sumidos;
+
+  /// Pedidos prontos para entregar; null enquanto não calculou.
+  int? _prontos;
+
+  /// Vendido e o mês a que o valor se refere; null enquanto não calculou.
+  /// Guarda o mês junto para nunca misturar o total de um mês com o nome de outro.
+  ({double valor, int ano, int mes})? _vendas;
   bool _sincronizando = false;
   bool _enviando = false;
 
@@ -51,6 +86,13 @@ class _HomePageState extends State<HomePage> {
     final captura = widget.pendentesParaCaptura;
     if (captura != null) {
       _pendentes = captura;
+      _sumidos = widget.sumidosParaCaptura;
+      _prontos = widget.prontosParaCaptura;
+      final v = widget.vendasParaCaptura;
+      if (v != null) {
+        final agora = DateTime.now();
+        _vendas = (valor: v, ano: agora.year, mes: agora.month);
+      }
       _syncEmDia = true;
       return;
     }
@@ -75,8 +117,62 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _atualizarSumidos() async {
+    if (_codigo.isEmpty) return;
+    try {
+      final clientes = await listarClientes();
+      final pedidos = await listarPedidosParaSumidos(_codigo);
+      final n = clientesSumidos(
+        clientes: clientes,
+        pedidos: pedidos,
+        vendedorCodigo: _codigo,
+        agora: DateTime.now(),
+        prazoDias: kPrazosSumido.first,
+      ).length;
+      if (mounted) setState(() => _sumidos = n);
+    } catch (e) {
+      debugPrint('Erro ao contar clientes sumidos: $e');
+    }
+  }
+
+  Future<void> _atualizarProntos() async {
+    if (_codigo.isEmpty) return;
+    try {
+      final pedidos = await listarPedidosProntos(_codigo);
+      final n = contarProntos(pedidos, vendedorCodigo: _codigo);
+      if (mounted) setState(() => _prontos = n);
+    } catch (e) {
+      debugPrint('Erro ao contar entregas prontas: $e');
+    }
+  }
+
+  /// Só mostra o valor se for do mês atual; senão volta ao texto neutro.
+  String _subtituloVendas() {
+    final agora = DateTime.now();
+    final v = _vendas;
+    final atual = v != null && v.ano == agora.year && v.mes == agora.month;
+    return subtituloVendas(atual ? v.valor : null, agora.month);
+  }
+
+  Future<void> _atualizarVendas() async {
+    if (_codigo.isEmpty) return;
+    try {
+      final agora = DateTime.now();
+      final pedidos = await listarVendasDoMesParaHome(
+          _codigo, DateTime(agora.year, agora.month, 1).toUtc());
+      final v = vendidoNoMes(pedidos,
+          vendedorCodigo: _codigo, ano: agora.year, mes: agora.month);
+      if (mounted) setState(() => _vendas = (valor: v, ano: agora.year, mes: agora.month));
+    } catch (e) {
+      debugPrint('Erro ao somar as vendas do mês: $e');
+    }
+  }
+
   Future<void> _atualizarPendentes() async {
     if (_codigo.isEmpty) return;
+    unawaited(_atualizarSumidos());
+    unawaited(_atualizarProntos());
+    unawaited(_atualizarVendas());
     try {
       final n = await contarPedidosPendentesEnvio(_codigo);
       if (mounted) setState(() => _pendentes = n);
@@ -329,10 +425,31 @@ class _HomePageState extends State<HomePage> {
                       ),
                       const SizedBox(height: MdSpace.md),
                       MdActionTile(
+                        icone: Icons.local_shipping_outlined,
+                        titulo: 'Entregas do dia',
+                        subtitulo: subtituloEntregas(_prontos),
+                        onTap: () => _abrir(EntregasPage(vendedor: widget.vendedor)),
+                      ),
+                      const SizedBox(height: MdSpace.md),
+                      MdActionTile(
                         icone: Icons.receipt_long_outlined,
                         titulo: 'Meus pedidos',
                         subtitulo: 'Ver, editar e compartilhar',
-                        onTap: () => _abrir(PedidosPage(vendedorCodigo: _codigo)),
+                        onTap: () => _abrir(PedidosPage(vendedorCodigo: _codigo, vendedor: widget.vendedor)),
+                      ),
+                      const SizedBox(height: MdSpace.md),
+                      MdActionTile(
+                        icone: Icons.person_search_outlined,
+                        titulo: 'Clientes sumidos',
+                        subtitulo: subtituloSumidos(_sumidos),
+                        onTap: () => _abrir(ClientesSumidosPage(vendedor: widget.vendedor)),
+                      ),
+                      const SizedBox(height: MdSpace.md),
+                      MdActionTile(
+                        icone: Icons.bar_chart_outlined,
+                        titulo: 'Minhas vendas',
+                        subtitulo: _subtituloVendas(),
+                        onTap: () => _abrir(MinhasVendasPage(vendedor: widget.vendedor)),
                       ),
                       if (leituraDeEtiquetaDisponivel) ...[
                         const SizedBox(height: MdSpace.md),
