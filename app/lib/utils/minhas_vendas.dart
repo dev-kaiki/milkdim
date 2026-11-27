@@ -120,7 +120,11 @@ ResumoVendas resumoDoMes(
     final c = clientes.putIfAbsent(chave, () => _AcumuladoCliente(nome, quando));
     c.pedidos++;
     c.valor += total;
-    if (c.pedidos == 1 || quando.isAfter(c.recente)) {
+    // Empate no horário: fica o nome menor (sem caixa), para não depender da
+    // ordem em que os pedidos chegam.
+    final empate = quando.isAtSameMomentAs(c.recente) &&
+        nome.toLowerCase().compareTo(c.nome.toLowerCase()) < 0;
+    if (c.pedidos == 1 || quando.isAfter(c.recente) || empate) {
       c.recente = quando;
       c.nome = nome;
     }

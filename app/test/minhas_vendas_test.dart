@@ -72,6 +72,15 @@ void main() {
       expect(_res([p], mes: 12).pedidos, 0);
     });
 
+    test('fronteira do mês vale em qualquer fuso (derivada de toLocal)', () {
+      final u = DateTime.utc(2026, 12, 1, 2, 30);
+      final l = u.toLocal();
+      final p = _ped(finalizadoEm: u.toIso8601String());
+      final outro = l.month == 12 ? (l.year, 11) : (l.year, 12);
+      expect(_res([p], ano: l.year, mes: l.month).pedidos, 1);
+      expect(_res([p], ano: outro.$1, mes: outro.$2).pedidos, 0);
+    });
+
     test('00h30 de 01/12 local conta em dezembro', () {
       final p = _ped(quando: DateTime(2026, 12, 1, 0, 30));
       expect(_res([p]).pedidos, 0);
@@ -158,6 +167,20 @@ void main() {
   });
 
   group('resumoDoMes: melhores clientes', () {
+    test('mesmo finalizado_em: o nome exibido é o menor (sem caixa)', () {
+      final t = DateTime(2026, 11, 10, 12);
+      final r = _res([
+        _ped(clienteId: 1, nome: 'Zeca', quando: t),
+        _ped(clienteId: 1, nome: 'ana', quando: t),
+      ]);
+      expect(r.melhoresClientes.single.nome, 'ana');
+      final r2 = _res([
+        _ped(clienteId: 1, nome: 'ana', quando: t),
+        _ped(clienteId: 1, nome: 'Zeca', quando: t),
+      ]);
+      expect(r2.melhoresClientes.single.nome, 'ana');
+    });
+
     test('5 melhores por R\$, agrupando por cliente_id', () {
       final ps = <Map<String, dynamic>>[
         for (var i = 1; i <= 6; i++) _ped(clienteId: i, nome: 'C$i', total: i * 10),

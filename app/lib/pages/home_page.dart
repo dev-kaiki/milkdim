@@ -22,6 +22,8 @@ import 'pedidos_page.dart';
 import '../utils/clientes_sumidos.dart';
 import 'clientes_sumidos_page.dart';
 import 'entregas_page.dart';
+import '../utils/minhas_vendas.dart';
+import 'minhas_vendas_page.dart';
 import '../utils/entregas.dart';
 import 'configuracoes_page.dart';
 import 'ler_etiqueta_page.dart';
@@ -41,12 +43,16 @@ class HomePage extends StatefulWidget {
   /// Só para a captura visual e testes: contagem de pedidos prontos para entregar.
   final int? prontosParaCaptura;
 
+  /// Só para a captura visual e testes: vendido no mês atual (R$).
+  final double? vendasParaCaptura;
+
   const HomePage({
     super.key,
     required this.vendedor,
     this.pendentesParaCaptura,
     this.sumidosParaCaptura,
     this.prontosParaCaptura,
+    this.vendasParaCaptura,
   });
 
   @override
@@ -61,6 +67,9 @@ class _HomePageState extends State<HomePage> {
 
   /// Pedidos prontos para entregar; null enquanto não calculou.
   int? _prontos;
+
+  /// Vendido no mês atual; null enquanto não calculou.
+  double? _vendido;
   bool _sincronizando = false;
   bool _enviando = false;
 
@@ -78,6 +87,7 @@ class _HomePageState extends State<HomePage> {
       _pendentes = captura;
       _sumidos = widget.sumidosParaCaptura;
       _prontos = widget.prontosParaCaptura;
+      _vendido = widget.vendasParaCaptura;
       _syncEmDia = true;
       return;
     }
@@ -131,10 +141,24 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _atualizarVendas() async {
+    if (_codigo.isEmpty) return;
+    try {
+      final pedidos = await listarPedidosParaVendas(_codigo);
+      final agora = DateTime.now();
+      final r = resumoDoMes(pedidos,
+          vendedorCodigo: _codigo, ano: agora.year, mes: agora.month);
+      if (mounted) setState(() => _vendido = r.vendido);
+    } catch (e) {
+      debugPrint('Erro ao somar as vendas do mês: $e');
+    }
+  }
+
   Future<void> _atualizarPendentes() async {
     if (_codigo.isEmpty) return;
     unawaited(_atualizarSumidos());
     unawaited(_atualizarProntos());
+    unawaited(_atualizarVendas());
     try {
       final n = await contarPedidosPendentesEnvio(_codigo);
       if (mounted) setState(() => _pendentes = n);
@@ -405,6 +429,13 @@ class _HomePageState extends State<HomePage> {
                         titulo: 'Clientes sumidos',
                         subtitulo: subtituloSumidos(_sumidos),
                         onTap: () => _abrir(ClientesSumidosPage(vendedor: widget.vendedor)),
+                      ),
+                      const SizedBox(height: MdSpace.md),
+                      MdActionTile(
+                        icone: Icons.bar_chart_outlined,
+                        titulo: 'Minhas vendas',
+                        subtitulo: subtituloVendas(_vendido, DateTime.now().month),
+                        onTap: () => _abrir(MinhasVendasPage(vendedor: widget.vendedor)),
                       ),
                       if (leituraDeEtiquetaDisponivel) ...[
                         const SizedBox(height: MdSpace.md),
