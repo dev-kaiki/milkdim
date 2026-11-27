@@ -605,6 +605,9 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
   /// fechar a tela: a entrega já está registrada.
   Future<void> _oferecerComprovante(Map<String, dynamic> gravado) async {
     if (!mounted) return;
+    // Só durante a pergunta a tela fica livre; ao escolher enviar, trava de novo.
+    setState(() => processando = false);
+    var respondida = false; // duplo toque não fecha duas vezes (e a página junto)
     final quer = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -612,17 +615,26 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
         title: const Text('Entrega registrada. Enviar comprovante ao cliente?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
+            onPressed: () {
+              if (respondida) return;
+              respondida = true;
+              Navigator.pop(ctx, false);
+            },
             child: const Text('Agora não'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
+            onPressed: () {
+              if (respondida) return;
+              respondida = true;
+              Navigator.pop(ctx, true);
+            },
             child: const Text('Enviar comprovante'),
           ),
         ],
       ),
     );
     if (quer != true || !mounted) return;
+    setState(() => processando = true);
     try {
       var pedido = gravado;
       final id = int.tryParse('${gravado['id'] ?? widget.pedido['id'] ?? ''}');
@@ -685,8 +697,6 @@ class _PedidoPageEditState extends State<PedidoPageEdit> {
       // ignore: avoid_print
       print('[EDIT] concluído ($r) -> pop("$situacao")');
       if (antesDeFechar != null) {
-        // Já gravou: o círculo de espera sai antes da pergunta.
-        setState(() => processando = false);
         await antesDeFechar(pedidoAtualizado);
       }
       if (!mounted) return;

@@ -4,6 +4,7 @@
 // salvar alterações (nova assinatura só quando mudam itens ou cliente),
 // registrar a entrega com a assinatura da entrega, o selo "Pronto" em Meus
 // pedidos e o PDF com as duas assinaturas. Dados falsos.
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -98,9 +99,8 @@ Future<void> _abrir(WidgetTester tester, Widget pagina) async {
   await tester.pumpAndSettle();
 }
 
-/// Abre o resumo e toca [botao]. Com a pergunta do comprovante aberta o
-/// círculo de "gravando" da página segue girando, então não dá para esperar
-/// `pumpAndSettle`: avança só o bastante para a pergunta aparecer.
+/// Abre o resumo e toca [botao] e avança só o bastante para a pergunta do
+/// comprovante aparecer (sem `pumpAndSettle`: a tela pode seguir ocupada).
 Future<void> _abrirResumoETocar(WidgetTester tester, String botao) async {
   await tester
       .tap(find.descendant(of: find.byType(BarraResumo), matching: find.byType(FilledButton)));
@@ -197,6 +197,25 @@ void main() {
     await _abrirResumoETocar(tester, 'Salvar alterações');
     expect(e.gravados, isNotEmpty);
     expect(find.text(pergunta), findsNothing);
+    expect(find.text('Editar Pedido'), findsNothing);
+  });
+
+  testWidgets('enquanto o comprovante e gerado a tela fica travada', (tester) async {
+    final e = _Espiao()..resposta = _png;
+    final preso = Completer<void>();
+    await _abrir(tester, tela(e, [], envio: (p) => preso.future));
+    await _abrirResumoETocar(tester, 'Registrar entrega');
+    await tester.tap(find.text('Enviar comprovante'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    final antes = e.gravados.length;
+    final botao = find.descendant(of: find.byType(BarraResumo), matching: find.byType(FilledButton));
+    await tester.tap(botao, warnIfMissed: false);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Registrar entrega'), findsNothing, reason: 'resumo nao abriu');
+    expect(e.gravados.length, antes);
+    preso.complete();
+    await tester.pumpAndSettle();
     expect(find.text('Editar Pedido'), findsNothing);
   });
 }
