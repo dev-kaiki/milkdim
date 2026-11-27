@@ -20,11 +20,14 @@ class Preenchimento {
   const Preenchimento({required this.quantidades, required this.foraDoPedido});
 }
 
-/// Um item válido do pedido antigo.
-class _Item {
+/// Um item válido do pedido antigo. `preco` e `subtotal` vêm como estavam
+/// (número ou texto); quem precisa de dinheiro converte.
+class ItemPedido {
   final String nome;
   final int quantidade;
-  const _Item(this.nome, this.quantidade);
+  final Object? preco;
+  final Object? subtotal;
+  const ItemPedido(this.nome, this.quantidade, {this.preco, this.subtotal});
 }
 
 String _normalizar(String s) => s.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
@@ -40,7 +43,7 @@ int _quantidade(Object? v) {
 
 /// Lê os itens de um pedido antigo (`List` ou `String` JSON), ignorando
 /// itens inválidos ou com quantidade <= 0. Nunca lança.
-List<_Item> _lerItens(Object? produtosDoPedido) {
+List<ItemPedido> lerItensDoPedido(Object? produtosDoPedido) {
   Object? dados = produtosDoPedido;
   if (dados is String) {
     try {
@@ -51,13 +54,13 @@ List<_Item> _lerItens(Object? produtosDoPedido) {
   }
   if (dados is! List) return const [];
 
-  final itens = <_Item>[];
+  final itens = <ItemPedido>[];
   for (final raw in dados) {
     if (raw is! Map) continue;
     final nome = (raw['nome'] ?? '').toString().trim();
     final qtd = _quantidade(raw['quantidade']);
     if (nome.isEmpty || qtd <= 0) continue;
-    itens.add(_Item(nome, qtd));
+    itens.add(ItemPedido(nome, qtd, preco: raw['preco'], subtotal: raw['subtotal']));
   }
   return itens;
 }
@@ -71,7 +74,7 @@ Preenchimento preencherDePedido(Object? produtosDoPedido, List<Produto> produtos
 
   final quantidades = <Produto, int>{};
   final fora = <String>[];
-  for (final item in _lerItens(produtosDoPedido)) {
+  for (final item in lerItensDoPedido(produtosDoPedido)) {
     final produto = porNome[_normalizar(item.nome)];
     if (produto == null) {
       if (!fora.contains(item.nome)) fora.add(item.nome);
@@ -84,7 +87,7 @@ Preenchimento preencherDePedido(Object? produtosDoPedido, List<Produto> produtos
 
 /// Resumo curto dos itens, ex.: "Pote 160g ×40, Copo ×20 …".
 String resumoItens(Object? produtosDoPedido, {int max = 3}) {
-  final itens = _lerItens(produtosDoPedido);
+  final itens = lerItensDoPedido(produtosDoPedido);
   if (itens.isEmpty) return 'Sem itens';
   final texto = itens.take(max).map((i) => '${i.nome} ×${i.quantidade}').join(', ');
   return itens.length > max ? '$texto …' : texto;
@@ -97,7 +100,7 @@ List<Map<String, dynamic>> pedidosParaRepetir(List<Map<String, dynamic>> pedidos
   for (final p in pedidos) {
     if ((p['status'] ?? '').toString() == 'cancelado') continue;
     if (apagadoNoControle(p)) continue;
-    if (_lerItens(p['produtos']).isEmpty) continue;
+    if (lerItensDoPedido(p['produtos']).isEmpty) continue;
     candidatos.add(MapEntry(candidatos.length, p));
   }
 

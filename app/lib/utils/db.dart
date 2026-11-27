@@ -961,6 +961,19 @@ Future<List<Map<String, dynamic>>> listarPedidosParaSumidos(String vendedorCodig
   return rows.map((r) => Map<String, dynamic>.from(r)).toList();
 }
 
+/// Pedidos do vendedor, só com as colunas que "Minhas vendas" usa (somente
+/// leitura, sem assinaturas).
+Future<List<Map<String, dynamic>>> listarPedidosParaVendas(String vendedorCodigo) async {
+  final db = await getDb();
+  final rows = await db.rawQuery(
+    'SELECT id, numero, status, vendedor_codigo, finalizado_em, total, produtos, '
+    'erro_envio, cliente_id, cliente_nome, cliente_nome_fantasia, datahora '
+    'FROM pedidos WHERE vendedor_codigo = ?',
+    [vendedorCodigo],
+  );
+  return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+}
+
 /// Pedidos prontos do vendedor, só com as colunas que a tela de entregas e a
 /// contagem da tela inicial usam (sem assinaturas). Tolera espaço e caixa no
 /// status, como `estaPronto`.
