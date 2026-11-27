@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:convert/convert.dart' as hex_conv;
 
 import 'id_aparelho.dart';
+import 'repetir_pedido.dart';
 
 sq.Database? _db;
 
@@ -934,6 +935,17 @@ Future<DateTime?> getUltimoPedidoCliente(int clienteId) async {
   } catch (_) {
     return null;
   }
+}
+
+/// Pedidos locais do cliente que valem ser oferecidos para repetir
+/// (sem cancelados, mais novos primeiro, no máximo 5).
+Future<List<Map<String, dynamic>>> listarPedidosDoCliente(int clienteId) async {
+  final db = await getDb();
+  final rows = await db.rawQuery(
+    'SELECT * FROM pedidos WHERE cliente_id = ?',
+    [clienteId],
+  );
+  return pedidosParaRepetir(rows.map((r) => Map<String, dynamic>.from(r)).toList());
 }
 
 Future<Map<int, DateTime?>> getUltimoPedidoPorCliente() async {
