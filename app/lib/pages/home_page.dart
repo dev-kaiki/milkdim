@@ -21,6 +21,8 @@ import 'pedido_page.dart';
 import 'pedidos_page.dart';
 import '../utils/clientes_sumidos.dart';
 import 'clientes_sumidos_page.dart';
+import 'entregas_page.dart';
+import '../utils/entregas.dart';
 import 'configuracoes_page.dart';
 import 'ler_etiqueta_page.dart';
 import '../widgets/ouvir_etiqueta_pendente.dart';
@@ -36,11 +38,15 @@ class HomePage extends StatefulWidget {
   /// o item só aparece depois de calcular no banco (e nunca na captura).
   final int? sumidosParaCaptura;
 
+  /// Só para a captura visual e testes: contagem de pedidos prontos para entregar.
+  final int? prontosParaCaptura;
+
   const HomePage({
     super.key,
     required this.vendedor,
     this.pendentesParaCaptura,
     this.sumidosParaCaptura,
+    this.prontosParaCaptura,
   });
 
   @override
@@ -52,6 +58,9 @@ class _HomePageState extends State<HomePage> {
 
   /// Clientes sem comprar há 30 dias ou mais; null enquanto não calculou.
   int? _sumidos;
+
+  /// Pedidos prontos para entregar; null enquanto não calculou.
+  int? _prontos;
   bool _sincronizando = false;
   bool _enviando = false;
 
@@ -68,6 +77,7 @@ class _HomePageState extends State<HomePage> {
     if (captura != null) {
       _pendentes = captura;
       _sumidos = widget.sumidosParaCaptura;
+      _prontos = widget.prontosParaCaptura;
       _syncEmDia = true;
       return;
     }
@@ -110,9 +120,21 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _atualizarProntos() async {
+    if (_codigo.isEmpty) return;
+    try {
+      final pedidos = await listarPedidosLocaisPorVendedor(_codigo);
+      final n = contarProntos(pedidos, vendedorCodigo: _codigo);
+      if (mounted) setState(() => _prontos = n);
+    } catch (e) {
+      debugPrint('Erro ao contar entregas prontas: $e');
+    }
+  }
+
   Future<void> _atualizarPendentes() async {
     if (_codigo.isEmpty) return;
     unawaited(_atualizarSumidos());
+    unawaited(_atualizarProntos());
     try {
       final n = await contarPedidosPendentesEnvio(_codigo);
       if (mounted) setState(() => _pendentes = n);
@@ -362,6 +384,13 @@ class _HomePageState extends State<HomePage> {
                         subtitulo: 'Escolher cliente e produtos',
                         destaque: true,
                         onTap: () => _abrir(PedidoPage(vendedor: widget.vendedor)),
+                      ),
+                      const SizedBox(height: MdSpace.md),
+                      MdActionTile(
+                        icone: Icons.local_shipping_outlined,
+                        titulo: 'Entregas do dia',
+                        subtitulo: subtituloEntregas(_prontos),
+                        onTap: () => _abrir(EntregasPage(vendedor: widget.vendedor)),
                       ),
                       const SizedBox(height: MdSpace.md),
                       MdActionTile(
