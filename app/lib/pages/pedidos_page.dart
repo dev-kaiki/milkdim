@@ -966,7 +966,6 @@ class _PedidosPageState extends State<PedidosPage>
               icon: Icons.data_object,
               onPressed: () => _compartilharJson(p),
             ),
-            if (repetir != null) repetir,
           ]
         : [
             _acao(
@@ -982,10 +981,9 @@ class _PedidosPageState extends State<PedidosPage>
                 onPressed: () => _remover(p),
                 perigo: true,
               ),
-            if (repetir != null) repetir,
           ];
 
-    final actions = Row(
+    final linhaBotoes = Row(
       children: [
         for (var i = 0; i < botoes.length; i++) ...[
           if (i > 0) const SizedBox(width: MdSpace.sm),
@@ -993,6 +991,16 @@ class _PedidosPageState extends State<PedidosPage>
         ],
       ],
     );
+    // "Repetir" fica em linha própria, na largura toda: cabe em qualquer celular.
+    final actions = repetir == null || apagado
+        ? linhaBotoes
+        : Column(
+            children: [
+              linhaBotoes,
+              const SizedBox(height: MdSpace.sm),
+              SizedBox(width: double.infinity, child: repetir),
+            ],
+          );
 
     return MdCard(
       onTap: apagado
